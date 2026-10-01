@@ -6,6 +6,8 @@ fn main() {
             "schema",
             "ddl",
             "row_update",
+            "table_edit_state",
+            "table_edit_ddl",
             "query",
             "fetch_more",
             "cancel",

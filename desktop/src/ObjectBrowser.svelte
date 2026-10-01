@@ -4,7 +4,7 @@
   import { catalogTree, filterTree } from './lib/catalogTree'
   import TreeNode from './TreeNode.svelte'
 
-  let { data, loading, error, onrefresh, onopen }: { data: SchemaData | null; loading: boolean; error: string; onrefresh: () => void; onopen: (target: DdlTarget, label: string) => void } = $props()
+  let { data, loading, error, onrefresh, onopen, onedit }: { data: SchemaData | null; loading: boolean; error: string; onrefresh: () => void; onopen: (target: DdlTarget, label: string) => void; onedit: (oid: string) => void } = $props()
   let query = $state('')
   const expanded = new SvelteSet<string>(['tables'])
   const roots = $derived(data ? catalogTree(data) : [])
@@ -22,7 +22,7 @@
     {#if !filtered.length}<p class="notice">No objects match "{query}".</p>{/if}
     <ul role="tree" aria-label="Database objects">
       {#each filtered as section (section.key)}
-        <TreeNode node={{ ...section, label: `${section.label} (${query.trim() ? `${section.children.length}/` : ''}${roots.find(root => root.key === section.key)?.children.length ?? 0})` }} {expanded} {query} {onopen} />
+        <TreeNode node={{ ...section, label: `${section.label} (${query.trim() ? `${section.children.length}/` : ''}${roots.find(root => root.key === section.key)?.children.length ?? 0})` }} {expanded} {query} {onopen} {onedit} />
       {/each}
     </ul>
   {/if}

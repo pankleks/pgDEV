@@ -6,6 +6,25 @@ use pgdev_core::{
 };
 
 #[tauri::command]
+async fn table_edit_state(
+    database: tauri::State<'_, Database>,
+    id: String,
+    oid: String,
+) -> Result<pgdev_core::TableEditState, CoreError> {
+    database.table_edit_state(&id, &oid).await
+}
+
+#[tauri::command]
+async fn table_edit_ddl(
+    database: tauri::State<'_, Database>,
+    id: String,
+    oid: String,
+    request: pgdev_core::TableEditRequest,
+) -> Result<pgdev_core::TableEditResponse, CoreError> {
+    database.table_edit_ddl(&id, &oid, request).await
+}
+
+#[tauri::command]
 async fn row_update(
     database: tauri::State<'_, Database>,
     request: pgdev_core::RowUpdateRequest,
@@ -85,6 +104,8 @@ fn main() {
             schema,
             ddl,
             row_update,
+            table_edit_state,
+            table_edit_ddl,
             query,
             fetch_more,
             cancel,

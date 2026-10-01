@@ -4,7 +4,41 @@
   import QueryEditor from './QueryEditor.svelte'
   import ObjectBrowser from './ObjectBrowser.svelte'
   import RowEditor from './RowEditor.svelte'
-  import type { DataResult } from './generated/contracts'
+  import TableEditor from './TableEditor.svelte'
+  import type { DataResult, TableEditState, TableEditRequest } from './generated/contracts'
+
+  let tableEditing = $state<TableEditState | null>(null)
+  let tableLoading = $state(false)
+  let tableGenerating = $state(false)
+  let tableError = $state('')
+  let tablePreview = $state<string | null | undefined>(undefined)
+  let tableRequest = 0
+
+  async function openTableEditor(oid: string) {
+    if (!connection || disconnecting || editing || tableEditing) return
+    const id = connection.id
+    const request = ++tableRequest
+    tableLoading = true; tableError = ''; tablePreview = undefined
+    try {
+      const state = await api.tableEditState(id, oid)
+      if (connection?.id === id && request === tableRequest) tableEditing = state
+    } catch (error) {
+      if (connection?.id === id && request === tableRequest) tableError = errorMessage(error)
+    } finally { if (request === tableRequest) tableLoading = false }
+  }
+
+  async function generateTableSql(request: TableEditRequest) {
+    if (!connection || !tableEditing || tableGenerating || disconnecting) return
+    const id = connection.id
+    const oid = tableEditing.oid
+    tableGenerating = true; tableError = ''; tablePreview = undefined
+    try {
+      const result = await api.tableEditDdl(id, oid, request)
+      if (connection?.id === id && tableEditing?.oid === oid) tablePreview = result.ddl
+    } catch (error) {
+      if (connection?.id === id && tableEditing?.oid === oid) tableError = errorMessage(error)
+    } finally { tableGenerating = false }
+  }
 
   let editing = $state<{ result: DataResult; rowIndex: number } | null>(null)
   let editError = $state('')
@@ -93,7 +127,7 @@
   }
 
   async function run(sqlToRun: string) {
-    if (!connection || running || disconnecting || saving || editing) return
+    if (!connection || running || disconnecting || saving || editing || tableEditing) return
     running = true
     message = ''
     results = []
@@ -147,6 +181,7 @@
       await api.disconnect(connection.id)
       connection = null; results = []; transactionId = null; durationMs = null
       catalog = null; ddlPreview = null; catalogError = ''; ddlError = ''; editing = null; editError = ''
+      tableEditing = null; tableError = ''; tablePreview = undefined; ++tableRequest; tableLoading = false
       ++catalogRequest; ++ddlRequest; catalogLoading = false; ddlLoading = false
     }
     catch (error) { message = errorMessage(error) }
@@ -156,7 +191,7 @@
 
 <header><strong>pgDEV</strong><span>Desktop migration prototype</span></header>
 <main>
-  <p class="notice">Integration prototype — not the final 1:1 interface. Object catalog, DDL previews and single-row updates are available alongside typed results, cursor paging and transactions. Table editing is not migrated yet.</p>
+  <p class="notice">Integration prototype — not the final 1:1 interface. Object catalog, DDL previews, row updates and table-change SQL generation are available alongside typed results, cursor paging and transactions.</p>
   {#if !native}<p class="error">Open this interface through Tauri. Browser operation is not supported.</p>{/if}
   <section class="toolbar">
     {#if connection}
@@ -169,7 +204,7 @@
     {/if}
   </section>
   <div class="workspace">
-  <ObjectBrowser data={catalog} loading={catalogLoading} error={catalogError} onrefresh={refreshCatalog} onopen={openDdl} />
+  <ObjectBrowser data={catalog} loading={catalogLoading} error={catalogError} onrefresh={refreshCatalog} onopen={openDdl} onedit={openTableEditor} />
   <div class="query-pane">
   <section class="toolbar">
     <span>Query</span>
@@ -182,6 +217,8 @@
     {/if}
   </section>
   <QueryEditor bind:this={queryEditor} bind:value={sql} onrun={run} />
+  {#if tableLoading}<p class="notice">Loading table editor…</p>{/if}
+  {#if tableError && !tableEditing}<pre class="error" role="alert">{tableError}</pre>{/if}
   {#if ddlLoading}<p class="notice">Loading DDL…</p>{/if}
   {#if ddlError}<pre class="error" role="alert">{ddlError}</pre>{/if}
   {#if ddlPreview}
@@ -212,6 +249,7 @@
   </div>
 </main>
 {#if editing}<RowEditor result={editing.result} rowIndex={editing.rowIndex} {saving} error={editError} onsave={saveRow} onclose={() => { editing = null; editError = '' }} />{/if}
+{#if tableEditing}<TableEditor state={tableEditing} generating={tableGenerating} error={tableError} preview={tablePreview} ongenerate={generateTableSql} ondirty={() => { tablePreview = undefined; tableError = '' }} onclose={() => { tableEditing = null; tableError = ''; tablePreview = undefined }} />{/if}
 
 <style>
   .workspace { display: flex; gap: 16px; }

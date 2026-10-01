@@ -109,6 +109,106 @@ struct Fixture {
     uri: String,
 }
 
+fn table_request(state: &pgdev_core::TableEditState) -> pgdev_core::TableEditRequest {
+    serde_json::from_value(json!({"description":state.description,"fingerprint":state.fingerprint,"columns":state.columns})).unwrap()
+}
+
+#[tokio::test]
+#[ignore = "requires PGDEV_TEST_URL, CREATEDB privileges and npm dependencies"]
+async fn table_editor_state_fingerprint_and_change_scripts_match_reference() {
+    using(|f| async move {
+        f.exec(r#"
+CREATE TABLE public.parent (a integer, b integer, PRIMARY KEY(a,b));
+CREATE TABLE public.structure (
+  id bigint PRIMARY KEY, identity_n bigint GENERATED ALWAYS AS IDENTITY,
+  serial_n serial, a integer, b integer, note text DEFAULT 'North  America',
+  computed integer GENERATED ALWAYS AS (a + b) STORED, "new:1" text, spare text, dropped text,
+  CONSTRAINT structure_unique UNIQUE(a,b),
+  CONSTRAINT structure_fk FOREIGN KEY(a,b) REFERENCES public.parent(a,b)
+);
+ALTER TABLE public.structure DROP COLUMN dropped;
+ALTER TABLE public.structure ADD COLUMN tail text;
+CREATE UNIQUE INDEX structure_note_uk ON public.structure(note) INCLUDE(spare);
+CREATE UNIQUE INDEX structure_expression_uk ON public.structure(lower(note));
+COMMENT ON TABLE public.structure IS 'Original ą😀';
+COMMENT ON COLUMN public.structure.note IS 'Original column';
+CREATE TABLE public.partitioned (id integer PRIMARY KEY) PARTITION BY RANGE(id);
+CREATE TABLE public.partition_one PARTITION OF public.partitioned FOR VALUES FROM(0) TO(10);
+CREATE VIEW public.structure_view AS SELECT * FROM public.structure;
+"#).await;
+        let schema = f.db.schema(&f.id).await.unwrap();
+        let oid = schema.tables.iter().find(|t| t.name == "structure").unwrap().oid.clone();
+        let state = f.db.table_edit_state(&f.id,&oid).await.unwrap();
+        assert_eq!(state.columns.iter().find(|c| c.name == "identity_n").unwrap().default_value,None);
+        assert_eq!(state.columns.iter().find(|c| c.name == "serial_n").unwrap().lock_kind,Some(pgdev_core::TableEditLockKind::Serial));
+        assert!(state.columns.iter().find(|c| c.name == "spare").unwrap().uks.is_none());
+        assert_eq!(state.columns.iter().find(|c| c.name == "a").unwrap().fks.as_ref().unwrap()[0].label,"FK1");
+        let partition_oid = schema.tables.iter().find(|t| t.name == "partitioned").unwrap().oid.clone();
+        let partition = f.db.table_edit_state(&f.id,&partition_oid).await.unwrap();
+        for rejected in [&schema.tables.iter().find(|t| t.name == "partition_one").unwrap().oid,&schema.views[0].oid] {
+            assert!(f.db.table_edit_state(&f.id,rejected).await.is_err());
+        }
+        assert_eq!(f.db.table_edit_state(&f.id,"0").await.err().unwrap().code.as_deref(),Some("OBJECT_NOT_FOUND"));
+        for rejected in ["garbage","1; DROP TABLE structure","-1","4294967296"] { assert!(f.db.table_edit_state(&f.id,rejected).await.is_err()); }
+        let original = table_request(&state);
+        let mut requests = vec![original.clone()];
+        let mut change = original.clone();
+        change.description = Some("Changed 'table' ą😀".into());
+        for c in &mut change.columns {
+            if c.name == "a" { c.name = "b".into(); }
+            else if c.name == "b" { c.name = "a".into(); }
+            else if c.name == "note" { c.data_type = "varchar(60)".into(); c.nullable = false; c.default_value = Some(" 'South  America' ".into()); c.description = Some("Changed 'column'".into()); }
+        }
+        change.columns.retain(|c| c.name != "spare");
+        change.columns.push(serde_json::from_value(json!({"id":"added:1","added":true,"name":"extra\"column","type":"integer","nullable":false,"defaultValue":" 7 ","description":"New 'column'"})).unwrap());
+        requests.push(change.clone());
+        // Valid changes around serial nullability, comment clearing and quoted
+        // literal differences. No user expressions are executed by planning.
+        let mut serial = original.clone(); serial.columns.iter_mut().find(|c| c.name == "serial_n").unwrap().nullable = true; requests.push(serial);
+        let mut literal = original.clone(); literal.columns.iter_mut().find(|c| c.name == "note").unwrap().default_value = Some("'North America'::text".into()); requests.push(literal);
+        let mut comments = original.clone(); comments.description = Some("  ".into()); comments.columns.iter_mut().find(|c| c.name == "note").unwrap().description = None; requests.push(comments);
+        for locked in ["identity_n","serial_n","computed"] {
+            let mut request = original.clone(); request.columns.iter_mut().find(|c| c.name == locked).unwrap().data_type = "text".into(); requests.push(request);
+        }
+        let mut request = original.clone(); request.columns.retain(|c| c.name != "id"); requests.push(request);
+        let mut request = original.clone(); request.columns[0].nullable = true; requests.push(request);
+        let mut request = original.clone(); request.columns[0].id = "not_live".into(); requests.push(request);
+        let mut request = original.clone(); request.columns[0].added = Some(true); requests.push(request);
+        let mut request = original.clone(); request.columns[1].name = request.columns[0].name.clone(); requests.push(request);
+        let mut request = original.clone(); request.columns[1].id = request.columns[0].id.clone(); requests.push(request);
+        let mut request = original.clone(); request.columns[3].name = "  ".into(); requests.push(request);
+        let mut request = original.clone(); request.columns[3].data_type = "  ".into(); requests.push(request);
+        let mut request = original.clone(); request.fingerprint = "stale".into(); requests.push(request);
+        let results = futures_util::future::join_all(requests.iter().map(|r| f.db.table_edit_ddl(&f.id,&oid,r.clone()))).await;
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut child = Command::new("node").args(["--import","tsx","test/native-tableedit-reference.mjs"]).current_dir(root)
+            .env("PGDEV_MIGRATION_URL",&f.uri).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+        let edits = requests.iter().map(|request| json!({"oid":oid,"request":request})).collect::<Vec<_>>();
+        child.stdin.take().unwrap().write_all(&serde_json::to_vec(&json!({"oids":[oid,partition_oid],"edits":edits})).unwrap()).unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success(),"Node table editor oracle failed: {}",String::from_utf8_lossy(&output.stderr));
+        let reference: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(serde_json::to_value(&state).unwrap(),reference["states"][0]);
+        assert_eq!(serde_json::to_value(&partition).unwrap(),reference["states"][1]);
+        for (index,result) in results.into_iter().enumerate() {
+            let actual = match result { Ok(result) => json!({"ddl":result.ddl}), Err(error) => json!({"error":error.message}) };
+            assert_eq!(actual,reference["results"][index],"Table editor drift for request {index}");
+        }
+        // Planning is read-only; even the complex edit leaves the table intact.
+        assert_eq!(f.db.table_edit_state(&f.id,&oid).await.unwrap().fingerprint,state.fingerprint);
+        let ddl = f.db.table_edit_ddl(&f.id,&oid,change).await.unwrap().ddl.unwrap();
+        f.exec("DROP VIEW public.structure_view").await;
+        f.exec(&ddl).await;
+        let rebuilt = f.db.table_edit_state(&f.id,&oid).await.unwrap();
+        assert_ne!(rebuilt.fingerprint,state.fingerprint);
+        assert_eq!(rebuilt.columns.iter().find(|c| c.id == "4").unwrap().name,"b");
+        assert!(rebuilt.columns.iter().any(|c| c.name == "extra\"column"));
+        assert!(f.db.table_edit_ddl(&f.id,&oid,table_request(&rebuilt)).await.unwrap().ddl.is_none());
+        let stale = f.db.table_edit_ddl(&f.id,&oid,original).await.err().unwrap();
+        assert_eq!(stale.code.as_deref(),Some("TABLE_CHANGED"));
+    }).await;
+}
+
 fn config(uri: &str) -> ConnectionConfig {
     serde_json::from_value(json!({"connectionString": uri})).unwrap()
 }

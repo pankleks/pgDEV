@@ -1,4 +1,5 @@
 mod ddl;
+mod tableedit;
 use crate::{CoreError, Database, DdlResponse, DdlTarget, SchemaData};
 use tokio_postgres::{types::Type, Row};
 

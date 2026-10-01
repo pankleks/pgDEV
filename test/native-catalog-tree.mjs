@@ -23,6 +23,7 @@ test('column and parameter filters preserve their object ancestry', () => {
 test('object targets retain OIDs and constraint parents; search does not mutate the tree', () => {
   const table = tree[0].children[0]
   assert.equal(table.target.oid, '1')
+  assert.equal(table.editOid, '1')
   assert.equal(table.children[2].children[0].target.parent, 'items')
   assert.equal(filterTree(tree, 'items table')[0].children[0].children.length, 4)
   assert.deepEqual(filterTree(tree, 'no_such_object'), [])
@@ -31,4 +32,13 @@ test('object targets retain OIDs and constraint parents; search does not mutate 
 
 test('database labels are escaped before HTML highlighting', () => {
   assert.equal(scopedHighlight('<img onerror="bad">', [], null, ['table']), '&lt;img onerror=&quot;bad&quot;&gt;')
+})
+
+test('the table editor is offered only for ordinary tables and partitioned parents', () => {
+  const base = { schema: 'public', name: 'sample', oid: '10', relkind: 'r', parents: '', isPartition: false, isPartitioned: false, columns: [], indexes: [], constraints: [], triggers: [] }
+  for (const [flags, eligible] of [[{}, true], [{ relkind: 'p', isPartitioned: true }, true], [{ isPartition: true }, false], [{ relkind: 'f' }, false]]) {
+    const nodes = catalogTree({ tables: [{ ...base, ...flags }], views: [], functions: [], types: [], sequences: [], builtins: [] })
+    assert.equal(nodes[0].children[0].editOid, eligible ? '10' : undefined)
+    assert.equal(nodes[0].children[0].target.type, 'table')
+  }
 })

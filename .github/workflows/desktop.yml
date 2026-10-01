@@ -2,9 +2,9 @@ name: Desktop migration checks
 
 on:
   push:
-    paths: ['desktop/**', 'crates/**', 'test/native-catalog-*', 'web/src/lib/browserSearch.ts', 'Cargo.toml', 'Cargo.lock', 'package.json', 'package-lock.json', '.github/workflows/desktop.yml']
+    paths: ['desktop/**', 'crates/**', 'test/native-catalog-*', 'test/native-tableedit-*', 'web/src/lib/browserSearch.ts', 'Cargo.toml', 'Cargo.lock', 'package.json', 'package-lock.json', '.github/workflows/desktop.yml']
   pull_request:
-    paths: ['desktop/**', 'crates/**', 'test/native-catalog-*', 'web/src/lib/browserSearch.ts', 'Cargo.toml', 'Cargo.lock', 'package.json', 'package-lock.json', '.github/workflows/desktop.yml']
+    paths: ['desktop/**', 'crates/**', 'test/native-catalog-*', 'test/native-tableedit-*', 'web/src/lib/browserSearch.ts', 'Cargo.toml', 'Cargo.lock', 'package.json', 'package-lock.json', '.github/workflows/desktop.yml']
   workflow_dispatch:
 
 permissions:

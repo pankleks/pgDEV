@@ -5,7 +5,7 @@
   import type { SvelteSet } from 'svelte/reactivity'
   import { parseSearch, searchTerms, scopedHighlight } from '../../web/src/lib/browserSearch'
 
-  let { node, expanded, query, onopen }: { node: CatalogNode; expanded: SvelteSet<string>; query: string; onopen: (target: DdlTarget, label: string) => void } = $props()
+  let { node, expanded, query, onopen, onedit }: { node: CatalogNode; expanded: SvelteSet<string>; query: string; onopen: (target: DdlTarget, label: string) => void; onedit: (oid: string) => void } = $props()
   const open = $derived(!!query.trim() || expanded.has(node.key))
   const parsed = $derived(parseSearch(query))
   const groups = $derived(searchTerms(parsed.term))
@@ -21,9 +21,10 @@
       <span>{@html scopedHighlight(node.label, groups, parsed.type, node.scopes)}</span>
     </button>
     {#if node.detail}<span class="detail">{node.detail}</span>{/if}
+    {#if node.editOid}<button class="edit" onclick={() => onedit(node.editOid!)}>Edit table</button>{/if}
   </div>
   {#if open && node.children.length}
-    <ul role="group">{#each node.children as child (child.key)}<TreeNode node={child} {expanded} {query} {onopen} />{/each}</ul>
+    <ul role="group">{#each node.children as child (child.key)}<TreeNode node={child} {expanded} {query} {onopen} {onedit} />{/each}</ul>
   {/if}
 </li>
 
@@ -35,5 +36,6 @@
   .label:hover { background: #333; }
   .chevron { width: 12px; flex-shrink: 0; color: #aaa; }
   .detail { color: #999; font-size: 11px; padding-left: 20px; overflow-wrap: anywhere; }
+  .edit { align-self: flex-start; margin-left: 20px; padding: 2px 6px; font-size: 11px; }
   :global(mark.search-hit) { background: #80640c; color: #fff; }
 </style>

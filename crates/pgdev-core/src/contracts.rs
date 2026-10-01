@@ -97,6 +97,13 @@ mod tests {
             EditableGridColumn::decl(),
             RowUpdateRequest::decl(),
             RowUpdateResponse::decl(),
+            TableEditKeyRef::decl(),
+            TableEditLockKind::decl(),
+            TableEditColumnState::decl(),
+            TableEditState::decl(),
+            TableEditColumnInput::decl(),
+            TableEditRequest::decl(),
+            TableEditResponse::decl(),
         ] {
             generated.push_str("export ");
             generated.push_str(&declaration.replace("bigint", "number"));
@@ -114,6 +121,84 @@ mod tests {
             "Run the documented contract generation command after changing DTOs"
         );
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct TableEditKeyRef {
+    pub label: String,
+    pub name: String,
+    pub definition: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+pub enum TableEditLockKind {
+    Identity,
+    Generated,
+    Serial,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct TableEditColumnState {
+    pub id: String,
+    pub name: String,
+    #[serde(rename = "type")]
+    pub data_type: String,
+    pub nullable: bool,
+    pub default_value: Option<String>,
+    pub description: Option<String>,
+    pub pk: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub fks: Option<Vec<TableEditKeyRef>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub uks: Option<Vec<TableEditKeyRef>>,
+    pub locked: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub lock_kind: Option<TableEditLockKind>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct TableEditState {
+    pub oid: String,
+    pub schema: String,
+    pub name: String,
+    #[ts(type = "'r' | 'p'")]
+    pub relkind: String,
+    pub description: Option<String>,
+    pub columns: Vec<TableEditColumnState>,
+    #[serde(default)]
+    pub fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct TableEditColumnInput {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub added: Option<bool>,
+    pub name: String,
+    #[serde(rename = "type")]
+    pub data_type: String,
+    pub nullable: bool,
+    pub default_value: Option<String>,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct TableEditRequest {
+    pub description: Option<String>,
+    pub fingerprint: String,
+    pub columns: Vec<TableEditColumnInput>,
+}
+
+#[derive(Debug, Serialize, TS)]
+pub struct TableEditResponse {
+    pub ddl: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]

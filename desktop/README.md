@@ -73,6 +73,14 @@ Opening Vite in a browser is not a supported application mode.
   generated columns and bytea are locked; missing rows fail explicitly. Manual
   updates use the tab transaction; autocommit edits leave its cursor intact.
 - Prototype row-edit dialog, NULL controls and refresh of the stored row values.
+- Table-editor catalog state with primary/foreign/unique-key badges, locked
+  identity/generated/serial columns and a reference-compatible SHA-256 fingerprint.
+- Change-only table ALTER generation, including adds/drops, dependency-ordered
+  renames (and cycles), type/default/nullability changes and comments. Stale
+  fingerprints are rejected against a fresh catalog snapshot. Generation never
+  executes the script or joins the tab transaction.
+- Prototype table dialog with SQL preview. Scripts are reviewed and executed
+  through the query editor, not applied automatically by the dialog.
 
 The query engine uses prepared descriptions for metadata and text protocol for
 user values, avoiding lossy generic binary decoding. Page size defaults to 500
@@ -81,7 +89,7 @@ rather than silently discard cursor rows. Statement timeout still bounds the
 work performed by PostgreSQL. The initial raw-text API remains a legacy test
 fixture and is no longer exposed as a Tauri command.
 
-Notices, exact utility command tags, table editing, persistence, file operations and
+Notices, exact utility command tags, final 1:1 table-editor UI, persistence, file operations and
 MCP migration are still outstanding. The prototype UI is not the final 1:1 UI.
 The production build has been verified locally on Windows; CI also checks
 macOS/Linux, but their installers still require validation on those platforms.

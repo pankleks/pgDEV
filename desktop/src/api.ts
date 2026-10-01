@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 
-import type { QueryRequest, QueryResponse, FetchMoreResponse, SchemaData, DdlTarget, DdlResponse, RowUpdateRequest, RowUpdateResponse } from './generated/contracts'
+import type { QueryRequest, QueryResponse, FetchMoreResponse, SchemaData, DdlTarget, DdlResponse, RowUpdateRequest, RowUpdateResponse, TableEditState, TableEditRequest, TableEditResponse } from './generated/contracts'
 export type { QueryResult, DataResult, SchemaData, DdlTarget } from './generated/contracts'
 
 // Query DTOs are generated from Rust and checked by a Rust unit test.
@@ -27,6 +27,8 @@ export const api = {
   closeSession: (id: string, tabKey: string) => invoke<void>('close_session', { id, tabKey }),
   query: (request: QueryRequest) => invoke<QueryResponse>('query', { request }),
   rowUpdate: (request: RowUpdateRequest) => invoke<RowUpdateResponse>('row_update', { request }),
+  tableEditState: (id: string, oid: string) => invoke<TableEditState>('table_edit_state', { id, oid }),
+  tableEditDdl: (id: string, oid: string, request: TableEditRequest) => invoke<TableEditResponse>('table_edit_ddl', { id, oid, request }),
   fetchMore: (id: string, tabKey: string, maxRows = 500) => invoke<FetchMoreResponse>('fetch_more', { id, tabKey, maxRows }),
   cancel: (id: string, tabKey: string) => invoke<void>('cancel', { id, tabKey }),
 }

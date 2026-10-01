@@ -10,6 +10,7 @@ export interface CatalogNode {
   scopes: SearchType[]
   detail?: string
   target?: DdlTarget
+  editOid?: string
   children: CatalogNode[]
 }
 
@@ -26,7 +27,7 @@ export function catalogTree(data: SchemaData): CatalogNode[] {
       node(`${key}:constraints`, `Constraints (${table.constraints.length})`, table.constraints.map((constraint) => ({ ...node(`${key}:constraint:${constraint.name}`, constraint.name, [], constraint.definition), target: target('constraint', table.schema, constraint.name, null, table.name) }))),
       node(`${key}:triggers`, `Triggers (${table.triggers.length})`, table.triggers.map((trigger) => ({ ...node(`${key}:trigger:${trigger.name}`, trigger.name, [], trigger.definition), target: target('trigger', table.schema, trigger.name, null, table.name) }))),
     ], table.isPartition ? `partition of ${table.parents}` : table.isPartitioned ? 'partitioned table' : table.relkind === 'f' ? 'foreign table' : undefined),
-    name: table.name, schema: table.schema, scopes: ['table'] as SearchType[], target: target('table', table.schema, table.name, table.oid) }
+    name: table.name, schema: table.schema, scopes: ['table'] as SearchType[], target: target('table', table.schema, table.name, table.oid), editOid: !table.isPartition && table.relkind !== 'f' ? table.oid : undefined }
   })
   const views = data.views.map((view) => ({ ...node(`view:${view.oid}`, `${view.schema}.${view.name}`, columns(`view:${view.oid}`, view.columns), view.materialized ? 'materialized · read-only DDL preview' : undefined), name: view.name, schema: view.schema, scopes: ['view'] as SearchType[], target: target('view', view.schema, view.name, view.oid) }))
   const functions = data.functions.map((fn) => ({ ...node(`function:${fn.oid}`, `${fn.schema}.${fn.name}(${fn.args})`, paramRows(fn.arguments ?? fn.args, fn.returns).map((parameter, index) => ({ ...node(`function:${fn.oid}:parameter:${index}`, parameter.name, [], `${parameter.kind} · ${parameter.rest}`), scopes: parameter.kind === 'returns' ? [] : ['parameter'] as SearchType[] })), fn.kind), name: fn.name, schema: fn.schema, scopes: ['function'] as SearchType[], target: target('function', fn.schema, fn.name, fn.oid) }))
