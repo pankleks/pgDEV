@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "Only the bundled primary desktop window may invoke the database prototype.",
+  "windows": ["main"],
+  "permissions": ["core:default", "allow-connect", "allow-disconnect", "allow-schema", "allow-ddl", "allow-query", "allow-fetch-more", "allow-cancel", "allow-close-session"]
+}

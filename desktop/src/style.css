@@ -1,0 +1,19 @@
+:root { font-family: system-ui, sans-serif; color: #ddd; background: #181818; color-scheme: dark; }
+body { margin: 0; }
+header { padding: 14px 20px; background: #242424; display: flex; gap: 24px; border-bottom: 1px solid #444; }
+header span { color: #aaa; }
+main { padding: 16px; }
+.notice { color: #bbb; font-size: 13px; }
+.toolbar { display: flex; gap: 12px; align-items: center; margin: 14px 0; }
+input { flex: 1; min-width: 120px; }
+input, button { padding: 8px 12px; border: 1px solid #555; border-radius: 4px; background: #282828; color: inherit; }
+button:not(:disabled) { cursor: pointer; }
+button:disabled { opacity: .45; }
+.error { color: #ffaaaa; white-space: pre-wrap; overflow-wrap: anywhere; }
+h2 { font-size: 13px; font-weight: normal; }
+.grid { overflow: auto; }
+table { border-collapse: collapse; font-size: 13px; }
+th, td { padding: 7px 12px; border: 1px solid #444; white-space: pre-wrap; }
+th { background: #282828; text-align: left; }
+th small { display: block; font-weight: normal; color: #aaa; margin-top: 4px; }
+td.null { color: #999; font-style: italic; }

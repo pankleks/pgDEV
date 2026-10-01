@@ -33,12 +33,18 @@
   ],
   "workspaces": [
     "server",
-    "web"
+    "web",
+    "desktop"
   ],
   "engines": {
     "node": ">=22"
   },
   "scripts": {
+    "dev:desktop": "npm run tauri:dev --workspace desktop",
+    "check:desktop": "npm run check --workspace desktop",
+    "generate:desktop:types": "npm run generate:types --workspace desktop",
+    "build:desktop:web": "npm run build --workspace desktop",
+    "build:desktop": "npm run tauri:build --workspace desktop",
     "dev": "concurrently -k -n server,web -c blue,green \"cd server && npm run dev\" \"cd web && npm run dev\"",
     "build": "npm run build:web && npm run build:server",
     "start": "node bin/pgdev.mjs",
