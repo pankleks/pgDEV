@@ -67,6 +67,12 @@ Opening Vite in a browser is not a supported application mode.
   pool keeps browsing independent of pinned query-tab transactions.
 - Svelte object-browser integration with search and read-only DDL previews that
   leave query text and transactions unchanged. This is not the final browser UI.
+- Declared varchar/char lengths and editable-grid metadata for conservative
+  single-table SELECTs with a complete, unaliased primary key.
+- Parameterized single-row updates with fresh catalog validation. Primary keys,
+  generated columns and bytea are locked; missing rows fail explicitly. Manual
+  updates use the tab transaction; autocommit edits leave its cursor intact.
+- Prototype row-edit dialog, NULL controls and refresh of the stored row values.
 
 The query engine uses prepared descriptions for metadata and text protocol for
 user values, avoiding lossy generic binary decoding. Page size defaults to 500
@@ -75,8 +81,7 @@ rather than silently discard cursor rows. Statement timeout still bounds the
 work performed by PostgreSQL. The initial raw-text API remains a legacy test
 fixture and is no longer exposed as a Tauri command.
 
-Notices, declared character lengths, editable-grid metadata, exact utility
-command tags, row/table editing, persistence, file operations and
+Notices, exact utility command tags, table editing, persistence, file operations and
 MCP migration are still outstanding. The prototype UI is not the final 1:1 UI.
 The production build has been verified locally on Windows; CI also checks
 macOS/Linux, but their installers still require validation on those platforms.

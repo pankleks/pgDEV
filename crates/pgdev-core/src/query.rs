@@ -16,6 +16,8 @@ pub(crate) struct Metadata {
     names: Vec<String>,
     types: Vec<String>,
     oids: Vec<u32>,
+    lengths: Vec<Option<i32>>,
+    editable: Option<EditableGrid>,
 }
 
 pub(crate) struct Cursor {
@@ -31,12 +33,12 @@ fn page_size(size: u32) -> Result<usize, CoreError> {
     Ok(size as usize)
 }
 
-fn cell(value: Option<&str>, oid: u32) -> Value {
+pub(crate) fn cell(value: Option<&str>, oid: u32) -> Value {
     let Some(value) = value else {
         return Value::Null;
     };
     match oid {
-        16 => Value::Bool(value == "t"),
+        16 => Value::Bool(matches!(value, "t" | "true")),
         21 | 23 | 26 => value
             .parse::<i64>()
             .map(Value::from)
@@ -56,7 +58,12 @@ fn cell(value: Option<&str>, oid: u32) -> Value {
     }
 }
 
-async fn metadata(client: &Client, statement: &str) -> Result<Metadata, CoreError> {
+async fn metadata(
+    client: &Client,
+    statement: &str,
+    standard_strings: bool,
+    in_transaction: bool,
+) -> Result<Metadata, CoreError> {
     let words = sql::leading_words(statement, 1);
     // Preparing ROLLBACK inside an aborted transaction must not prevent the
     // user's recovery. Transaction controls never produce data columns.
@@ -68,6 +75,8 @@ async fn metadata(client: &Client, statement: &str) -> Result<Metadata, CoreErro
             names: vec![],
             types: vec![],
             oids: vec![],
+            lengths: vec![],
+            editable: None,
         });
     }
     let prepared = client.prepare(statement).await?;
@@ -86,6 +95,8 @@ async fn metadata(client: &Client, statement: &str) -> Result<Metadata, CoreErro
         names: vec![],
         types: vec![],
         oids: vec![],
+        lengths: vec![],
+        editable: None,
     };
     for column in prepared.columns() {
         let oid = column.type_().oid();
@@ -96,6 +107,45 @@ async fn metadata(client: &Client, statement: &str) -> Result<Metadata, CoreErro
         result.names.push(column.name().to_owned());
         result.types.push(name);
         result.oids.push(oid);
+        result.lengths.push(
+            if matches!(oid, 1042 | 1043) && column.type_modifier() >= 4 {
+                Some(column.type_modifier() - 4)
+            } else {
+                None
+            },
+        );
+    }
+    if let Some(allowed) = crate::selectshape::plain_columns(statement, standard_strings) {
+        if let Some(oid) = prepared.columns().first().and_then(|c| c.table_oid()) {
+            if prepared
+                .columns()
+                .iter()
+                .all(|c| c.table_oid() == Some(oid))
+            {
+                // Catalog metadata is advisory. Protect an active transaction
+                // from a failed catalog lookup without hiding query failures.
+                if in_transaction {
+                    client.batch_execute("SAVEPOINT pgdev_row_metadata").await?;
+                }
+                match crate::rowedit::info(client, oid).await {
+                    Ok(info) => {
+                        result.editable = info.and_then(|i| {
+                            crate::rowedit::editable(i, &result.names, allowed.as_deref())
+                        });
+                        if in_transaction {
+                            client
+                                .batch_execute("RELEASE SAVEPOINT pgdev_row_metadata")
+                                .await?;
+                        }
+                    }
+                    Err(_) => {
+                        if in_transaction {
+                            client.batch_execute("ROLLBACK TO SAVEPOINT pgdev_row_metadata; RELEASE SAVEPOINT pgdev_row_metadata").await?;
+                        }
+                    }
+                }
+            }
+        }
     }
     Ok(result)
 }
@@ -152,7 +202,7 @@ fn mapped_error(mut error: CoreError, offset: u32, prefix: u32) -> CoreError {
     error
 }
 
-fn with_transaction(mut error: CoreError, owner: &ClientOwner) -> CoreError {
+pub(crate) fn with_transaction(mut error: CoreError, owner: &ClientOwner) -> CoreError {
     error.transaction_open = Some(owner.transaction_id.is_some());
     error.transaction_id = owner.transaction_id.clone();
     error
@@ -226,7 +276,7 @@ impl Database {
             let mut results = Vec::new();
             for (index, statement) in statements.iter().enumerate() {
                 session.ensure_open()?;
-                let meta = metadata(&owner.client, statement.text).await.map_err(|e| mapped_error(e, statement.start_chars, 0))?;
+                let meta = metadata(&owner.client, statement.text, owner.standard_strings, in_transaction).await.map_err(|e| mapped_error(e, statement.start_chars, 0))?;
                 if use_cursor && in_transaction && index + 1 == statements.len() && !meta.names.is_empty() {
                     let name = format!("pgdev_cur_{}", Uuid::new_v4().simple());
                     let savepoint = format!("pgdev_sp_{}", Uuid::new_v4().simple());
@@ -240,7 +290,7 @@ impl Database {
                             let truncated = pending.is_some();
                             if truncated { owner.cursor = Some(Cursor { name, metadata: meta.clone(), pending }); }
                             else { owner.client.batch_execute(&format!("CLOSE \"{name}\"")).await?; }
-                            results.push(QueryResult::Data(DataResult { columns: meta.names, column_types: meta.types, column_type_oids: meta.oids, row_count: rows.len() as u64, rows, truncated, limited: false, total_row_count: None }));
+                            results.push(QueryResult::Data(Box::new(DataResult { columns: meta.names, column_types: meta.types, column_type_oids: meta.oids, column_type_lengths: meta.lengths, editable: meta.editable, row_count: rows.len() as u64, rows, truncated, limited: false, total_row_count: None })));
                             continue;
                         }
                         Err(error) if matches!(error.code().map(|code| code.code()), Some("42601" | "0A000")) => {
@@ -265,7 +315,7 @@ impl Database {
                 if meta.names.is_empty() {
                     results.push(QueryResult::Command(CommandResult { command: sql::leading_words(statement.text, 1).first().cloned().unwrap_or_else(|| "OK".to_owned()), row_count: count }));
                 } else {
-                    results.push(QueryResult::Data(DataResult { columns: meta.names, column_types: meta.types, column_type_oids: meta.oids, row_count: rows.len() as u64, rows, truncated: false, limited, total_row_count: Some(count) }));
+                    results.push(QueryResult::Data(Box::new(DataResult { columns: meta.names, column_types: meta.types, column_type_oids: meta.oids, column_type_lengths: meta.lengths, editable: meta.editable, row_count: rows.len() as u64, rows, truncated: false, limited, total_row_count: Some(count) })));
                 }
             }
             session.ensure_open()?;

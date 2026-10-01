@@ -30,7 +30,7 @@ pub struct QueryResponse {
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum QueryResult {
     Command(CommandResult),
-    Data(DataResult),
+    Data(Box<DataResult>),
 }
 
 #[derive(Debug, Serialize, TS)]
@@ -46,6 +46,8 @@ pub struct DataResult {
     pub columns: Vec<String>,
     pub column_types: Vec<String>,
     pub column_type_oids: Vec<u32>,
+    pub column_type_lengths: Vec<Option<i32>>,
+    pub editable: Option<EditableGrid>,
     #[ts(type = "unknown[][]")]
     pub rows: Vec<Vec<Value>>,
     pub row_count: u64,
@@ -91,6 +93,10 @@ mod tests {
             DdlKind::decl(),
             DdlTarget::decl(),
             DdlResponse::decl(),
+            EditableGrid::decl(),
+            EditableGridColumn::decl(),
+            RowUpdateRequest::decl(),
+            RowUpdateResponse::decl(),
         ] {
             generated.push_str("export ");
             generated.push_str(&declaration.replace("bigint", "number"));
@@ -108,6 +114,45 @@ mod tests {
             "Run the documented contract generation command after changing DTOs"
         );
     }
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+pub struct EditableGridColumn {
+    pub name: String,
+    pub pk: bool,
+    pub generated: bool,
+    pub nullable: bool,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+pub struct EditableGrid {
+    pub schema: String,
+    pub table: String,
+    pub pk: Vec<String>,
+    pub columns: Vec<EditableGridColumn>,
+}
+
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct RowUpdateRequest {
+    pub id: String,
+    pub tab_key: String,
+    pub transaction_id: Option<String>,
+    pub schema: String,
+    pub table: String,
+    #[ts(type = "Record<string, unknown>")]
+    pub key: std::collections::BTreeMap<String, Value>,
+    #[ts(type = "Record<string, unknown>")]
+    pub set: std::collections::BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct RowUpdateResponse {
+    #[ts(type = "Record<string, unknown>")]
+    pub row: std::collections::BTreeMap<String, Value>,
+    pub transaction_open: bool,
+    pub transaction_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, TS)]

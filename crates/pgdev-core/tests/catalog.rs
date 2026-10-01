@@ -10,6 +10,97 @@ use std::{
 };
 use uuid::Uuid;
 
+async fn query_data(
+    f: &Fixture,
+    sql: &str,
+    transaction_id: Option<String>,
+    max_rows: u32,
+) -> pgdev_core::QueryResponse {
+    f.db.query(QueryRequest {
+        id: f.id.clone(),
+        tab_key: "editing".into(),
+        sql: sql.into(),
+        transaction_id,
+        max_rows,
+    })
+    .await
+    .unwrap()
+}
+
+fn row_request(
+    f: &Fixture,
+    table: &str,
+    key: Value,
+    set: Value,
+    transaction_id: Option<String>,
+) -> pgdev_core::RowUpdateRequest {
+    serde_json::from_value(json!({"id": f.id, "tabKey":"editing", "schema":"public", "table":table, "key":key, "set":set, "transactionId": transaction_id})).unwrap()
+}
+
+#[tokio::test]
+#[ignore = "requires PGDEV_TEST_URL and CREATEDB privileges"]
+async fn editable_metadata_and_updates_preserve_paging_and_manual_transactions() {
+    using(|f| async move {
+        f.exec(r#"
+CREATE TABLE public.editable (id bigint PRIMARY KEY, note varchar(20), fixed char(4), amount numeric, payload jsonb, computed integer GENERATED ALWAYS AS (length(note)) STORED, raw bytea, enabled boolean);
+INSERT INTO public.editable(id,note) VALUES (9007199254740993,'first'), (9007199254740994,'second'), (9007199254740995,'third');
+CREATE VIEW public.edit_view AS SELECT * FROM public.editable;
+CREATE TABLE public.no_key (id integer, note text);
+CREATE TABLE public.inherit_parent (id integer PRIMARY KEY);
+CREATE TABLE public.inherit_child () INHERITS (public.inherit_parent);
+CREATE TABLE public.composite (a integer, b text, note text, PRIMARY KEY(a,b));
+INSERT INTO public.composite VALUES (1,'key','old');
+"#).await;
+        let response = query_data(&f,"SELECT * FROM public.editable ORDER BY id",None,1).await;
+        let QueryResult::Data(data) = &response.results[0] else { panic!("Expected data") };
+        assert!(data.truncated);
+        assert_eq!(data.column_type_lengths[1],Some(20));
+        assert_eq!(data.column_type_lengths[2],Some(4));
+        assert_eq!(data.column_type_lengths[3],None);
+        let grid = data.editable.as_ref().unwrap();
+        assert_eq!(grid.pk,["id"]);
+        assert!(grid.columns.iter().any(|c| c.name == "computed" && c.generated));
+        let result = f.db.row_update(row_request(&f,"editable",json!({"id":"9007199254740993"}),json!({"note":"O'Reilly", "amount":"12345678901234567890.123456789", "payload":"{\"x\":12345678901234567890}", "enabled":true}),None)).await.unwrap();
+        assert_eq!(result.row["id"],json!("9007199254740993"));
+        assert_eq!(result.row["amount"],json!("12345678901234567890.123456789"));
+        assert_eq!(result.row["computed"],json!(8));
+        assert_eq!(result.row["enabled"],json!(true));
+        let page = f.db.fetch_more(&f.id,"editing",1).await.unwrap();
+        assert_eq!(page.rows[0][0],json!("9007199254740994"));
+        for sql in ["SELECT id+1 AS id, note FROM public.editable", "SELECT id AS id, note FROM public.editable", "SELECT note FROM public.editable", "SELECT id, id FROM public.editable", "SELECT DISTINCT * FROM public.editable", "SELECT * FROM public.edit_view", "SELECT * FROM public.no_key", "SELECT * FROM public.inherit_parent", "SELECT a FROM public.composite"] {
+            let response = query_data(&f,sql,None,500).await;
+            let QueryResult::Data(data) = &response.results[0] else { panic!("Expected data: {sql}") };
+            assert!(data.editable.is_none(),"Must not be editable: {sql}");
+        }
+        let response = query_data(&f,"SELECT a,b,note FROM public.composite",None,500).await;
+        let QueryResult::Data(data) = &response.results[0] else { panic!("Expected data") };
+        assert_eq!(data.editable.as_ref().unwrap().pk,["a","b"]);
+        for set in [json!({"id":2}),json!({"computed":2}),json!({"raw":"\\x00"}),json!({"missing":1}),json!({"payload":{"x":1}})] {
+            assert!(f.db.row_update(row_request(&f,"editable",json!({"id":"9007199254740993"}),set,None)).await.is_err());
+        }
+        assert!(f.db.row_update(row_request(&f,"composite",json!({"a":1}),json!({"note":"bad"}),None)).await.is_err());
+        let missing = f.db.row_update(row_request(&f,"editable",json!({"id":0}),json!({"note":"missing"}),None)).await.err().unwrap();
+        assert_eq!(missing.code.as_deref(),Some("ROW_NOT_FOUND"));
+        let transaction = query_data(&f,"BEGIN",None,1).await.transaction_id.unwrap();
+        let stale = f.db.row_update(row_request(&f,"editable",json!({"id":"9007199254740993"}),json!({"note":"stale"}),None)).await.err().unwrap();
+        assert_eq!(stale.code.as_deref(),Some("TRANSACTION_CHANGED"));
+        let result = f.db.row_update(row_request(&f,"editable",json!({"id":"9007199254740993"}),json!({"note":null}),Some(transaction.clone()))).await.unwrap();
+        assert!(result.row["note"].is_null());
+        assert_eq!(result.transaction_id.as_deref(),Some(transaction.as_str()));
+        query_data(&f,"ROLLBACK",Some(transaction),1).await;
+        let response = query_data(&f,"SELECT note FROM public.editable WHERE id=9007199254740993",None,500).await;
+        let QueryResult::Data(data) = &response.results[0] else { panic!("Expected data") };
+        assert_eq!(data.rows[0][0],json!("O'Reilly"));
+        let transaction = query_data(&f,"BEGIN",None,1).await.transaction_id.unwrap();
+        let error = f.db.row_update(row_request(&f,"editable",json!({"id":"9007199254740993"}),json!({"amount":"not numeric"}),Some(transaction.clone()))).await.err().unwrap();
+        assert!(error.transaction_open.unwrap());
+        query_data(&f,"ROLLBACK",Some(transaction),1).await;
+        // Fresh catalog validation must reject edits after a table changes.
+        f.exec("ALTER TABLE public.editable DROP COLUMN note CASCADE").await;
+        assert!(f.db.row_update(row_request(&f,"editable",json!({"id":"9007199254740993"}),json!({"note":"stale metadata"}),None)).await.is_err());
+    }).await;
+}
+
 struct Fixture {
     db: Database,
     root: String,

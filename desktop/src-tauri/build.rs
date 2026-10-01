@@ -5,6 +5,7 @@ fn main() {
             "disconnect",
             "schema",
             "ddl",
+            "row_update",
             "query",
             "fetch_more",
             "cancel",

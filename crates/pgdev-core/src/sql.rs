@@ -9,8 +9,9 @@ pub(crate) struct Statement<'a> {
 }
 
 #[derive(Debug, Clone)]
-enum Token {
+pub(crate) enum Token {
     Word(String),
+    Ident(String),
     Literal(String),
     Other(char),
 }
@@ -22,7 +23,7 @@ fn identifier_part(c: char) -> bool {
     identifier_start(c) || c.is_ascii_digit() || c == '$'
 }
 
-fn token(sql: &str, at: usize, standard_strings: bool) -> (usize, Option<Token>) {
+pub(crate) fn token(sql: &str, at: usize, standard_strings: bool) -> (usize, Option<Token>) {
     let bytes = sql.as_bytes();
     let tail = &sql[at..];
     let c = tail.chars().next().unwrap();
@@ -82,7 +83,7 @@ fn token(sql: &str, at: usize, standard_strings: bool) -> (usize, Option<Token>)
             Some(if c == '\'' {
                 Token::Literal(sql[at + 1..end].to_owned())
             } else {
-                Token::Other('"')
+                Token::Ident(sql[at + 1..end].replace("\"\"", "\""))
             }),
         );
     }

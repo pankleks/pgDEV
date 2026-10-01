@@ -6,6 +6,14 @@ use pgdev_core::{
 };
 
 #[tauri::command]
+async fn row_update(
+    database: tauri::State<'_, Database>,
+    request: pgdev_core::RowUpdateRequest,
+) -> Result<pgdev_core::RowUpdateResponse, CoreError> {
+    database.row_update(request).await
+}
+
+#[tauri::command]
 async fn connect(
     database: tauri::State<'_, Database>,
     config: ConnectionConfig,
@@ -76,6 +84,7 @@ fn main() {
             disconnect,
             schema,
             ddl,
+            row_update,
             query,
             fetch_more,
             cancel,

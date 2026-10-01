@@ -3,6 +3,34 @@
   import { api, errorMessage, transactionFromError, type Connected, type QueryResult, type SchemaData, type DdlTarget } from './api'
   import QueryEditor from './QueryEditor.svelte'
   import ObjectBrowser from './ObjectBrowser.svelte'
+  import RowEditor from './RowEditor.svelte'
+  import type { DataResult } from './generated/contracts'
+
+  let editing = $state<{ result: DataResult; rowIndex: number } | null>(null)
+  let editError = $state('')
+  let saving = $state(false)
+
+  async function saveRow(set: Record<string, string | null>) {
+    if (!connection || !editing?.result.editable || saving || running || disconnecting) return
+    const id = connection.id
+    const { result, rowIndex } = editing
+    const grid = result.editable!
+    const key = Object.fromEntries(grid.pk.map(name => [name, result.rows[rowIndex][result.columns.indexOf(name)]]))
+    saving = true
+    editError = ''
+    try {
+      const response = await api.rowUpdate({ id, tabKey, transactionId, schema: grid.schema, table: grid.table, key, set })
+      if (connection?.id !== id) return
+      result.rows[rowIndex] = result.columns.map((name, index) => Object.hasOwn(response.row, name) ? response.row[name] : result.rows[rowIndex][index])
+      transactionId = response.transactionId
+      editing = null
+    } catch (error) {
+      if (connection?.id !== id) return
+      editError = errorMessage(error)
+      const state = transactionFromError(error)
+      if (state !== undefined) transactionId = state
+    } finally { saving = false }
+  }
 
   let catalog = $state<SchemaData | null>(null)
   let catalogLoading = $state(false)
@@ -65,7 +93,7 @@
   }
 
   async function run(sqlToRun: string) {
-    if (!connection || running || disconnecting) return
+    if (!connection || running || disconnecting || saving || editing) return
     running = true
     message = ''
     results = []
@@ -118,7 +146,7 @@
     try {
       await api.disconnect(connection.id)
       connection = null; results = []; transactionId = null; durationMs = null
-      catalog = null; ddlPreview = null; catalogError = ''; ddlError = ''
+      catalog = null; ddlPreview = null; catalogError = ''; ddlError = ''; editing = null; editError = ''
       ++catalogRequest; ++ddlRequest; catalogLoading = false; ddlLoading = false
     }
     catch (error) { message = errorMessage(error) }
@@ -128,12 +156,12 @@
 
 <header><strong>pgDEV</strong><span>Desktop migration prototype</span></header>
 <main>
-  <p class="notice">Integration prototype — not the final 1:1 interface. Object catalog and DDL previews are available alongside typed results, cursor paging and transactions. Editing is not migrated yet.</p>
+  <p class="notice">Integration prototype — not the final 1:1 interface. Object catalog, DDL previews and single-row updates are available alongside typed results, cursor paging and transactions. Table editing is not migrated yet.</p>
   {#if !native}<p class="error">Open this interface through Tauri. Browser operation is not supported.</p>{/if}
   <section class="toolbar">
     {#if connection}
-      <span>Connected · PostgreSQL {connection.pgVersion}</span>
-      <button onclick={disconnect} disabled={disconnecting}>Disconnect</button>
+       <span>Connected · PostgreSQL {connection.pgVersion}</span>
+      <button onclick={disconnect} disabled={disconnecting || saving}>Disconnect</button>
     {:else}
       <label for="connection">Connection string</label>
       <input id="connection" type="password" bind:value={uri} placeholder="postgresql://user:password@localhost/database" autocomplete="off" />
@@ -173,8 +201,8 @@
       {:else}
         {#if result.limited}<p class="notice">Showing {result.rowCount} of {result.totalRowCount} rows. This result is not pageable.</p>{/if}
         <div class="grid"><table>
-          <thead><tr>{#each result.columns as column, col}<th>{column}<small>{result.columnTypes[col]}</small></th>{/each}</tr></thead>
-          <tbody>{#each result.rows as row}<tr>{#each row as cell}<td class:null={cell === null}>{cell === null ? 'NULL' : String(cell)}</td>{/each}</tr>{/each}</tbody>
+           <thead><tr>{#each result.columns as column, col}<th>{column}<small>{result.columnTypes[col]}{result.columnTypeLengths[col] !== null ? `(${result.columnTypeLengths[col]})` : ''}</small></th>{/each}{#if result.editable}<th>Edit</th>{/if}</tr></thead>
+           <tbody>{#each result.rows as row, rowIndex}<tr>{#each row as cell}<td class:null={cell === null}>{cell === null ? 'NULL' : String(cell)}</td>{/each}{#if result.editable}<td><button disabled={running || disconnecting || saving} onclick={() => { editError = ''; editing = { result, rowIndex } }}>Edit row</button></td>{/if}</tr>{/each}</tbody>
         </table></div>
         {#if result.truncated}<button onclick={() => more(index)} disabled={running || disconnecting}>Load next 500 rows</button>{/if}
       {/if}
@@ -183,6 +211,7 @@
   </div>
   </div>
 </main>
+{#if editing}<RowEditor result={editing.result} rowIndex={editing.rowIndex} {saving} error={editError} onsave={saveRow} onclose={() => { editing = null; editError = '' }} />{/if}
 
 <style>
   .workspace { display: flex; gap: 16px; }
