@@ -21,6 +21,7 @@
   import { createQueryWorkspace, createQueryController, tabNeedsConfirmation, tabIsDirty } from './lib/queryWorkspace'
   import { createFileController } from './lib/queryFiles'
   import { createExportController } from './lib/queryExport'
+  import { createClipboardController } from './lib/queryClipboard'
   import type { DataResult, TableEditState, TableEditRequest } from './generated/contracts'
 
   let tableEditing = $state<TableEditState | null>(null)
@@ -117,6 +118,14 @@
   const files = createFileController(workspace, queries, api, () => !native || !sessionReady || appClosing)
   const exports = createExportController(workspace, api, () => connection, () => settings.maxRows, () => !native || appClosing || disconnecting)
   const exportBusy = $derived(workspace.tabs.some(tab => tab.exporting))
+  const clipboard = createClipboardController(workspace, api, () => !native || appClosing)
+  let clipboardBusy = $state(false)
+  async function copyResult(key: string, index: number) {
+    if (clipboardBusy) return
+    clipboardBusy = true
+    try { await clipboard.copy(key, index) }
+    finally { clipboardBusy = false }
+  }
   let fileOpening = $state(false)
   const fileBusy = $derived(fileOpening || workspace.tabs.some(tab => tab.fileSaving))
 
@@ -193,7 +202,7 @@
 
   async function exitApplication(discard = false) {
     if (appClosing) return
-    if (fileBusy || exportBusy) { exitError = 'Wait for the file operation/export to finish, or cancel the export before exiting.'; exitDialog = true; return }
+    if (fileBusy || exportBusy || clipboardBusy) { exitError = 'Wait for file/clipboard operations to finish, or cancel the export before exiting.'; exitDialog = true; return }
     exitDialog = true; appClosing = true; exitError = ''
     try {
       if (!discard) { await saveSession(); await persistSettings() }
@@ -358,6 +367,8 @@
   {#if activeTab.message}<pre class="error" role="alert">{activeTab.message}</pre>{/if}
   {#if activeTab.editorError}<pre class="error" role="alert">{activeTab.editorError}</pre>{/if}
   {#if activeTab.exportMessage}<p class="notice">{activeTab.exportMessage}</p>{/if}
+  {#if activeTab.clipboardMessage}<p class="notice" role="status">{activeTab.clipboardMessage}</p>{/if}
+  {#if activeTab.clipboardError}<pre class="error" role="alert">{activeTab.clipboardError}</pre>{/if}
   {#if activeTab.file}<p class="notice">File: {activeTab.file.displayPath}</p>{/if}
   <NoticePanel output={noticeOutput} />
   {#if durationMs !== null}<p class="notice">Completed in {durationMs} ms</p>{/if}
@@ -367,6 +378,7 @@
       {#if result.kind === 'command'}
         <p class="notice">{result.command}</p>
       {:else}
+        <button onclick={() => copyResult(activeTab.key, index)} disabled={!native || clipboardBusy || appClosing}>Copy loaded rows · TSV</button>
         <button onclick={() => exports.exportCsv(activeTab.key, index)} disabled={!native || running || saving || activeTab.exporting || activeTab.cancelling || activeTab.closing || disconnecting || appClosing || !!activeTab.exports[index]}>{result.limited ? 'Export loaded rows CSV' : 'Export CSV'}</button>
         {#if activeTab.exports[index]}<p class="notice">{activeTab.exports[index].incomplete ? 'Export interrupted. Re-run the query to obtain all rows.' : `${activeTab.exports[index].rows} rows exported; this cursor has been consumed.`}</p>{/if}
         {#if result.limited}<p class="notice">Showing {result.rowCount} of {result.totalRowCount} rows. This result is not pageable.</p>{/if}

@@ -11,3 +11,4 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 pgdev-core = { path = "../../crates/pgdev-core" }
 tauri-plugin-dialog = "2"
+tauri-plugin-clipboard-manager = "2"

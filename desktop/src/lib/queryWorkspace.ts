@@ -18,6 +18,8 @@ export interface QueryTab {
   exportCancelRequested: boolean
   exports: Record<number, { rows: number; incomplete: boolean; path?: string }>
   exportMessage: string
+  clipboardMessage: string
+  clipboardError: string
   results: QueryResult[]
   transactionId: string | null
   durationMs: number | null
@@ -34,7 +36,7 @@ type QueryApi = Pick<typeof api, 'query' | 'fetchMore' | 'cancel' | 'closeSessio
 const emptyNotices = (): NoticeOutput => ({ notices: [], noticesTruncated: false })
 
 export function createQueryTab(key: string, title: string, sql = ''): QueryTab {
-  return { key, title, sql, sqlError: null, editorError: '', file: null, savedSql: null, fileSaving: false, exporting: false, exportCancelRequested: false, exports: {}, exportMessage: '', results: [], transactionId: null, durationMs: null, message: '', running: false, cancelling: false, saving: false, closing: false, operation: 0, notices: emptyNotices() }
+  return { key, title, sql, sqlError: null, editorError: '', file: null, savedSql: null, fileSaving: false, exporting: false, exportCancelRequested: false, exports: {}, exportMessage: '', clipboardMessage: '', clipboardError: '', results: [], transactionId: null, durationMs: null, message: '', running: false, cancelling: false, saving: false, closing: false, operation: 0, notices: emptyNotices() }
 }
 export function createQueryWorkspace(takeKey: () => string = () => crypto.randomUUID()): QueryWorkspace {
   const tab = createQueryTab(takeKey(), 'Query 1', 'SELECT current_database(), version();')
@@ -89,6 +91,7 @@ export function createQueryController(
       tab.results = []; tab.transactionId = null; tab.durationMs = null; tab.message = ''
       tab.sqlError = null; tab.editorError = ''
       tab.exports = {}; tab.exportMessage = ''
+      tab.clipboardMessage = ''; tab.clipboardError = ''
       tab.running = false; tab.cancelling = false; tab.saving = false; tab.closing = false; tab.notices = emptyNotices()
     }
   }
@@ -100,6 +103,7 @@ export function createQueryController(
     tab.running = true; tab.message = ''; tab.results = []; tab.durationMs = null; tab.notices = emptyNotices()
     tab.sqlError = null; tab.editorError = ''
     tab.exports = {}; tab.exportMessage = ''
+    tab.clipboardMessage = ''; tab.clipboardError = ''
     try {
       const response = await transport.query({ id, tabKey: key, sql, transactionId: tab.transactionId, maxRows: sanitizeSettings({ maxRows: getMaxRows() }).maxRows })
       if (!current(tab, id, operation)) return false

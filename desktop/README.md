@@ -38,6 +38,8 @@ Formatting/error-position tests: `node --import tsx --test test/native-sql-editi
 Parameter-template tests: `node --import tsx --test test/native-parameter-mapping.mjs`.
 Native-file lifecycle tests: `node --import tsx --test test/native-query-files.mjs`.
 Streaming CSV tests: `node --import tsx --test test/native-query-export.mjs`.
+Clipboard TSV tests: `node --import tsx --test test/native-query-clipboard.mjs`.
+Native clipboard payload validation: `cargo test -p pgdev-desktop --locked`.
 
 Query transport types in `src/generated/contracts.ts` come from Rust DTOs.
 Regenerate them with `npm run generate:desktop:types`; the regular Rust test
@@ -156,6 +158,16 @@ use PNG (Linux), ICO (Windows) and ICNS (macOS) assets in `src-tauri/icons`.
   conflicts are checked before atomic replacement (best effort, not CAS).
   Closing/disconnecting is blocked until export stops; cancellation uses the
   query socket's separate cancellation path when a fetch is in flight.
+- Explicit copying of loaded result rows to the system clipboard as plain TSV,
+  using the original escaping, spreadsheet-formula neutralization and lossless
+  textual value rules. It never fetches cursor pages or changes database state;
+  partial/limited/consumed grids are labelled as loaded-only copies. UTF-8 output
+  is capped at 8 MiB on both sides of IPC, with CSV export offered for larger data.
+  Copy captures the originating result and suppresses stale status after reruns.
+  Native clipboard access is write-only through a custom bounded command; no
+  read/clear/image/HTML permissions or browser clipboard fallback are enabled.
+  Clipboard failures are visible and leave query results untouched. Manual
+  clipboard validation still requires an interactive desktop on each platform.
 - Object catalog for tables, views, functions, types and sequences, with
   columns, indexes, constraints, triggers and built-in completion metadata.
 - Snapshot-consistent DDL for all eight object kinds. A separate bounded catalog
@@ -190,7 +202,7 @@ rather than silently discard cursor rows. Statement timeout still bounds the
 work performed by PostgreSQL. The initial raw-text API remains a legacy test
 fixture and is no longer exposed as a Tauri command.
 
-Exact utility command tags, final 1:1 table-editor UI, remaining settings/connection persistence, pinned files/import/clipboard and
+Exact utility command tags, final 1:1 table-editor UI, remaining settings/connection persistence, pinned files/import and
 MCP migration are still outstanding. The prototype UI is not the final 1:1 UI.
 The production build has been verified locally on Windows; CI also checks
 macOS/Linux, but their installers still require validation on those platforms.

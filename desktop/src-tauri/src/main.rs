@@ -1,4 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+mod clipboard;
 
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
@@ -213,6 +214,7 @@ async fn close_session(
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(pgdev_core::SqlFiles::default())
         .manage(pgdev_core::CsvExports::default())
         .manage(Database::default())
@@ -234,7 +236,8 @@ fn main() {
             start_csv_export,
             append_csv_export,
             finish_csv_export,
-            abort_csv_export
+            abort_csv_export,
+            clipboard::write_clipboard_text
         ])
         .run(tauri::generate_context!())
         .expect("Could not start pgDEV");

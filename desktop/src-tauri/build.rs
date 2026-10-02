@@ -19,6 +19,7 @@ fn main() {
             "append_csv_export",
             "finish_csv_export",
             "abort_csv_export",
+            "write_clipboard_text",
         ]),
     ))
     .expect("Could not generate desktop permissions");
