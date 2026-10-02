@@ -5,6 +5,8 @@
   import ObjectBrowser from './ObjectBrowser.svelte'
   import RowEditor from './RowEditor.svelte'
   import TableEditor from './TableEditor.svelte'
+  import NoticePanel from './NoticePanel.svelte'
+  import { appendNoticeOutput, errorNotices, type NoticeOutput } from './lib/notices'
   import type { DataResult, TableEditState, TableEditRequest } from './generated/contracts'
 
   let tableEditing = $state<TableEditState | null>(null)
@@ -43,6 +45,7 @@
   let editing = $state<{ result: DataResult; rowIndex: number } | null>(null)
   let editError = $state('')
   let saving = $state(false)
+  let noticeOutput = $state<NoticeOutput>({ notices: [], noticesTruncated: false })
 
   async function saveRow(set: Record<string, string | null>) {
     if (!connection || !editing?.result.editable || saving || running || disconnecting) return
@@ -52,15 +55,18 @@
     const key = Object.fromEntries(grid.pk.map(name => [name, result.rows[rowIndex][result.columns.indexOf(name)]]))
     saving = true
     editError = ''
+    noticeOutput = { notices: [], noticesTruncated: false }
     try {
       const response = await api.rowUpdate({ id, tabKey, transactionId, schema: grid.schema, table: grid.table, key, set })
       if (connection?.id !== id) return
       result.rows[rowIndex] = result.columns.map((name, index) => Object.hasOwn(response.row, name) ? response.row[name] : result.rows[rowIndex][index])
       transactionId = response.transactionId
+      noticeOutput = appendNoticeOutput(noticeOutput, response)
       editing = null
     } catch (error) {
       if (connection?.id !== id) return
       editError = errorMessage(error)
+      noticeOutput = errorNotices(error)
       const state = transactionFromError(error)
       if (state !== undefined) transactionId = state
     } finally { saving = false }
@@ -132,6 +138,7 @@
     message = ''
     results = []
     durationMs = null
+    noticeOutput = { notices: [], noticesTruncated: false }
     const id = connection.id
     try {
       const response = await api.query({ id, tabKey, sql: sqlToRun, transactionId, maxRows: 500 })
@@ -139,10 +146,12 @@
       results = response.results
       transactionId = response.transactionId
       durationMs = response.durationMs
+      noticeOutput = appendNoticeOutput(noticeOutput, response)
     }
     catch (error) {
       if (connection?.id !== id) return
       message = errorMessage(error)
+      noticeOutput = errorNotices(error)
       const state = transactionFromError(error)
       if (state !== undefined) transactionId = state
     }
@@ -161,10 +170,12 @@
       result.rows.push(...page.rows)
       result.rowCount += page.rowCount
       result.truncated = page.truncated
+      noticeOutput = appendNoticeOutput(noticeOutput, page)
     } catch (error) {
       if (connection?.id !== id) return
       message = errorMessage(error)
       result.truncated = false
+      noticeOutput = appendNoticeOutput(noticeOutput, errorNotices(error))
     } finally { running = false }
   }
 
@@ -180,6 +191,7 @@
     try {
       await api.disconnect(connection.id)
       connection = null; results = []; transactionId = null; durationMs = null
+      noticeOutput = { notices: [], noticesTruncated: false }
       catalog = null; ddlPreview = null; catalogError = ''; ddlError = ''; editing = null; editError = ''
       tableEditing = null; tableError = ''; tablePreview = undefined; ++tableRequest; tableLoading = false
       ++catalogRequest; ++ddlRequest; catalogLoading = false; ddlLoading = false
@@ -229,6 +241,7 @@
     </section>
   {/if}
   {#if message}<pre class="error" role="alert">{message}</pre>{/if}
+  <NoticePanel output={noticeOutput} />
   {#if durationMs !== null}<p class="notice">Completed in {durationMs} ms</p>{/if}
   {#each results as result, index}
     <section class="result">
@@ -248,7 +261,7 @@
   </div>
   </div>
 </main>
-{#if editing}<RowEditor result={editing.result} rowIndex={editing.rowIndex} {saving} error={editError} onsave={saveRow} onclose={() => { editing = null; editError = '' }} />{/if}
+{#if editing}<RowEditor result={editing.result} rowIndex={editing.rowIndex} {saving} error={editError} output={noticeOutput} onsave={saveRow} onclose={() => { editing = null; editError = '' }} />{/if}
 {#if tableEditing}<TableEditor state={tableEditing} generating={tableGenerating} error={tableError} preview={tablePreview} ongenerate={generateTableSql} ondirty={() => { tablePreview = undefined; tableError = '' }} onclose={() => { tableEditing = null; tableError = ''; tablePreview = undefined }} />{/if}
 
 <style>

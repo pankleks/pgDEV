@@ -1,4 +1,4 @@
-use futures_util::TryStreamExt;
+use futures_util::{StreamExt, TryStreamExt};
 use postgres_native_tls::MakeTlsConnector;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -13,7 +13,9 @@ use tokio::{
     sync::{Mutex, OwnedSemaphorePermit, Semaphore},
     task::JoinHandle,
 };
-use tokio_postgres::{error::ErrorPosition, CancelToken, Client, Config, SimpleQueryMessage};
+use tokio_postgres::{
+    error::ErrorPosition, AsyncMessage, CancelToken, Client, Config, SimpleQueryMessage,
+};
 use uuid::Uuid;
 
 #[derive(Debug, Serialize)]
@@ -24,6 +26,8 @@ pub struct CoreError {
     pub position: Option<u32>,
     pub transaction_open: Option<bool>,
     pub transaction_id: Option<String>,
+    pub notices: Vec<crate::DatabaseNotice>,
+    pub notices_truncated: bool,
 }
 
 impl CoreError {
@@ -34,6 +38,8 @@ impl CoreError {
             position: None,
             transaction_open: None,
             transaction_id: None,
+            notices: Vec::new(),
+            notices_truncated: false,
         }
     }
 }
@@ -66,6 +72,8 @@ impl From<tokio_postgres::Error> for CoreError {
             }),
             transaction_open: None,
             transaction_id: None,
+            notices: Vec::new(),
+            notices_truncated: false,
         }
     }
 }
@@ -150,6 +158,12 @@ pub(crate) struct CatalogLease {
 }
 
 impl CatalogLease {
+    pub(crate) fn capture_notices(&self) -> crate::notices::NoticeCapture {
+        self.owner
+            .as_ref()
+            .expect("catalog lease owns a client")
+            .capture_notices()
+    }
     pub(crate) fn client(&self) -> &Client {
         &self
             .owner
@@ -192,6 +206,13 @@ pub(crate) struct ClientOwner {
     pub(crate) transaction_failed: bool,
     pub(crate) standard_strings: bool,
     pub(crate) last_used: Instant,
+    notices: crate::notices::NoticeSink,
+}
+
+impl ClientOwner {
+    pub(crate) fn capture_notices(&self) -> crate::notices::NoticeCapture {
+        crate::notices::NoticeCapture::begin(&self.notices)
+    }
 }
 
 impl Drop for ClientOwner {
@@ -248,11 +269,24 @@ fn tls() -> Result<MakeTlsConnector, CoreError> {
 }
 
 async fn open(config: &Config, timeout: u32) -> Result<ClientOwner, CoreError> {
-    let (client, connection) = config.connect(tls()?).await?;
+    let (client, mut connection) = config.connect(tls()?).await?;
+    let notices = crate::notices::NoticeSink::default();
+    let sink = notices.clone();
     let driver = tokio::spawn(async move {
         // Query callers receive connection errors through Client. Do not log
         // credentials, SQL or connection strings from driver errors.
-        let _ = connection.await;
+        let messages = futures_util::stream::poll_fn(move |cx| connection.poll_message(cx));
+        let mut messages = std::pin::pin!(messages);
+        while let Some(message) = messages.next().await {
+            match message {
+                Ok(AsyncMessage::Notice(notice)) => sink
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .record(notice),
+                Err(_) => break,
+                _ => {}
+            }
+        }
     });
     let mut owner = ClientOwner {
         client,
@@ -262,6 +296,7 @@ async fn open(config: &Config, timeout: u32) -> Result<ClientOwner, CoreError> {
         transaction_failed: false,
         standard_strings: true,
         last_used: Instant::now(),
+        notices,
     };
     owner
         .client

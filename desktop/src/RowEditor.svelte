@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte'
   import type { DataResult } from './generated/contracts'
+  import NoticePanel from './NoticePanel.svelte'
+  import type { NoticeOutput } from './lib/notices'
 
-  let { result, rowIndex, saving, error, onsave, onclose }: { result: DataResult; rowIndex: number; saving: boolean; error: string; onsave: (set: Record<string, string | null>) => void; onclose: () => void } = $props()
+  let { result, rowIndex, saving, error, output, onsave, onclose }: { result: DataResult; rowIndex: number; saving: boolean; error: string; output: NoticeOutput; onsave: (set: Record<string, string | null>) => void; onclose: () => void } = $props()
   let fields = $state(untrack(() => (result.editable?.columns ?? []).map(column => {
     const index = result.columns.indexOf(column.name)
     const initial = result.rows[rowIndex][index]
@@ -25,6 +27,7 @@
         </div>
       {/each}
       {#if error}<pre class="error" role="alert">{error}</pre>{/if}
+      <NoticePanel {output} />
       <div class="toolbar">
         <button type="submit" disabled={saving || !Object.keys(changes).length}>{saving ? 'Saving…' : 'Save row'}</button>
         <button type="button" onclick={onclose} disabled={saving}>Cancel</button>

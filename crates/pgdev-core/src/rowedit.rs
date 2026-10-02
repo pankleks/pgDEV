@@ -249,13 +249,17 @@ impl Database {
             return Err(crate::query::with_transaction(error, &owner));
         }
         let manual = owner.transaction_id.is_some();
-        let result = if manual {
-            update(&owner.client, &request).await
+        let (result, (notices, notices_truncated)) = if manual {
+            let capture = owner.capture_notices();
+            let result = update(&owner.client, &request).await;
+            (result, capture.finish())
         } else {
             // A pageable result owns an implicit transaction on the tab client.
             // Use another socket so an autocommit edit cannot join that snapshot.
             let lease = self.catalog_client(&request.id).await?;
-            update(lease.client(), &request).await
+            let capture = lease.capture_notices();
+            let result = update(lease.client(), &request).await;
+            (result, capture.finish())
         };
         owner.last_used = Instant::now();
         match result {
@@ -263,8 +267,12 @@ impl Database {
                 row,
                 transaction_open: manual,
                 transaction_id: owner.transaction_id.clone(),
+                notices,
+                notices_truncated,
             }),
-            Err(error) => {
+            Err(mut error) => {
+                error.notices = notices;
+                error.notices_truncated = notices_truncated;
                 if owner.client.is_closed() || session.ensure_open().is_err() {
                     owner.transaction_id = None;
                 } else if manual && error.code.as_ref().is_some_and(|c| c.len() == 5) {

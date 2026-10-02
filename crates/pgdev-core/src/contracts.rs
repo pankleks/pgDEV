@@ -24,6 +24,8 @@ pub struct QueryResponse {
     pub duration_ms: u64,
     pub transaction_open: bool,
     pub transaction_id: Option<String>,
+    pub notices: Vec<DatabaseNotice>,
+    pub notices_truncated: bool,
 }
 
 #[derive(Debug, Serialize, TS)]
@@ -63,6 +65,8 @@ pub struct FetchMoreResponse {
     pub rows: Vec<Vec<Value>>,
     pub row_count: u64,
     pub truncated: bool,
+    pub notices: Vec<DatabaseNotice>,
+    pub notices_truncated: bool,
 }
 
 #[cfg(test)]
@@ -104,6 +108,7 @@ mod tests {
             TableEditColumnInput::decl(),
             TableEditRequest::decl(),
             TableEditResponse::decl(),
+            DatabaseNotice::decl(),
         ] {
             generated.push_str("export ");
             generated.push_str(&declaration.replace("bigint", "number"));
@@ -238,6 +243,18 @@ pub struct RowUpdateResponse {
     pub row: std::collections::BTreeMap<String, Value>,
     pub transaction_open: bool,
     pub transaction_id: Option<String>,
+    pub notices: Vec<DatabaseNotice>,
+    pub notices_truncated: bool,
+}
+
+#[derive(Debug, Serialize, TS)]
+pub struct DatabaseNotice {
+    pub severity: String,
+    pub code: String,
+    pub message: String,
+    pub detail: Option<String>,
+    pub hint: Option<String>,
+    pub context: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, TS)]

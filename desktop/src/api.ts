@@ -1,11 +1,11 @@
 import { invoke } from '@tauri-apps/api/core'
 
-import type { QueryRequest, QueryResponse, FetchMoreResponse, SchemaData, DdlTarget, DdlResponse, RowUpdateRequest, RowUpdateResponse, TableEditState, TableEditRequest, TableEditResponse } from './generated/contracts'
+import type { QueryRequest, QueryResponse, FetchMoreResponse, SchemaData, DdlTarget, DdlResponse, RowUpdateRequest, RowUpdateResponse, TableEditState, TableEditRequest, TableEditResponse, DatabaseNotice } from './generated/contracts'
 export type { QueryResult, DataResult, SchemaData, DdlTarget } from './generated/contracts'
 
 // Query DTOs are generated from Rust and checked by a Rust unit test.
 export interface Connected { id: string; pgVersion: string }
-export interface CoreError { message: string; code: string | null; position: number | null; transactionOpen?: boolean | null; transactionId?: string | null }
+export interface CoreError { message: string; code: string | null; position: number | null; transactionOpen?: boolean | null; transactionId?: string | null; notices?: DatabaseNotice[]; noticesTruncated?: boolean }
 
 export function transactionFromError(error: unknown): string | null | undefined {
   if (typeof error === 'object' && error !== null && 'transactionOpen' in error && typeof error.transactionOpen === 'boolean') {

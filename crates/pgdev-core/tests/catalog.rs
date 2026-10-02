@@ -114,6 +114,34 @@ fn table_request(state: &pgdev_core::TableEditState) -> pgdev_core::TableEditReq
 }
 
 #[tokio::test]
+#[ignore = "requires PGDEV_TEST_URL and CREATEDB privileges"]
+async fn row_update_notices_follow_the_write_socket_on_success_and_failure() {
+    using(|f| async move {
+        f.exec(r#"
+CREATE TABLE public.notice_edits (id integer PRIMARY KEY, note text);
+INSERT INTO public.notice_edits VALUES (1,'old');
+CREATE FUNCTION public.notice_update() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+  RAISE NOTICE 'updating %',NEW.id;
+  IF NEW.note = 'fail' THEN RAISE EXCEPTION 'trigger refused'; END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER notice_update BEFORE UPDATE ON public.notice_edits FOR EACH ROW EXECUTE FUNCTION public.notice_update();
+"#).await;
+        let result = f.db.row_update(row_request(&f,"notice_edits",json!({"id":1}),json!({"note":"new"}),None)).await.unwrap();
+        assert_eq!(result.notices.len(),1); assert_eq!(result.notices[0].message,"updating 1");
+        let error = f.db.row_update(row_request(&f,"notice_edits",json!({"id":1}),json!({"note":"fail"}),None)).await.err().unwrap();
+        assert_eq!(error.notices.len(),1); assert_eq!(error.notices[0].message,"updating 1");
+        let transaction = query_data(&f,"BEGIN",None,500).await.transaction_id.unwrap();
+        let result = f.db.row_update(row_request(&f,"notice_edits",json!({"id":1}),json!({"note":"manual"}),Some(transaction.clone()))).await.unwrap();
+        assert_eq!(result.notices.len(),1); assert_eq!(result.transaction_id.as_deref(),Some(transaction.as_str()));
+        let error = f.db.row_update(row_request(&f,"notice_edits",json!({"id":1}),json!({"note":"fail"}),Some(transaction.clone()))).await.err().unwrap();
+        assert_eq!(error.notices.len(),1); assert_eq!(error.transaction_open,Some(true));
+        query_data(&f,"ROLLBACK",Some(transaction),500).await;
+        assert!(query_data(&f,"SELECT 1",None,500).await.notices.is_empty());
+    }).await;
+}
+
+#[tokio::test]
 #[ignore = "requires PGDEV_TEST_URL, CREATEDB privileges and npm dependencies"]
 async fn table_editor_state_fingerprint_and_change_scripts_match_reference() {
     using(|f| async move {

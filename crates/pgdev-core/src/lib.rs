@@ -2,6 +2,7 @@
 //! later, the MCP service; neither transport should own database sessions.
 mod catalog;
 mod contracts;
+mod notices;
 mod postgres;
 mod query;
 mod rowedit;

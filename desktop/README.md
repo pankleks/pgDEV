@@ -29,6 +29,7 @@ unique PID-suffixed scratch databases, compare Rust metadata and DDL against the
 existing backend through a test-only Node helper, and clean up after assertions.
 Run all core tests with `cargo test -p pgdev-core --locked -- --include-ignored`.
 Browser-tree helper tests: `node --import tsx --test test/native-catalog-tree.mjs`.
+Notice-output helper tests: `node --import tsx --test test/native-notices.mjs`.
 
 Query transport types in `src/generated/contracts.ts` come from Rust DTOs.
 Regenerate them with `npm run generate:desktop:types`; the regular Rust test
@@ -81,6 +82,12 @@ Opening Vite in a browser is not a supported application mode.
   executes the script or joins the tab transaction.
 - Prototype table dialog with SQL preview. Scripts are reviewed and executed
   through the query editor, not applied automatically by the dialog.
+- PostgreSQL notices/warnings (severity, SQLSTATE, message, detail, hint and
+  context) on query, paging and row-update success or failure. Per-operation
+  capture is isolated by socket and bounded to 1000 messages / a 1 MiB notice budget;
+  omitted messages are explicitly flagged. Messages are not sent to logs.
+- Svelte message panel, including notices raised before errors and in update
+  triggers. Accumulated paging output is bounded in the frontend as well.
 
 The query engine uses prepared descriptions for metadata and text protocol for
 user values, avoiding lossy generic binary decoding. Page size defaults to 500
@@ -89,7 +96,7 @@ rather than silently discard cursor rows. Statement timeout still bounds the
 work performed by PostgreSQL. The initial raw-text API remains a legacy test
 fixture and is no longer exposed as a Tauri command.
 
-Notices, exact utility command tags, final 1:1 table-editor UI, persistence, file operations and
+Exact utility command tags, final 1:1 table-editor UI, persistence, file operations and
 MCP migration are still outstanding. The prototype UI is not the final 1:1 UI.
 The production build has been verified locally on Windows; CI also checks
 macOS/Linux, but their installers still require validation on those platforms.

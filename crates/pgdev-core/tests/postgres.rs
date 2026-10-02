@@ -219,6 +219,139 @@ fn data(response: &QueryResponse, index: usize) -> &pgdev_core::DataResult {
 
 #[tokio::test]
 #[ignore = "requires a live PostgreSQL server via PGDEV_TEST_URL"]
+async fn notices_preserve_order_fields_errors_and_transaction_identity() {
+    let db = Database::default();
+    let connection = db.connect(live_config()).await.unwrap();
+    let id = &connection.id;
+    let response = db.query(request(id,"notices",r#"DO $$ BEGIN
+      RAISE NOTICE 'first ą😀';
+      RAISE WARNING USING MESSAGE = 'second', ERRCODE = '01000', DETAIL = 'diagnostic detail', HINT = 'diagnostic hint';
+    END $$; SELECT 7 AS value"#,None,500)).await.unwrap();
+    assert_eq!(response.notices.len(), 2);
+    assert_eq!(response.notices[0].message, "first ą😀");
+    assert_eq!(response.notices[0].severity, "NOTICE");
+    assert_eq!(response.notices[1].severity, "WARNING");
+    assert_eq!(response.notices[1].code, "01000");
+    assert_eq!(
+        response.notices[1].detail.as_deref(),
+        Some("diagnostic detail")
+    );
+    assert_eq!(response.notices[1].hint.as_deref(), Some("diagnostic hint"));
+    assert!(response.notices[1]
+        .context
+        .as_ref()
+        .unwrap()
+        .contains("PL/pgSQL"));
+    assert!(!response.notices_truncated);
+    assert_eq!(data(&response, 1).rows[0][0], json!(7));
+    let response = db
+        .query(request(id, "notices", "SELECT 8", None, 500))
+        .await
+        .unwrap();
+    assert!(response.notices.is_empty());
+    let transaction = db
+        .query(request(id, "notices", "BEGIN", None, 500))
+        .await
+        .unwrap()
+        .transaction_id
+        .unwrap();
+    let error = db
+        .query(request(
+            id,
+            "notices",
+            r#"DO $$ BEGIN RAISE NOTICE 'before failure'; RAISE EXCEPTION 'broken'; END $$"#,
+            Some(&transaction),
+            500,
+        ))
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(error.code.as_deref(), Some("P0001"));
+    assert_eq!(error.notices.len(), 1);
+    assert_eq!(error.notices[0].message, "before failure");
+    assert_eq!(error.transaction_id.as_deref(), Some(transaction.as_str()));
+    assert_eq!(error.transaction_open, Some(true));
+    db.query(request(id, "notices", "ROLLBACK", Some(&transaction), 500))
+        .await
+        .unwrap();
+    let (a,b) = tokio::join!(
+        db.query(request(id,"notice_a","DO $$ BEGIN RAISE NOTICE 'alpha'; PERFORM pg_sleep(0.05); RAISE NOTICE 'alpha second'; END $$",None,500)),
+        db.query(request(id,"notice_b","DO $$ BEGIN RAISE NOTICE 'beta'; END $$",None,500))
+    );
+    assert_eq!(
+        a.unwrap()
+            .notices
+            .iter()
+            .map(|n| n.message.as_str())
+            .collect::<Vec<_>>(),
+        ["alpha", "alpha second"]
+    );
+    assert_eq!(b.unwrap().notices[0].message, "beta");
+    db.disconnect(id).await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires a live PostgreSQL server via PGDEV_TEST_URL"]
+async fn cursor_fetches_capture_only_new_notices_and_floods_are_bounded() {
+    let db = Database::default();
+    let connection = db.connect(live_config()).await.unwrap();
+    let id = &connection.id;
+    db.query(request(id,"notice_pages",r#"CREATE TEMP TABLE pgdev_notice_fixture(n integer);
+      CREATE FUNCTION pg_temp.notice_row(i integer) RETURNS integer LANGUAGE plpgsql AS $$ BEGIN RAISE NOTICE 'row %',i; RETURN i; END $$"#,None,500)).await.unwrap();
+    let response = db
+        .query(request(
+            id,
+            "notice_pages",
+            "SELECT pg_temp.notice_row(i) FROM generate_series(1,5) AS g(i)",
+            None,
+            1,
+        ))
+        .await
+        .unwrap();
+    let mut rows = data(&response, 0).rows.clone();
+    let mut messages = response
+        .notices
+        .into_iter()
+        .map(|n| n.message)
+        .collect::<Vec<_>>();
+    assert!(db
+        .query(request(id, "other_notice_tab", "SELECT 1", None, 1))
+        .await
+        .unwrap()
+        .notices
+        .is_empty());
+    let mut more = true;
+    while more {
+        let page = db.fetch_more(id, "notice_pages", 1).await.unwrap();
+        more = page.truncated;
+        rows.extend(page.rows);
+        messages.extend(page.notices.into_iter().map(|n| n.message));
+    }
+    assert_eq!(messages, ["row 1", "row 2", "row 3", "row 4", "row 5"]);
+    assert_eq!(rows.len(), 5);
+    let flood = db
+        .query(request(
+            id,
+            "notice_pages",
+            "DO $$ BEGIN FOR i IN 1..1005 LOOP RAISE NOTICE 'item %',i; END LOOP; END $$",
+            None,
+            500,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(flood.notices.len(), 1000);
+    assert!(flood.notices_truncated);
+    let clean = db
+        .query(request(id, "notice_pages", "SELECT 1", None, 500))
+        .await
+        .unwrap();
+    assert!(clean.notices.is_empty());
+    assert!(!clean.notices_truncated);
+    db.disconnect(id).await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires a live PostgreSQL server via PGDEV_TEST_URL"]
 async fn typed_cursor_pages_have_no_gaps_and_preserve_types() {
     let db = Database::default();
     let connection = db.connect(live_config()).await.unwrap();

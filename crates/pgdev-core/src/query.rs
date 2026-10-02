@@ -267,6 +267,7 @@ impl Database {
         let implicit = !continuing && !manual && !autocommit;
         let use_cursor = implicit && statements.iter().all(|s| sql::cursor_candidate(s.text));
         let start = Instant::now();
+        let notices = owner.capture_notices();
         let mut in_transaction = continuing;
         let outcome: Result<Vec<QueryResult>, CoreError> = async {
             if implicit {
@@ -343,15 +344,18 @@ impl Database {
                 } else if in_transaction {
                     let _ = owner.client.batch_execute("ROLLBACK").await;
                 }
-                return Err(with_transaction(error, &owner));
+                return Err(notices.error(with_transaction(error, &owner)));
             }
         };
         owner.last_used = Instant::now();
+        let (notices, notices_truncated) = notices.finish();
         Ok(QueryResponse {
             results,
             duration_ms: start.elapsed().as_millis() as u64,
             transaction_open: owner.transaction_id.is_some(),
             transaction_id: owner.transaction_id.clone(),
+            notices,
+            notices_truncated,
         })
     }
 
@@ -373,6 +377,7 @@ impl Database {
             .cursor
             .take()
             .ok_or_else(|| CoreError::local("No more rows are available"))?;
+        let notices = owner.capture_notices();
         let outcome: Result<FetchMoreResponse, CoreError> = async {
             let mut rows = cursor.pending.take().into_iter().collect::<Vec<_>>();
             let remaining = cap + 1 - rows.len();
@@ -417,6 +422,8 @@ impl Database {
                 row_count: rows.len() as u64,
                 rows,
                 truncated,
+                notices: Vec::new(),
+                notices_truncated: false,
             })
         }
         .await;
@@ -425,10 +432,20 @@ impl Database {
             let _ = owner.client.batch_execute("ROLLBACK").await;
         }
         owner.last_used = Instant::now();
-        outcome.map_err(|mut error| {
-            error.position = None;
-            error
-        })
+        let (notices, notices_truncated) = notices.finish();
+        match outcome {
+            Ok(mut response) => {
+                response.notices = notices;
+                response.notices_truncated = notices_truncated;
+                Ok(response)
+            }
+            Err(mut error) => {
+                error.position = None;
+                error.notices = notices;
+                error.notices_truncated = notices_truncated;
+                Err(error)
+            }
+        }
     }
 }
 
