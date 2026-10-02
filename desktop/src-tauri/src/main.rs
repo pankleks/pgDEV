@@ -4,6 +4,56 @@ use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 
 #[tauri::command]
+async fn start_csv_export(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let selected = app
+            .dialog()
+            .file()
+            .add_filter("CSV result", &["csv"])
+            .set_file_name("result.csv")
+            .blocking_save_file();
+        let Some(selected) = selected else {
+            return Ok(None);
+        };
+        let path = selected.into_path().map_err(|_| "Unsupported CSV path")?;
+        app.state::<pgdev_core::CsvExports>().start(&path).map(Some)
+    })
+    .await
+    .map_err(|_| "CSV export operation failed".to_owned())?
+}
+
+#[tauri::command]
+async fn append_csv_export(
+    app: tauri::AppHandle,
+    token: String,
+    chunk: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<pgdev_core::CsvExports>().append(&token, &chunk)
+    })
+    .await
+    .map_err(|_| "CSV export operation failed".to_owned())?
+}
+
+#[tauri::command]
+async fn finish_csv_export(app: tauri::AppHandle, token: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<pgdev_core::CsvExports>().finish(&token)
+    })
+    .await
+    .map_err(|_| "CSV export operation failed".to_owned())?
+}
+
+#[tauri::command]
+async fn abort_csv_export(app: tauri::AppHandle, token: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<pgdev_core::CsvExports>().abort(&token)
+    })
+    .await
+    .map_err(|_| "CSV export operation failed".to_owned())
+}
+
+#[tauri::command]
 async fn open_sql_file(app: tauri::AppHandle) -> Result<Option<pgdev_core::OpenSqlFile>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let selected = app
@@ -164,6 +214,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(pgdev_core::SqlFiles::default())
+        .manage(pgdev_core::CsvExports::default())
         .manage(Database::default())
         .invoke_handler(tauri::generate_handler![
             connect,
@@ -179,7 +230,11 @@ fn main() {
             close_session,
             open_sql_file,
             save_sql_file,
-            release_sql_file
+            release_sql_file,
+            start_csv_export,
+            append_csv_export,
+            finish_csv_export,
+            abort_csv_export
         ])
         .run(tauri::generate_context!())
         .expect("Could not start pgDEV");

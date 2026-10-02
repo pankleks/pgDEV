@@ -14,6 +14,10 @@ export interface QueryTab {
   file: SqlFileInfo | null
   savedSql: string | null
   fileSaving: boolean
+  exporting: boolean
+  exportCancelRequested: boolean
+  exports: Record<number, { rows: number; incomplete: boolean; path?: string }>
+  exportMessage: string
   results: QueryResult[]
   transactionId: string | null
   durationMs: number | null
@@ -30,7 +34,7 @@ type QueryApi = Pick<typeof api, 'query' | 'fetchMore' | 'cancel' | 'closeSessio
 const emptyNotices = (): NoticeOutput => ({ notices: [], noticesTruncated: false })
 
 export function createQueryTab(key: string, title: string, sql = ''): QueryTab {
-  return { key, title, sql, sqlError: null, editorError: '', file: null, savedSql: null, fileSaving: false, results: [], transactionId: null, durationMs: null, message: '', running: false, cancelling: false, saving: false, closing: false, operation: 0, notices: emptyNotices() }
+  return { key, title, sql, sqlError: null, editorError: '', file: null, savedSql: null, fileSaving: false, exporting: false, exportCancelRequested: false, exports: {}, exportMessage: '', results: [], transactionId: null, durationMs: null, message: '', running: false, cancelling: false, saving: false, closing: false, operation: 0, notices: emptyNotices() }
 }
 export function createQueryWorkspace(takeKey: () => string = () => crypto.randomUUID()): QueryWorkspace {
   const tab = createQueryTab(takeKey(), 'Query 1', 'SELECT current_database(), version();')
@@ -55,7 +59,7 @@ export function createQueryController(
   getMaxRows: () => number = () => 500,
 ) {
   const find = (key: string) => workspace.tabs.find(tab => tab.key === key)
-  const busy = (tab: QueryTab) => tab.running || tab.cancelling || tab.saving || tab.closing
+  const busy = (tab: QueryTab) => tab.running || tab.cancelling || tab.saving || tab.closing || tab.exporting
   const current = (tab: QueryTab, id: string, operation: number) => getConnection()?.id === id && workspace.tabs.includes(tab) && tab.operation === operation
   function failure(tab: QueryTab, error: unknown, append = false) {
     tab.message = errorMessage(error)
@@ -84,6 +88,7 @@ export function createQueryController(
       ++tab.operation
       tab.results = []; tab.transactionId = null; tab.durationMs = null; tab.message = ''
       tab.sqlError = null; tab.editorError = ''
+      tab.exports = {}; tab.exportMessage = ''
       tab.running = false; tab.cancelling = false; tab.saving = false; tab.closing = false; tab.notices = emptyNotices()
     }
   }
@@ -94,6 +99,7 @@ export function createQueryController(
     const submission: SqlSubmission = source ? { ...source, sql } : { sql, documentSql: tab.sql, startOffset: 0 }
     tab.running = true; tab.message = ''; tab.results = []; tab.durationMs = null; tab.notices = emptyNotices()
     tab.sqlError = null; tab.editorError = ''
+    tab.exports = {}; tab.exportMessage = ''
     try {
       const response = await transport.query({ id, tabKey: key, sql, transactionId: tab.transactionId, maxRows: sanitizeSettings({ maxRows: getMaxRows() }).maxRows })
       if (!current(tab, id, operation)) return false
@@ -152,7 +158,7 @@ export function createQueryController(
     const tab = find(key), connection = getConnection()
     // An autocommit row write uses another socket: do not close its UI while
     // the write is still in flight. Running SQL may be explicitly abandoned.
-    if (!tab || tab.closing || tab.saving || tab.fileSaving || tab.cancelling || disabled()) return false
+    if (!tab || tab.closing || tab.saving || tab.fileSaving || tab.exporting || tab.cancelling || disabled()) return false
     const operation = tab.operation
     const stillCurrent = () => workspace.tabs.includes(tab) && tab.operation === operation && getConnection()?.id === connection?.id
     tab.closing = true

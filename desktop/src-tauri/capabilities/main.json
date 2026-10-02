@@ -3,5 +3,5 @@
   "identifier": "main",
   "description": "Only the bundled primary desktop window may invoke the database prototype.",
   "windows": ["main"],
-  "permissions": ["core:default", "core:window:allow-destroy", "allow-connect", "allow-disconnect", "allow-schema", "allow-ddl", "allow-row-update", "allow-table-edit-state", "allow-table-edit-ddl", "allow-query", "allow-fetch-more", "allow-cancel", "allow-close-session", "allow-open-sql-file", "allow-save-sql-file", "allow-release-sql-file"]
+  "permissions": ["core:default", "core:window:allow-destroy", "allow-connect", "allow-disconnect", "allow-schema", "allow-ddl", "allow-row-update", "allow-table-edit-state", "allow-table-edit-ddl", "allow-query", "allow-fetch-more", "allow-cancel", "allow-close-session", "allow-open-sql-file", "allow-save-sql-file", "allow-release-sql-file", "allow-start-csv-export", "allow-append-csv-export", "allow-finish-csv-export", "allow-abort-csv-export"]
 }

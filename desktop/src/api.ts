@@ -11,6 +11,10 @@ export interface CoreError { message: string; code: string | null; position: num
 export { errorMessage, transactionFromError } from './lib/errors'
 
 export const api = {
+  startCsvExport: () => invoke<string | null>('start_csv_export'),
+  appendCsvExport: (token: string, chunk: string) => invoke<void>('append_csv_export', { token, chunk }),
+  finishCsvExport: (token: string) => invoke<string>('finish_csv_export', { token }),
+  abortCsvExport: (token: string) => invoke<void>('abort_csv_export', { token }),
   openSqlFile: () => invoke<OpenSqlFile | null>('open_sql_file'),
   saveSqlFile: (content: string, token: string | null) => invoke<SqlFileInfo | null>('save_sql_file', { content, token }),
   releaseSqlFile: (token: string) => invoke<void>('release_sql_file', { token }),

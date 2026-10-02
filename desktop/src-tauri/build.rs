@@ -15,6 +15,10 @@ fn main() {
             "open_sql_file",
             "save_sql_file",
             "release_sql_file",
+            "start_csv_export",
+            "append_csv_export",
+            "finish_csv_export",
+            "abort_csv_export",
         ]),
     ))
     .expect("Could not generate desktop permissions");

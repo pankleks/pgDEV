@@ -37,6 +37,7 @@ Settings/routing tests: `node --import tsx --test test/native-settings.mjs`.
 Formatting/error-position tests: `node --import tsx --test test/native-sql-editing.mjs`.
 Parameter-template tests: `node --import tsx --test test/native-parameter-mapping.mjs`.
 Native-file lifecycle tests: `node --import tsx --test test/native-query-files.mjs`.
+Streaming CSV tests: `node --import tsx --test test/native-query-export.mjs`.
 
 Query transport types in `src/generated/contracts.ts` come from Rust DTOs.
 Regenerate them with `npm run generate:desktop:types`; the regular Rust test
@@ -142,6 +143,19 @@ use PNG (Linux), ICO (Windows) and ICNS (macOS) assets in `src-tauri/icons`.
   requires Save As or reopening before being associated with a disk file again.
   New/save-as files use UTF-8 without BOM. Native dialog behavior and installer
   integration still require manual validation on all three platforms.
+- Streaming native CSV export with the original BOM, escaping and spreadsheet
+  formula-neutralization rules. Loaded rows and remaining cursor pages go to
+  bounded IPC chunks (1 MiB maximum); fetched pages are not retained in the UI.
+  Export is scoped to its captured tab/result while other tabs remain usable.
+  Failed/cancelled exports abort staging and leave the destination untouched;
+  failed/lost fetches retire paging and require a rerun, preventing partial
+  re-exports from masquerading as complete data. A first-page write failure or
+  picker cancellation leaves the cursor retryable. Limited, non-pageable results
+  export only their available rows and are explicitly labelled as limited.
+  Native output is capped at 1 GiB with at most eight staged exports. Destination
+  conflicts are checked before atomic replacement (best effort, not CAS).
+  Closing/disconnecting is blocked until export stops; cancellation uses the
+  query socket's separate cancellation path when a fetch is in flight.
 - Object catalog for tables, views, functions, types and sequences, with
   columns, indexes, constraints, triggers and built-in completion metadata.
 - Snapshot-consistent DDL for all eight object kinds. A separate bounded catalog
@@ -176,7 +190,7 @@ rather than silently discard cursor rows. Statement timeout still bounds the
 work performed by PostgreSQL. The initial raw-text API remains a legacy test
 fixture and is no longer exposed as a Tauri command.
 
-Exact utility command tags, final 1:1 table-editor UI, remaining settings/connection persistence, pinned files/import/export and
+Exact utility command tags, final 1:1 table-editor UI, remaining settings/connection persistence, pinned files/import/clipboard and
 MCP migration are still outstanding. The prototype UI is not the final 1:1 UI.
 The production build has been verified locally on Windows; CI also checks
 macOS/Linux, but their installers still require validation on those platforms.

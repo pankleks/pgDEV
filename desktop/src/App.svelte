@@ -20,6 +20,7 @@
   import type { ParameterTarget } from './lib/parameterMapping'
   import { createQueryWorkspace, createQueryController, tabNeedsConfirmation, tabIsDirty } from './lib/queryWorkspace'
   import { createFileController } from './lib/queryFiles'
+  import { createExportController } from './lib/queryExport'
   import type { DataResult, TableEditState, TableEditRequest } from './generated/contracts'
 
   let tableEditing = $state<TableEditState | null>(null)
@@ -114,6 +115,8 @@
   const workspace = $state(createQueryWorkspace())
   const queries = createQueryController(workspace, api, () => connection, () => disconnecting || !sessionReady || !settingsReady || appClosing, undefined, () => settings.maxRows)
   const files = createFileController(workspace, queries, api, () => !native || !sessionReady || appClosing)
+  const exports = createExportController(workspace, api, () => connection, () => settings.maxRows, () => !native || appClosing || disconnecting)
+  const exportBusy = $derived(workspace.tabs.some(tab => tab.exporting))
   let fileOpening = $state(false)
   const fileBusy = $derived(fileOpening || workspace.tabs.some(tab => tab.fileSaving))
 
@@ -143,7 +146,7 @@
   const saving = $derived(activeTab.saving)
   const editingTab = $derived(workspace.tabs.find(tab => tab.key === editing?.tabKey) ?? null)
   const noticeOutput = $derived(activeTab.notices)
-  const anySaving = $derived(workspace.tabs.some(tab => tab.saving))
+  const anySaving = $derived(workspace.tabs.some(tab => tab.saving || tab.exporting))
   let closingKey = $state<string | null>(null)
   const closingTab = $derived(workspace.tabs.find(tab => tab.key === closingKey) ?? null)
   let queryEditor = $state<{ getSql(): string; getSubmission(): SqlSubmission; formatSql(): void; mapParameters(): void; applyParameterScript(target: ParameterTarget, script: string): boolean } | undefined>(undefined)
@@ -164,7 +167,7 @@
   let appClosing = $state(false)
   let exitDialog = $state(false)
   let exitError = $state('')
-  const workInFlight = $derived(workspace.tabs.some(tab => tab.running || tab.saving || tab.cancelling || tab.closing || tab.transactionId !== null))
+  const workInFlight = $derived(workspace.tabs.some(tab => tab.running || tab.saving || tab.exporting || tab.cancelling || tab.closing || tab.transactionId !== null))
   const sessionWriter = createSessionWriter(saveQuerySession)
 
   async function saveSession() {
@@ -190,7 +193,7 @@
 
   async function exitApplication(discard = false) {
     if (appClosing) return
-    if (fileBusy) { exitError = 'Wait for the native file operation to finish before exiting.'; exitDialog = true; return }
+    if (fileBusy || exportBusy) { exitError = 'Wait for the file operation/export to finish, or cancel the export before exiting.'; exitDialog = true; return }
     exitDialog = true; appClosing = true; exitError = ''
     try {
       if (!discard) { await saveSession(); await persistSettings() }
@@ -263,12 +266,13 @@
   }
 
   async function cancel() {
-    await queries.cancel(workspace.activeKey)
+    if (activeTab.exporting) await exports.cancel(activeTab.key)
+    else await queries.cancel(workspace.activeKey)
   }
 
   async function requestCloseTab(key: string) {
     const tab = workspace.tabs.find(tab => tab.key === key)
-    if (!tab || tab.saving || tab.fileSaving || tab.cancelling || tab.closing || disconnecting || editing || tableEditing) return
+    if (!tab || tab.saving || tab.fileSaving || tab.exporting || tab.cancelling || tab.closing || disconnecting || editing || tableEditing) return
     if (tabNeedsConfirmation(tab)) closingKey = key
     else await closeQueryTab(key)
   }
@@ -317,8 +321,8 @@
   <div class="tabs" aria-label="SQL tabs">
     {#each workspace.tabs as tab (tab.key)}
       <div class:active={tab.key === workspace.activeKey} class="tab">
-        <button aria-pressed={tab.key === workspace.activeKey} disabled={!sessionReady || appClosing} onclick={() => queries.activateTab(tab.key)}>{tab.title}{tabIsDirty(tab) ? ' *' : ''}{tab.fileSaving ? ' · saving file' : ''}{tab.running ? ' · running' : ''}{tab.transactionId ? ' · transaction' : ''}</button>
-        <button aria-label={`Close ${tab.title}`} onclick={() => requestCloseTab(tab.key)} disabled={!sessionReady || appClosing || tab.saving || tab.fileSaving || tab.cancelling || tab.closing || disconnecting}>×</button>
+        <button aria-pressed={tab.key === workspace.activeKey} disabled={!sessionReady || appClosing} onclick={() => queries.activateTab(tab.key)}>{tab.title}{tabIsDirty(tab) ? ' *' : ''}{tab.fileSaving ? ' · saving file' : ''}{tab.exporting ? ' · exporting' : ''}{tab.running ? ' · running' : ''}{tab.transactionId ? ' · transaction' : ''}</button>
+        <button aria-label={`Close ${tab.title}`} onclick={() => requestCloseTab(tab.key)} disabled={!sessionReady || appClosing || tab.saving || tab.fileSaving || tab.exporting || tab.cancelling || tab.closing || disconnecting}>×</button>
       </div>
     {/each}
     <button onclick={() => queries.addTab()} disabled={!sessionReady || appClosing || disconnecting}>+ New query</button>
@@ -328,14 +332,14 @@
     <button onclick={openFile} disabled={!native || !sessionReady || appClosing || fileBusy}>Open SQL</button>
     <button onclick={() => saveFile(activeTab.key)} disabled={!native || !sessionReady || appClosing || fileBusy || activeTab.closing}>Save file</button>
     <button onclick={() => saveFile(activeTab.key, true)} disabled={!native || !sessionReady || appClosing || fileBusy || activeTab.closing}>Save as…</button>
-    <button onclick={() => run(queryEditor?.getSubmission() ?? activeTab.sql)} disabled={!connection || running || saving || activeTab.cancelling || activeTab.closing || disconnecting}>Run · F5</button>
+    <button onclick={() => run(queryEditor?.getSubmission() ?? activeTab.sql)} disabled={!connection || running || saving || activeTab.exporting || activeTab.cancelling || activeTab.closing || disconnecting}>Run · F5</button>
     <button onclick={() => queryEditor?.formatSql()} disabled={!sessionReady || appClosing}>Format · Ctrl/Cmd+Shift+F</button>
     <button onclick={() => queryEditor?.mapParameters()} disabled={!sessionReady || appClosing}>Map parameters</button>
-    <button onclick={cancel} disabled={!running || activeTab.cancelling || activeTab.closing || disconnecting}>Cancel</button>
+    <button onclick={cancel} disabled={(!running && !activeTab.exporting) || activeTab.exportCancelRequested || activeTab.cancelling || activeTab.closing || disconnecting}>Cancel</button>
     {#if transactionId}
       <span>Transaction open</span>
-      <button onclick={() => run('COMMIT')} disabled={running || saving || activeTab.cancelling || activeTab.closing || disconnecting}>Commit</button>
-      <button onclick={() => run('ROLLBACK')} disabled={running || saving || activeTab.cancelling || activeTab.closing || disconnecting}>Rollback</button>
+      <button onclick={() => run('COMMIT')} disabled={running || saving || activeTab.exporting || activeTab.cancelling || activeTab.closing || disconnecting}>Commit</button>
+      <button onclick={() => run('ROLLBACK')} disabled={running || saving || activeTab.exporting || activeTab.cancelling || activeTab.closing || disconnecting}>Rollback</button>
     {/if}
   </section>
   {#if sessionReady}<QueryEditor bind:this={queryEditor} tabs={workspace.tabs} activeKey={workspace.activeKey} {catalog} fontSize={settings.editorFontSize} onchange={queries.setSql} onerror={queries.setEditorError} onparameters={openParameters} onopenfile={openFile} onsavefile={saveFile} onrun={run} />{/if}
@@ -353,6 +357,7 @@
   {#if message}<pre class="error" role="alert">{message}</pre>{/if}
   {#if activeTab.message}<pre class="error" role="alert">{activeTab.message}</pre>{/if}
   {#if activeTab.editorError}<pre class="error" role="alert">{activeTab.editorError}</pre>{/if}
+  {#if activeTab.exportMessage}<p class="notice">{activeTab.exportMessage}</p>{/if}
   {#if activeTab.file}<p class="notice">File: {activeTab.file.displayPath}</p>{/if}
   <NoticePanel output={noticeOutput} />
   {#if durationMs !== null}<p class="notice">Completed in {durationMs} ms</p>{/if}
@@ -362,12 +367,14 @@
       {#if result.kind === 'command'}
         <p class="notice">{result.command}</p>
       {:else}
+        <button onclick={() => exports.exportCsv(activeTab.key, index)} disabled={!native || running || saving || activeTab.exporting || activeTab.cancelling || activeTab.closing || disconnecting || appClosing || !!activeTab.exports[index]}>{result.limited ? 'Export loaded rows CSV' : 'Export CSV'}</button>
+        {#if activeTab.exports[index]}<p class="notice">{activeTab.exports[index].incomplete ? 'Export interrupted. Re-run the query to obtain all rows.' : `${activeTab.exports[index].rows} rows exported; this cursor has been consumed.`}</p>{/if}
         {#if result.limited}<p class="notice">Showing {result.rowCount} of {result.totalRowCount} rows. This result is not pageable.</p>{/if}
         <div class="grid"><table>
            <thead><tr>{#each result.columns as column, col}<th>{column}<small>{result.columnTypes[col]}{result.columnTypeLengths[col] !== null ? `(${result.columnTypeLengths[col]})` : ''}</small></th>{/each}{#if result.editable}<th>Edit</th>{/if}</tr></thead>
-           <tbody>{#each result.rows as row, rowIndex}<tr>{#each row as cell}<td class:null={cell === null}>{cell === null ? 'NULL' : String(cell)}</td>{/each}{#if result.editable}<td><button disabled={running || disconnecting || saving || activeTab.closing} onclick={() => { activeTab.message = ''; editing = { tabKey: activeTab.key, resultIndex: index, result, rowIndex } }}>Edit row</button></td>{/if}</tr>{/each}</tbody>
+            <tbody>{#each result.rows as row, rowIndex}<tr>{#each row as cell}<td class:null={cell === null}>{cell === null ? 'NULL' : String(cell)}</td>{/each}{#if result.editable}<td><button disabled={running || disconnecting || saving || activeTab.exporting || activeTab.closing} onclick={() => { activeTab.message = ''; editing = { tabKey: activeTab.key, resultIndex: index, result, rowIndex } }}>Edit row</button></td>{/if}</tr>{/each}</tbody>
         </table></div>
-         {#if result.truncated}<button onclick={() => more(index)} disabled={running || saving || activeTab.cancelling || activeTab.closing || disconnecting}>Load next {settings.maxRows} rows</button>{/if}
+         {#if result.truncated}<button onclick={() => more(index)} disabled={running || saving || activeTab.exporting || activeTab.cancelling || activeTab.closing || disconnecting}>Load next {settings.maxRows} rows</button>{/if}
       {/if}
     </section>
   {/each}
