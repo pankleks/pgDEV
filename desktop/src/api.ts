@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import type { OpenSqlFile, SqlFileInfo } from './generated/contracts'
 
 import type { QueryRequest, QueryResponse, FetchMoreResponse, SchemaData, DdlTarget, DdlResponse, RowUpdateRequest, RowUpdateResponse, TableEditState, TableEditRequest, TableEditResponse, DatabaseNotice } from './generated/contracts'
 export type { QueryResult, DataResult, SchemaData, DdlTarget } from './generated/contracts'
@@ -10,6 +11,9 @@ export interface CoreError { message: string; code: string | null; position: num
 export { errorMessage, transactionFromError } from './lib/errors'
 
 export const api = {
+  openSqlFile: () => invoke<OpenSqlFile | null>('open_sql_file'),
+  saveSqlFile: (content: string, token: string | null) => invoke<SqlFileInfo | null>('save_sql_file', { content, token }),
+  releaseSqlFile: (token: string) => invoke<void>('release_sql_file', { token }),
   connect: (connectionString: string, statementTimeout = 30) => invoke<Connected>('connect', { config: { connectionString, statementTimeout } }),
   disconnect: (id: string) => invoke<void>('disconnect', { id }),
   schema: (id: string) => invoke<SchemaData>('schema', { id }),

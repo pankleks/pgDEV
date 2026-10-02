@@ -18,7 +18,8 @@
   import type { SqlSubmission } from './lib/sqlDiagnostics'
   import ParameterDialog from './ParameterDialog.svelte'
   import type { ParameterTarget } from './lib/parameterMapping'
-  import { createQueryWorkspace, createQueryController, tabNeedsConfirmation } from './lib/queryWorkspace'
+  import { createQueryWorkspace, createQueryController, tabNeedsConfirmation, tabIsDirty } from './lib/queryWorkspace'
+  import { createFileController } from './lib/queryFiles'
   import type { DataResult, TableEditState, TableEditRequest } from './generated/contracts'
 
   let tableEditing = $state<TableEditState | null>(null)
@@ -112,6 +113,28 @@
   const settingsWriter = createSnapshotWriter(saveSettings)
   const workspace = $state(createQueryWorkspace())
   const queries = createQueryController(workspace, api, () => connection, () => disconnecting || !sessionReady || !settingsReady || appClosing, undefined, () => settings.maxRows)
+  const files = createFileController(workspace, queries, api, () => !native || !sessionReady || appClosing)
+  let fileOpening = $state(false)
+  const fileBusy = $derived(fileOpening || workspace.tabs.some(tab => tab.fileSaving))
+
+  async function openFile() {
+    if (fileBusy || appClosing) return
+    fileOpening = true; message = ''
+    try { await files.open() }
+    catch (error) { message = errorMessage(error) }
+    finally { fileOpening = false }
+  }
+  async function saveFile(key: string, saveAs = false) {
+    if (!fileBusy && !appClosing) await files.save(key, saveAs)
+  }
+
+  async function closeQueryTab(key: string) {
+    const token = workspace.tabs.find(tab => tab.key === key)?.file?.token
+    if (!await queries.closeTab(key)) return false
+    try { await files.release(token) }
+    catch (error) { message = errorMessage(error) }
+    return true
+  }
   const activeTab = $derived(workspace.tabs.find(tab => tab.key === workspace.activeKey)!)
   const results = $derived(activeTab.results)
   const transactionId = $derived(activeTab.transactionId)
@@ -167,6 +190,7 @@
 
   async function exitApplication(discard = false) {
     if (appClosing) return
+    if (fileBusy) { exitError = 'Wait for the native file operation to finish before exiting.'; exitDialog = true; return }
     exitDialog = true; appClosing = true; exitError = ''
     try {
       if (!discard) { await saveSession(); await persistSettings() }
@@ -182,7 +206,7 @@
       void getCurrentWindow().onCloseRequested(event => {
         event.preventDefault()
         if (appClosing) return
-        if (workInFlight || editing || tableEditing || settingsOpen || settingsSaving || parameterEditing) exitDialog = true
+        if (workInFlight || fileBusy || editing || tableEditing || settingsOpen || settingsSaving || parameterEditing) exitDialog = true
         else void exitApplication()
       }).then(stop => { if (disposed) stop(); else unlisten = stop }).catch(() => {
         exitHandlerError = 'Could not install the exit-save handler. Save tabs manually before closing.'
@@ -244,13 +268,13 @@
 
   async function requestCloseTab(key: string) {
     const tab = workspace.tabs.find(tab => tab.key === key)
-    if (!tab || tab.saving || tab.cancelling || tab.closing || disconnecting || editing || tableEditing) return
+    if (!tab || tab.saving || tab.fileSaving || tab.cancelling || tab.closing || disconnecting || editing || tableEditing) return
     if (tabNeedsConfirmation(tab)) closingKey = key
-    else await queries.closeTab(key)
+    else await closeQueryTab(key)
   }
 
   async function confirmCloseTab() {
-    if (closingKey && await queries.closeTab(closingKey)) closingKey = null
+    if (closingKey && await closeQueryTab(closingKey)) closingKey = null
   }
 
   async function disconnect() {
@@ -293,14 +317,17 @@
   <div class="tabs" aria-label="SQL tabs">
     {#each workspace.tabs as tab (tab.key)}
       <div class:active={tab.key === workspace.activeKey} class="tab">
-        <button aria-pressed={tab.key === workspace.activeKey} disabled={!sessionReady || appClosing} onclick={() => queries.activateTab(tab.key)}>{tab.title}{tab.sql.length ? ' *' : ''}{tab.running ? ' · running' : ''}{tab.transactionId ? ' · transaction' : ''}</button>
-        <button aria-label={`Close ${tab.title}`} onclick={() => requestCloseTab(tab.key)} disabled={!sessionReady || appClosing || tab.saving || tab.cancelling || tab.closing || disconnecting}>×</button>
+        <button aria-pressed={tab.key === workspace.activeKey} disabled={!sessionReady || appClosing} onclick={() => queries.activateTab(tab.key)}>{tab.title}{tabIsDirty(tab) ? ' *' : ''}{tab.fileSaving ? ' · saving file' : ''}{tab.running ? ' · running' : ''}{tab.transactionId ? ' · transaction' : ''}</button>
+        <button aria-label={`Close ${tab.title}`} onclick={() => requestCloseTab(tab.key)} disabled={!sessionReady || appClosing || tab.saving || tab.fileSaving || tab.cancelling || tab.closing || disconnecting}>×</button>
       </div>
     {/each}
     <button onclick={() => queries.addTab()} disabled={!sessionReady || appClosing || disconnecting}>+ New query</button>
   </div>
   <section class="toolbar">
     <span>Query</span>
+    <button onclick={openFile} disabled={!native || !sessionReady || appClosing || fileBusy}>Open SQL</button>
+    <button onclick={() => saveFile(activeTab.key)} disabled={!native || !sessionReady || appClosing || fileBusy || activeTab.closing}>Save file</button>
+    <button onclick={() => saveFile(activeTab.key, true)} disabled={!native || !sessionReady || appClosing || fileBusy || activeTab.closing}>Save as…</button>
     <button onclick={() => run(queryEditor?.getSubmission() ?? activeTab.sql)} disabled={!connection || running || saving || activeTab.cancelling || activeTab.closing || disconnecting}>Run · F5</button>
     <button onclick={() => queryEditor?.formatSql()} disabled={!sessionReady || appClosing}>Format · Ctrl/Cmd+Shift+F</button>
     <button onclick={() => queryEditor?.mapParameters()} disabled={!sessionReady || appClosing}>Map parameters</button>
@@ -311,7 +338,7 @@
       <button onclick={() => run('ROLLBACK')} disabled={running || saving || activeTab.cancelling || activeTab.closing || disconnecting}>Rollback</button>
     {/if}
   </section>
-  {#if sessionReady}<QueryEditor bind:this={queryEditor} tabs={workspace.tabs} activeKey={workspace.activeKey} {catalog} fontSize={settings.editorFontSize} onchange={queries.setSql} onerror={queries.setEditorError} onparameters={openParameters} onrun={run} />{/if}
+  {#if sessionReady}<QueryEditor bind:this={queryEditor} tabs={workspace.tabs} activeKey={workspace.activeKey} {catalog} fontSize={settings.editorFontSize} onchange={queries.setSql} onerror={queries.setEditorError} onparameters={openParameters} onopenfile={openFile} onsavefile={saveFile} onrun={run} />{/if}
   {#if tableLoading}<p class="notice">Loading table editor…</p>{/if}
   {#if tableError && !tableEditing}<pre class="error" role="alert">{tableError}</pre>{/if}
   {#if ddlLoading}<p class="notice">Loading DDL…</p>{/if}
@@ -326,6 +353,7 @@
   {#if message}<pre class="error" role="alert">{message}</pre>{/if}
   {#if activeTab.message}<pre class="error" role="alert">{activeTab.message}</pre>{/if}
   {#if activeTab.editorError}<pre class="error" role="alert">{activeTab.editorError}</pre>{/if}
+  {#if activeTab.file}<p class="notice">File: {activeTab.file.displayPath}</p>{/if}
   <NoticePanel output={noticeOutput} />
   {#if durationMs !== null}<p class="notice">Completed in {durationMs} ms</p>{/if}
   {#each results as result, index}

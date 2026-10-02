@@ -9,7 +9,7 @@
   import { errorMessage } from './lib/errors'
   import { applyParameterScript as applyScript, type ParameterTarget } from './lib/parameterMapping'
 
-  let { tabs, activeKey, catalog = null, fontSize = 14, onchange, onerror, onparameters, onrun }: { tabs: QueryTab[]; activeKey: string; catalog?: SchemaData | null; fontSize?: number; onchange: (key: string, sql: string) => void; onerror: (key: string, message: string) => void; onparameters: (target: ParameterTarget) => void; onrun: (submission: SqlSubmission) => void } = $props()
+  let { tabs, activeKey, catalog = null, fontSize = 14, onchange, onerror, onparameters, onopenfile, onsavefile, onrun }: { tabs: QueryTab[]; activeKey: string; catalog?: SchemaData | null; fontSize?: number; onchange: (key: string, sql: string) => void; onerror: (key: string, message: string) => void; onparameters: (target: ParameterTarget) => void; onopenfile: () => void; onsavefile: (key: string, saveAs: boolean) => void; onrun: (submission: SqlSubmission) => void } = $props()
   let host: HTMLDivElement
   let editor: monaco.editor.IStandaloneCodeEditor | undefined
   let models: QueryModels | undefined
@@ -53,6 +53,13 @@
     editor.addAction({ id: 'pgdev.run', label: 'Run SQL', keybindings: [monaco.KeyCode.F5, monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter], run: () => onrun(getSubmission()) })
     editor.addAction({ id: 'pgdev.format', label: 'Format SQL', keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyF], contextMenuGroupId: '1_modification', run: formatSql })
     editor.addAction({ id: 'pgdev.parameters', label: 'Map SQL parameters', contextMenuGroupId: '1_modification', run: mapParameters })
+    editor.addAction({ id: 'pgdev.open-file', label: 'Open SQL file', keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyO], run: onopenfile })
+    for (const saveAs of [false, true]) {
+      editor.addAction({ id: saveAs ? 'pgdev.save-as' : 'pgdev.save-file', label: saveAs ? 'Save SQL file as' : 'Save SQL file', keybindings: [monaco.KeyMod.CtrlCmd | (saveAs ? monaco.KeyMod.Shift : 0) | monaco.KeyCode.KeyS], run: () => {
+        const key = models?.keyFor(editor?.getModel() ?? null)
+        if (key) onsavefile(key, saveAs)
+      } })
+    }
     return () => {
       changes.dispose()
       editor?.dispose()

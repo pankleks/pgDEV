@@ -32,3 +32,5 @@ export type TableEditColumnInput = { id: string, added?: boolean, name: string, 
 export type TableEditRequest = { description: string | null, fingerprint: string, columns: Array<TableEditColumnInput>, };
 export type TableEditResponse = { ddl: string | null, };
 export type DatabaseNotice = { severity: string, code: string, message: string, detail: string | null, hint: string | null, context: string | null, };
+export type SqlFileInfo = { token: string, fileName: string, displayPath: string, };
+export type OpenSqlFile = { file: SqlFileInfo, content: string, };

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import type { QueryTab } from './lib/queryWorkspace'
+  import { tabIsDirty } from './lib/queryWorkspace'
   let { tab, onconfirm, oncancel }: { tab: QueryTab; onconfirm: () => void; oncancel: () => void } = $props()
   let dialog: HTMLDialogElement
   onMount(() => { dialog.showModal() })
@@ -8,7 +9,7 @@
 
 <dialog bind:this={dialog} aria-label="Close SQL tab" oncancel={(event) => { event.preventDefault(); if (!tab.closing) oncancel() }}>
   <h2>Close {tab.title}?</h2>
-  {#if tab.sql.length}<p>SQL text in this tab will be discarded and removed from the saved session.</p>{/if}
+  {#if tabIsDirty(tab)}<p>Unsaved SQL text in this tab will be discarded and removed from the saved session. Use Save file before closing to keep it on disk.</p>{/if}
   {#if tab.running}<p>The running query will be stopped.</p>{/if}
   {#if tab.transactionId}<p>The open transaction will be rolled back.</p>{/if}
   {#if tab.message && !tab.closing}<p class="error" role="alert">{tab.message}</p>{/if}

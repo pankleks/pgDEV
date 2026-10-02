@@ -36,6 +36,7 @@ Query-session persistence tests: `node --import tsx --test test/native-query-ses
 Settings/routing tests: `node --import tsx --test test/native-settings.mjs`.
 Formatting/error-position tests: `node --import tsx --test test/native-sql-editing.mjs`.
 Parameter-template tests: `node --import tsx --test test/native-parameter-mapping.mjs`.
+Native-file lifecycle tests: `node --import tsx --test test/native-query-files.mjs`.
 
 Query transport types in `src/generated/contracts.ts` come from Rust DTOs.
 Regenerate them with `npm run generate:desktop:types`; the regular Rust test
@@ -126,6 +127,21 @@ use PNG (Linux), ICO (Windows) and ICNS (macOS) assets in `src-tauri/icons`.
   automatically and database state is not touched. Input sizes, parameter
   indices and nesting are bounded; unsafe JSON integers must be quoted strings.
   Values/previews are not persisted until the script is explicitly applied.
+- Native open/save/save-as dialogs for UTF-8 SQL/text files (8 MiB limit).
+  Editor shortcuts: Ctrl/Cmd+O, Ctrl/Cmd+S and Ctrl/Cmd+Shift+S.
+  Rust owns paths and issues bounded, process-local access tokens; the WebView
+  cannot request arbitrary file paths. Dialog cancellation leaves tabs unchanged.
+  Clean duplicate opens reuse a tab; dirty copies are preserved. Saving captures
+  the original tab/text, so edits during a save remain dirty. File saves never
+  execute SQL or change query results/transactions. A saving tab cannot be closed.
+- File writes stage and flush a temporary file in the same directory before
+  replacement, preserving existing permissions and UTF-8 BOMs on regular saves.
+  SHA-256 checks reject observed external changes/deletion rather than overwrite
+  silently. This is best-effort conflict detection, not filesystem compare-and-swap.
+  Native file access is not restored after restart: session text survives but
+  requires Save As or reopening before being associated with a disk file again.
+  New/save-as files use UTF-8 without BOM. Native dialog behavior and installer
+  integration still require manual validation on all three platforms.
 - Object catalog for tables, views, functions, types and sequences, with
   columns, indexes, constraints, triggers and built-in completion metadata.
 - Snapshot-consistent DDL for all eight object kinds. A separate bounded catalog
@@ -160,7 +176,7 @@ rather than silently discard cursor rows. Statement timeout still bounds the
 work performed by PostgreSQL. The initial raw-text API remains a legacy test
 fixture and is no longer exposed as a Tauri command.
 
-Exact utility command tags, final 1:1 table-editor UI, remaining settings/connection persistence, file operations and
+Exact utility command tags, final 1:1 table-editor UI, remaining settings/connection persistence, pinned files/import/export and
 MCP migration are still outstanding. The prototype UI is not the final 1:1 UI.
 The production build has been verified locally on Windows; CI also checks
 macOS/Linux, but their installers still require validation on those platforms.

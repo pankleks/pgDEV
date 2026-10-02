@@ -12,6 +12,9 @@ fn main() {
             "fetch_more",
             "cancel",
             "close_session",
+            "open_sql_file",
+            "save_sql_file",
+            "release_sql_file",
         ]),
     ))
     .expect("Could not generate desktop permissions");

@@ -1,5 +1,70 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use tauri::Manager;
+use tauri_plugin_dialog::DialogExt;
+
+#[tauri::command]
+async fn open_sql_file(app: tauri::AppHandle) -> Result<Option<pgdev_core::OpenSqlFile>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let selected = app
+            .dialog()
+            .file()
+            .add_filter("SQL/text script", &["sql", "txt", "ddl"])
+            .blocking_pick_file();
+        let Some(selected) = selected else {
+            return Ok(None);
+        };
+        let path = selected
+            .into_path()
+            .map_err(|_| "Unsupported SQL file path")?;
+        app.state::<pgdev_core::SqlFiles>().open(&path).map(Some)
+    })
+    .await
+    .map_err(|_| "SQL file operation failed".to_owned())?
+}
+
+#[tauri::command]
+async fn save_sql_file(
+    app: tauri::AppHandle,
+    token: Option<String>,
+    content: String,
+) -> Result<Option<pgdev_core::SqlFileInfo>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Some(token) = token {
+            return app
+                .state::<pgdev_core::SqlFiles>()
+                .save(&token, &content)
+                .map(Some);
+        }
+        let selected = app
+            .dialog()
+            .file()
+            .add_filter("SQL script", &["sql"])
+            .set_file_name("query.sql")
+            .blocking_save_file();
+        let Some(selected) = selected else {
+            return Ok(None);
+        };
+        let path = selected
+            .into_path()
+            .map_err(|_| "Unsupported SQL file path")?;
+        app.state::<pgdev_core::SqlFiles>()
+            .save_as(&path, &content)
+            .map(Some)
+    })
+    .await
+    .map_err(|_| "SQL file operation failed".to_owned())?
+}
+
+#[tauri::command]
+async fn release_sql_file(app: tauri::AppHandle, token: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<pgdev_core::SqlFiles>().release(&token)
+    })
+    .await
+    .map_err(|_| "SQL file operation failed".to_owned())
+}
+
 use pgdev_core::{
     Connected, ConnectionConfig, CoreError, Database, DdlResponse, DdlTarget, FetchMoreResponse,
     QueryRequest, QueryResponse, SchemaData,
@@ -97,6 +162,8 @@ async fn close_session(
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .manage(pgdev_core::SqlFiles::default())
         .manage(Database::default())
         .invoke_handler(tauri::generate_handler![
             connect,
@@ -109,7 +176,10 @@ fn main() {
             query,
             fetch_more,
             cancel,
-            close_session
+            close_session,
+            open_sql_file,
+            save_sql_file,
+            release_sql_file
         ])
         .run(tauri::generate_context!())
         .expect("Could not start pgDEV");

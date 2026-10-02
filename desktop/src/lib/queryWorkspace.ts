@@ -1,5 +1,5 @@
 import type { api, Connected } from '../api'
-import type { QueryResult } from '../generated/contracts'
+import type { QueryResult, SqlFileInfo } from '../generated/contracts'
 import { appendNoticeOutput, errorNotices, type NoticeOutput } from './notices'
 import { errorMessage, transactionFromError } from './errors'
 import { sanitizeSettings } from './settings'
@@ -11,6 +11,9 @@ export interface QueryTab {
   sql: string
   sqlError: SqlDiagnostic | null
   editorError: string
+  file: SqlFileInfo | null
+  savedSql: string | null
+  fileSaving: boolean
   results: QueryResult[]
   transactionId: string | null
   durationMs: number | null
@@ -27,14 +30,17 @@ type QueryApi = Pick<typeof api, 'query' | 'fetchMore' | 'cancel' | 'closeSessio
 const emptyNotices = (): NoticeOutput => ({ notices: [], noticesTruncated: false })
 
 export function createQueryTab(key: string, title: string, sql = ''): QueryTab {
-  return { key, title, sql, sqlError: null, editorError: '', results: [], transactionId: null, durationMs: null, message: '', running: false, cancelling: false, saving: false, closing: false, operation: 0, notices: emptyNotices() }
+  return { key, title, sql, sqlError: null, editorError: '', file: null, savedSql: null, fileSaving: false, results: [], transactionId: null, durationMs: null, message: '', running: false, cancelling: false, saving: false, closing: false, operation: 0, notices: emptyNotices() }
 }
 export function createQueryWorkspace(takeKey: () => string = () => crypto.randomUUID()): QueryWorkspace {
   const tab = createQueryTab(takeKey(), 'Query 1', 'SELECT current_database(), version();')
   return { tabs: [tab], activeKey: tab.key, nextTitle: 2 }
 }
 export function tabNeedsConfirmation(tab: QueryTab): boolean {
-  return tab.sql.length > 0 || tab.running || tab.transactionId !== null
+  return tabIsDirty(tab) || tab.running || tab.transactionId !== null
+}
+export function tabIsDirty(tab: QueryTab): boolean {
+  return tab.savedSql === null ? tab.sql.length > 0 : tab.sql.replace(/\r\n?/g, '\n') !== tab.savedSql.replace(/\r\n?/g, '\n')
 }
 
 /** Plain objects are supplied by the Svelte caller as reactive proxies.
@@ -146,7 +152,7 @@ export function createQueryController(
     const tab = find(key), connection = getConnection()
     // An autocommit row write uses another socket: do not close its UI while
     // the write is still in flight. Running SQL may be explicitly abandoned.
-    if (!tab || tab.closing || tab.saving || tab.cancelling || disabled()) return false
+    if (!tab || tab.closing || tab.saving || tab.fileSaving || tab.cancelling || disabled()) return false
     const operation = tab.operation
     const stillCurrent = () => workspace.tabs.includes(tab) && tab.operation === operation && getConnection()?.id === connection?.id
     tab.closing = true

@@ -109,6 +109,8 @@ mod tests {
             TableEditRequest::decl(),
             TableEditResponse::decl(),
             DatabaseNotice::decl(),
+            SqlFileInfo::decl(),
+            OpenSqlFile::decl(),
         ] {
             generated.push_str("export ");
             generated.push_str(&declaration.replace("bigint", "number"));
@@ -126,6 +128,21 @@ mod tests {
             "Run the documented contract generation command after changing DTOs"
         );
     }
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SqlFileInfo {
+    pub token: String,
+    pub file_name: String,
+    pub display_path: String,
+}
+
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenSqlFile {
+    pub file: SqlFileInfo,
+    pub content: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
