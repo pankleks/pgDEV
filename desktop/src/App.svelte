@@ -16,6 +16,8 @@
   import { createSnapshotWriter } from './lib/snapshotWriter'
   import SettingsDialog from './SettingsDialog.svelte'
   import type { SqlSubmission } from './lib/sqlDiagnostics'
+  import ParameterDialog from './ParameterDialog.svelte'
+  import type { ParameterTarget } from './lib/parameterMapping'
   import { createQueryWorkspace, createQueryController, tabNeedsConfirmation } from './lib/queryWorkspace'
   import type { DataResult, TableEditState, TableEditRequest } from './generated/contracts'
 
@@ -121,7 +123,13 @@
   const anySaving = $derived(workspace.tabs.some(tab => tab.saving))
   let closingKey = $state<string | null>(null)
   const closingTab = $derived(workspace.tabs.find(tab => tab.key === closingKey) ?? null)
-  let queryEditor = $state<{ getSql(): string; getSubmission(): SqlSubmission; formatSql(): void } | undefined>(undefined)
+  let queryEditor = $state<{ getSql(): string; getSubmission(): SqlSubmission; formatSql(): void; mapParameters(): void; applyParameterScript(target: ParameterTarget, script: string): boolean } | undefined>(undefined)
+  let parameterEditing = $state<ParameterTarget | null>(null)
+
+  function openParameters(target: ParameterTarget) {
+    if (appClosing || editing || tableEditing || closingTab || settingsOpen || exitDialog) return
+    parameterEditing = target
+  }
   let message = $state('')
   let connecting = $state(false)
   let disconnecting = $state(false)
@@ -174,7 +182,7 @@
       void getCurrentWindow().onCloseRequested(event => {
         event.preventDefault()
         if (appClosing) return
-        if (workInFlight || editing || tableEditing || settingsOpen || settingsSaving) exitDialog = true
+        if (workInFlight || editing || tableEditing || settingsOpen || settingsSaving || parameterEditing) exitDialog = true
         else void exitApplication()
       }).then(stop => { if (disposed) stop(); else unlisten = stop }).catch(() => {
         exitHandlerError = 'Could not install the exit-save handler. Save tabs manually before closing.'
@@ -222,7 +230,7 @@
   }
 
   async function run(sqlToRun: string | SqlSubmission) {
-    if (editing || tableEditing || closingTab) return
+    if (editing || tableEditing || closingTab || parameterEditing) return
     await queries.run(workspace.activeKey, typeof sqlToRun === 'string' ? sqlToRun : sqlToRun.sql, typeof sqlToRun === 'string' ? undefined : sqlToRun)
   }
 
@@ -295,6 +303,7 @@
     <span>Query</span>
     <button onclick={() => run(queryEditor?.getSubmission() ?? activeTab.sql)} disabled={!connection || running || saving || activeTab.cancelling || activeTab.closing || disconnecting}>Run · F5</button>
     <button onclick={() => queryEditor?.formatSql()} disabled={!sessionReady || appClosing}>Format · Ctrl/Cmd+Shift+F</button>
+    <button onclick={() => queryEditor?.mapParameters()} disabled={!sessionReady || appClosing}>Map parameters</button>
     <button onclick={cancel} disabled={!running || activeTab.cancelling || activeTab.closing || disconnecting}>Cancel</button>
     {#if transactionId}
       <span>Transaction open</span>
@@ -302,7 +311,7 @@
       <button onclick={() => run('ROLLBACK')} disabled={running || saving || activeTab.cancelling || activeTab.closing || disconnecting}>Rollback</button>
     {/if}
   </section>
-  {#if sessionReady}<QueryEditor bind:this={queryEditor} tabs={workspace.tabs} activeKey={workspace.activeKey} {catalog} fontSize={settings.editorFontSize} onchange={queries.setSql} onerror={queries.setEditorError} onrun={run} />{/if}
+  {#if sessionReady}<QueryEditor bind:this={queryEditor} tabs={workspace.tabs} activeKey={workspace.activeKey} {catalog} fontSize={settings.editorFontSize} onchange={queries.setSql} onerror={queries.setEditorError} onparameters={openParameters} onrun={run} />{/if}
   {#if tableLoading}<p class="notice">Loading table editor…</p>{/if}
   {#if tableError && !tableEditing}<pre class="error" role="alert">{tableError}</pre>{/if}
   {#if ddlLoading}<p class="notice">Loading DDL…</p>{/if}
@@ -341,7 +350,8 @@
 {#if closingTab}<CloseTabDialog tab={closingTab} onconfirm={confirmCloseTab} oncancel={() => { closingKey = null }} />{/if}
 {#if tableEditing}<TableEditor state={tableEditing} generating={tableGenerating} error={tableError} preview={tablePreview} ongenerate={generateTableSql} ondirty={() => { tablePreview = undefined; tableError = '' }} onclose={() => { tableEditing = null; tableError = ''; tablePreview = undefined }} />{/if}
 {#if settingsOpen}<SettingsDialog {settings} saving={settingsSaving} error={settingsError} writable={settingsWritable} onsave={applySettings} onclose={() => { settingsOpen = false }} />{/if}
-{#if exitDialog}<CloseAppDialog busy={workInFlight || !!editing || !!tableEditing || settingsOpen} error={exitError} saving={appClosing} onconfirm={() => { void exitApplication() }} ondiscard={() => { void exitApplication(true) }} oncancel={() => { exitDialog = false; exitError = '' }} />{/if}
+{#if parameterEditing}<ParameterDialog target={parameterEditing} onapply={script => queryEditor?.applyParameterScript(parameterEditing!, script) ?? false} onclose={() => { parameterEditing = null }} />{/if}
+{#if exitDialog}<CloseAppDialog busy={workInFlight || !!editing || !!tableEditing || settingsOpen || !!parameterEditing} error={exitError} saving={appClosing} onconfirm={() => { void exitApplication() }} ondiscard={() => { void exitApplication(true) }} oncancel={() => { exitDialog = false; exitError = '' }} />{/if}
 
 <style>
   .workspace { display: flex; gap: 16px; }

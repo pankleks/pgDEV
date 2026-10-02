@@ -7,8 +7,9 @@
   import type { SqlSubmission } from './lib/sqlDiagnostics'
   import { formatEditor } from './lib/sqlEditing'
   import { errorMessage } from './lib/errors'
+  import { applyParameterScript as applyScript, type ParameterTarget } from './lib/parameterMapping'
 
-  let { tabs, activeKey, catalog = null, fontSize = 14, onchange, onerror, onrun }: { tabs: QueryTab[]; activeKey: string; catalog?: SchemaData | null; fontSize?: number; onchange: (key: string, sql: string) => void; onerror: (key: string, message: string) => void; onrun: (submission: SqlSubmission) => void } = $props()
+  let { tabs, activeKey, catalog = null, fontSize = 14, onchange, onerror, onparameters, onrun }: { tabs: QueryTab[]; activeKey: string; catalog?: SchemaData | null; fontSize?: number; onchange: (key: string, sql: string) => void; onerror: (key: string, message: string) => void; onparameters: (target: ParameterTarget) => void; onrun: (submission: SqlSubmission) => void } = $props()
   let host: HTMLDivElement
   let editor: monaco.editor.IStandaloneCodeEditor | undefined
   let models: QueryModels | undefined
@@ -25,6 +26,14 @@
     if (!key) return
     try { formatEditor(editor); onerror(key, '') }
     catch (error) { onerror(key, `Format failed: ${errorMessage(error)}`) }
+  }
+  export function mapParameters(): void {
+    const tabKey = models?.keyFor(editor?.getModel() ?? null), submission = models?.getSubmission()
+    if (tabKey && submission) onparameters({ tabKey, submission })
+  }
+  export function applyParameterScript(target: ParameterTarget, script: string): boolean {
+    if (!editor || !models) throw new Error('The query editor is unavailable')
+    return applyScript(editor, models.keyFor(editor.getModel()), target, script)
   }
 
   onMount(() => {
@@ -43,6 +52,7 @@
     })
     editor.addAction({ id: 'pgdev.run', label: 'Run SQL', keybindings: [monaco.KeyCode.F5, monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter], run: () => onrun(getSubmission()) })
     editor.addAction({ id: 'pgdev.format', label: 'Format SQL', keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyF], contextMenuGroupId: '1_modification', run: formatSql })
+    editor.addAction({ id: 'pgdev.parameters', label: 'Map SQL parameters', contextMenuGroupId: '1_modification', run: mapParameters })
     return () => {
       changes.dispose()
       editor?.dispose()

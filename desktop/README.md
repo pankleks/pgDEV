@@ -35,6 +35,7 @@ Query-tab lifecycle/model tests: `node --import tsx --test test/native-query-wor
 Query-session persistence tests: `node --import tsx --test test/native-query-session.mjs`.
 Settings/routing tests: `node --import tsx --test test/native-settings.mjs`.
 Formatting/error-position tests: `node --import tsx --test test/native-sql-editing.mjs`.
+Parameter-template tests: `node --import tsx --test test/native-parameter-mapping.mjs`.
 
 Query transport types in `src/generated/contracts.ts` come from Rust DTOs.
 Regenerate them with `npm run generate:desktop:types`; the regular Rust test
@@ -116,6 +117,15 @@ use PNG (Linux), ICO (Windows) and ICNS (macOS) assets in `src-tauri/icons`.
   Unicode scalar-to-UTF-16 position conversion. Markers are cleared on edits,
   new runs and disconnect, and late failures cannot mark changed SQL. Results
   and transaction messages remain available independently of editor markers.
+- Parameter-mapping dialog/Monaco action shared with the original scanner and
+  PREPARE/EXECUTE/DEALLOCATE generator. Optional JSON values apply positionally;
+  missing values and parameter gaps become NULL. Strings/comments/identifiers
+  and dollar-quoted bodies do not introduce parameters. SQL is previewed first
+  and applied to the captured document or selection as one undoable edit;
+  changed SQL or a different active tab rejects application. Nothing is run
+  automatically and database state is not touched. Input sizes, parameter
+  indices and nesting are bounded; unsafe JSON integers must be quoted strings.
+  Values/previews are not persisted until the script is explicitly applied.
 - Object catalog for tables, views, functions, types and sequences, with
   columns, indexes, constraints, triggers and built-in completion metadata.
 - Snapshot-consistent DDL for all eight object kinds. A separate bounded catalog
