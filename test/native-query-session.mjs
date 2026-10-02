@@ -171,3 +171,21 @@ test('settings use a separate record without overwriting SQL sessions', async ()
   const corruptTx = await f.transaction(); corruptTx.complete(); await failure
   assert.deepEqual(f.records.get('settings'), { version: 2, settings: {} })
 })
+
+test('profiles use a separate record and reject corrupt/secret-bearing storage without overwriting it', async () => {
+  const f = storageFixture(session('keep this SQL'))
+  const record = { version: 1, highWater: 1, saved: [{ label: 'Local', seq: 1, uri: 'postgresql://localhost/db' }] }
+  const write = f.storage.saveProfiles(record)
+  const writeTx = await f.transaction(); writeTx.complete(); await write
+  assert.deepEqual(f.stored, session('keep this SQL'))
+  const load = f.storage.loadProfiles()
+  const loadTx = await f.transaction(); loadTx.complete()
+  assert.deepEqual(await load, record)
+  const corruptRecord = { ...record, saved: [{ ...record.saved[0], password: 'secret' }] }
+  f.records.set('connections', corruptRecord)
+  const corrupt = f.storage.loadProfiles()
+  const failure = assert.rejects(corrupt, /Invalid/)
+  const corruptTx = await f.transaction(); corruptTx.complete(); await failure
+  assert.deepEqual(f.records.get('connections'), corruptRecord)
+  await assert.rejects(f.storage.saveProfiles(corruptRecord), /Invalid/)
+})

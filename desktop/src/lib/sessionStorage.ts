@@ -1,5 +1,6 @@
 import { parseSession, type QuerySession } from './querySession'
 import { parseSettingsRecord, type SettingsRecord } from './settings'
+import { parseProfiles, type ConnectionProfiles } from './connectionProfiles'
 
 // A separate desktop database avoids changing the reference application's
 // stores. Dev and packaged WebViews have separate origins and saved sessions.
@@ -61,7 +62,14 @@ export function createQuerySessionStorage(getFactory: () => IDBFactory | undefin
       return value === undefined ? null : parseSettingsRecord(value)
     },
     saveSettings: (record: SettingsRecord) => saveRecord('settings', record),
+    async loadProfiles(): Promise<ConnectionProfiles | null> {
+      const value = await loadRecord('connections')
+      return value === undefined ? null : parseProfiles(value)
+    },
+    async saveProfiles(record: ConnectionProfiles): Promise<void> {
+      await saveRecord('connections', parseProfiles(record))
+    },
   }
 }
 
-export const { loadQuerySession, saveQuerySession, loadSettings, saveSettings } = createQuerySessionStorage()
+export const { loadQuerySession, saveQuerySession, loadSettings, saveSettings, loadProfiles, saveProfiles } = createQuerySessionStorage()

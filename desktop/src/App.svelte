@@ -11,7 +11,8 @@
   import CloseTabDialog from './CloseTabDialog.svelte'
   import CloseAppDialog from './CloseAppDialog.svelte'
   import { snapshotSession, restoreQuerySession, createSessionWriter } from './lib/querySession'
-  import { loadQuerySession, saveQuerySession, loadSettings, saveSettings } from './lib/sessionStorage'
+  import { loadQuerySession, saveQuerySession, loadSettings, saveSettings, loadProfiles, saveProfiles } from './lib/sessionStorage'
+  import { emptyProfiles, rememberProfile, forgetProfile, withConnectionPassword } from './lib/connectionProfiles'
   import { sanitizeSettings, settingsRecord, type DesktopSettings } from './lib/settings'
   import { createSnapshotWriter } from './lib/snapshotWriter'
   import SettingsDialog from './SettingsDialog.svelte'
@@ -105,6 +106,35 @@
 
   let uri = $state('')
   let tlsCaPem = $state('')
+  let connectionPassword = $state('')
+  let profileLabel = $state('')
+  let profiles = $state(emptyProfiles())
+  let profilesReady = $state(false)
+  let profilesWritable = $state(false)
+  let profilesError = $state('')
+  const profilesWriter = createSnapshotWriter(saveProfiles)
+
+  async function persistProfiles() {
+    if (!profilesReady || !profilesWritable) return
+    try { await profilesWriter.save(profiles); profilesError = '' }
+    catch { profilesError = 'Could not save connection profiles. Retry saving before exiting.'; throw new Error(profilesError) }
+  }
+  async function rememberConnection() {
+    if (!profilesWritable || connecting || appClosing) return
+    try { profiles = rememberProfile(profiles, profileLabel, uri); await persistProfiles() }
+    catch (error) { profilesError = errorMessage(error) }
+  }
+  async function forgetConnection(seq: number) {
+    if (!profilesWritable || connecting || appClosing) return
+    profiles = forgetProfile(profiles, seq)
+    await persistProfiles().catch(() => {})
+  }
+  function chooseConnection(seq: number) {
+    if (connecting || connection || appClosing) return
+    const profile = profiles.saved.find(profile => profile.seq === seq)
+    if (!profile) return
+    uri = profile.uri; profileLabel = profile.label; connectionPassword = ''; tlsCaPem = ''
+  }
   let connection = $state<Connected | null>(null)
   let connectionTimeout = $state<number | null>(null)
   let settings = $state(sanitizeSettings(null))
@@ -206,7 +236,7 @@
     if (fileBusy || exportBusy || clipboardBusy) { exitError = 'Wait for file/clipboard operations to finish, or cancel the export before exiting.'; exitDialog = true; return }
     exitDialog = true; appClosing = true; exitError = ''
     try {
-      if (!discard) { await saveSession(); await persistSettings() }
+      if (!discard) { await saveSession(); await persistSettings(); await persistProfiles() }
       await getCurrentWindow().destroy()
     } catch (error) { exitError = errorMessage(error); exitDialog = true }
     finally { appClosing = false }
@@ -252,7 +282,18 @@
     const interval = window.setInterval(() => {
       if (sessionReady && sessionWritable && !appClosing) void saveSession().catch(() => {})
       if (settingsReady && settingsWritable && !appClosing) void persistSettings().catch(() => {})
+      if (profilesReady && profilesWritable && !appClosing) void persistProfiles().catch(() => {})
     }, 10_000)
+    void (async () => {
+      try {
+        const stored = await loadProfiles()
+        if (disposed) return
+        if (stored) { profiles = stored; profilesWriter.markLoaded(stored) }
+        profilesWritable = true
+      } catch {
+        if (!disposed) profilesError = 'Could not read connection profiles. Saving is disabled to protect the stored record; direct connections remain available.'
+      } finally { if (!disposed) profilesReady = true }
+    })()
     return () => { disposed = true; unlisten?.(); window.clearInterval(interval) }
   })
 
@@ -261,7 +302,7 @@
     connecting = true
     message = ''
     const timeout = settings.statementTimeout
-    try { connection = await api.connect(uri, timeout, tlsCaPem.trim() || undefined); connectionTimeout = timeout; uri = ''; tlsCaPem = ''; void refreshCatalog() }
+    try { connection = await api.connect(withConnectionPassword(uri, connectionPassword), timeout, tlsCaPem.trim() || undefined); connectionTimeout = timeout; uri = ''; tlsCaPem = ''; connectionPassword = ''; void refreshCatalog() }
     catch (error) { message = errorMessage(error) }
     finally { connecting = false }
   }
@@ -317,6 +358,20 @@
     {:else}
       <label for="connection">Connection string</label>
       <input id="connection" type="password" bind:value={uri} placeholder="postgresql://user:password@localhost/database" autocomplete="off" />
+      <label for="connection-password">Password (optional override, not saved)</label>
+      <input id="connection-password" type="password" bind:value={connectionPassword} autocomplete="off" disabled={connecting} />
+      <details><summary>Saved connection profiles</summary>
+        <p class="notice">Profiles save endpoints only, without passwords or CA certificates. Choose a profile, then enter its password/CA again. Saving the same name updates its endpoint.</p>
+        <label for="profile-label">Profile name</label>
+        <input id="profile-label" bind:value={profileLabel} maxlength={128} disabled={connecting} />
+        <button onclick={rememberConnection} disabled={!profilesWritable || connecting || appClosing || !uri.trim() || !profileLabel.trim()}>Save profile</button>
+        {#each profiles.saved as profile (profile.seq)}
+          <div><button onclick={() => chooseConnection(profile.seq)} disabled={connecting || appClosing}>{profile.seq}. {profile.label}</button>
+          <button onclick={() => forgetConnection(profile.seq)} disabled={!profilesWritable || connecting || appClosing} aria-label={`Forget ${profile.label}`}>Forget</button></div>
+        {/each}
+        {#if !profilesReady}<p class="notice">Loading profiles…</p>{/if}
+        {#if profilesWritable}<button onclick={() => { void persistProfiles().catch(() => {}) }} disabled={appClosing}>Retry save profiles</button>{/if}
+      </details>
       <details><summary>Custom TLS CA (optional)</summary>
         <label for="tls-ca">One PEM certificate · requires sslmode=require</label>
         <textarea id="tls-ca" bind:value={tlsCaPem} maxlength={65536} rows={4} spellcheck={false} disabled={connecting} placeholder="-----BEGIN CERTIFICATE-----"></textarea>
@@ -331,6 +386,7 @@
   {#if !sessionReady}<p class="notice">Restoring SQL tabs…</p>{/if}
   {#if sessionError}<p class="error" role="alert">{sessionError}</p>{/if}
   {#if settingsError}<p class="error" role="alert">{settingsError}</p>{/if}
+  {#if profilesError}<p class="error" role="alert">{profilesError}</p>{/if}
   {#if exitHandlerError}<p class="error" role="alert">{exitHandlerError}</p>{/if}
   <button onclick={() => { void saveSession().catch(() => {}) }} disabled={!sessionReady || !sessionWritable || appClosing}>Save SQL tabs</button>
   <div class="tabs" aria-label="SQL tabs">

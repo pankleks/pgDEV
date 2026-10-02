@@ -56,6 +56,18 @@ Native application icons are generated from the root `pgDEV.png` using
 use PNG (Linux), ICO (Windows) and ICNS (macOS) assets in `src-tauri/icons`.
 
 - Connection URI, PostgreSQL 14+ validation, verified TLS where requested.
+- Explicit password-free connection profiles in the desktop IndexedDB, separate
+  from SQL tabs and settings: ten saved endpoints, named updates, forget actions,
+  and stable never-reused profile numbers. Saving strips URI passwords (userinfo
+  and query parameter); only known non-secret URI options are accepted. Profiles
+  never store TLS CA text, passwords, database session IDs or transaction state.
+  Selecting one populates the form without connecting and clears previous secret
+  input; enter its password/CA again. An optional password override is encoded
+  only for the connection request. No automatic legacy-profile import, password
+  persistence, OS credential-vault integration or last-connection auto-reconnect
+  is provided yet. Corrupt/unreadable records disable writes instead of being
+  overwritten. Writes are serialized/retryable and awaited on normal exit.
+  Profile tests: `node --import tsx --test test/native-connection-profiles.mjs`.
 - Optional custom TLS CA: paste exactly one PEM certificate (up to 64 KiB) in
   the connection form and use `sslmode=require`. It augments system trust without
   disabling certificate or hostname verification; plaintext/prefer modes with
