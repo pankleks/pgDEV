@@ -15,6 +15,7 @@
   import { sanitizeSettings, settingsRecord, type DesktopSettings } from './lib/settings'
   import { createSnapshotWriter } from './lib/snapshotWriter'
   import SettingsDialog from './SettingsDialog.svelte'
+  import type { SqlSubmission } from './lib/sqlDiagnostics'
   import { createQueryWorkspace, createQueryController, tabNeedsConfirmation } from './lib/queryWorkspace'
   import type { DataResult, TableEditState, TableEditRequest } from './generated/contracts'
 
@@ -120,7 +121,7 @@
   const anySaving = $derived(workspace.tabs.some(tab => tab.saving))
   let closingKey = $state<string | null>(null)
   const closingTab = $derived(workspace.tabs.find(tab => tab.key === closingKey) ?? null)
-  let queryEditor = $state<{ getSql(): string } | undefined>(undefined)
+  let queryEditor = $state<{ getSql(): string; getSubmission(): SqlSubmission; formatSql(): void } | undefined>(undefined)
   let message = $state('')
   let connecting = $state(false)
   let disconnecting = $state(false)
@@ -220,9 +221,9 @@
     finally { connecting = false }
   }
 
-  async function run(sqlToRun: string) {
+  async function run(sqlToRun: string | SqlSubmission) {
     if (editing || tableEditing || closingTab) return
-    await queries.run(workspace.activeKey, sqlToRun)
+    await queries.run(workspace.activeKey, typeof sqlToRun === 'string' ? sqlToRun : sqlToRun.sql, typeof sqlToRun === 'string' ? undefined : sqlToRun)
   }
 
   async function more(index: number) {
@@ -292,7 +293,8 @@
   </div>
   <section class="toolbar">
     <span>Query</span>
-    <button onclick={() => run(queryEditor?.getSql() ?? activeTab.sql)} disabled={!connection || running || saving || activeTab.cancelling || activeTab.closing || disconnecting}>Run · F5</button>
+    <button onclick={() => run(queryEditor?.getSubmission() ?? activeTab.sql)} disabled={!connection || running || saving || activeTab.cancelling || activeTab.closing || disconnecting}>Run · F5</button>
+    <button onclick={() => queryEditor?.formatSql()} disabled={!sessionReady || appClosing}>Format · Ctrl/Cmd+Shift+F</button>
     <button onclick={cancel} disabled={!running || activeTab.cancelling || activeTab.closing || disconnecting}>Cancel</button>
     {#if transactionId}
       <span>Transaction open</span>
@@ -300,7 +302,7 @@
       <button onclick={() => run('ROLLBACK')} disabled={running || saving || activeTab.cancelling || activeTab.closing || disconnecting}>Rollback</button>
     {/if}
   </section>
-  {#if sessionReady}<QueryEditor bind:this={queryEditor} tabs={workspace.tabs} activeKey={workspace.activeKey} {catalog} fontSize={settings.editorFontSize} onchange={queries.setSql} onrun={run} />{/if}
+  {#if sessionReady}<QueryEditor bind:this={queryEditor} tabs={workspace.tabs} activeKey={workspace.activeKey} {catalog} fontSize={settings.editorFontSize} onchange={queries.setSql} onerror={queries.setEditorError} onrun={run} />{/if}
   {#if tableLoading}<p class="notice">Loading table editor…</p>{/if}
   {#if tableError && !tableEditing}<pre class="error" role="alert">{tableError}</pre>{/if}
   {#if ddlLoading}<p class="notice">Loading DDL…</p>{/if}
@@ -314,6 +316,7 @@
   {/if}
   {#if message}<pre class="error" role="alert">{message}</pre>{/if}
   {#if activeTab.message}<pre class="error" role="alert">{activeTab.message}</pre>{/if}
+  {#if activeTab.editorError}<pre class="error" role="alert">{activeTab.editorError}</pre>{/if}
   <NoticePanel output={noticeOutput} />
   {#if durationMs !== null}<p class="notice">Completed in {durationMs} ms</p>{/if}
   {#each results as result, index}

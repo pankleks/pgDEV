@@ -151,13 +151,37 @@ test('late close acknowledgements after disconnect do not discard SQL or newer s
   assert.equal(tab.results[0].command, 'SELECT'); assert.equal(tab.closing, false)
 })
 
+test('SQL diagnostics stay on the submitted tab and clear on edits, rerun and disconnect', async () => {
+  const f = fixture({ query: async () => { throw { message: 'missing column', position: 8 } } })
+  const first = f.workspace.tabs[0], second = f.queries.addTab()
+  f.queries.setSql(first.key, 'SELECT missing')
+  await f.queries.run(first.key, first.sql)
+  assert.equal(first.sqlError.position, 8); assert.equal(second.sqlError, null)
+  f.queries.setSql(first.key, 'SELECT other'); assert.equal(first.sqlError, null)
+  await f.queries.run(first.key, first.sql); assert.ok(first.sqlError)
+  await f.queries.run(first.key, 'COMMIT'); assert.equal(first.sqlError, null)
+  await f.queries.run(first.key, first.sql)
+  f.queries.resetConnection(); assert.equal(first.sqlError, null)
+})
+
+test('editing while a query runs suppresses its late error marker', async () => {
+  const wait = deferred(), f = fixture({ query: () => wait.promise })
+  const tab = f.workspace.tabs[0]
+  f.queries.setSql(tab.key, 'SELECT missing')
+  const run = f.queries.run(tab.key, tab.sql)
+  f.queries.setSql(tab.key, 'SELECT edited')
+  wait.reject({ message: 'old SQL failed', position: 8 }); await run
+  assert.equal(tab.sqlError, null); assert.equal(tab.message, 'old SQL failed')
+})
+
 function editorFixture() {
   const models = [], registrations = []
   const register = () => { const item = { disposed: false }; registrations.push(item); return { dispose: () => { item.disposed = true } } }
   const monaco = {
+    MarkerSeverity: { Error: 8 },
     Uri: { parse: uri => uri },
-    editor: { createModel(sql, _language, uri) {
-      const model = { uri, text: sql, setCalls: 0, disposed: false, getValue() { return this.text }, setValue(text) { this.setCalls++; this.text = text }, getValueInRange(range) { return this.text.slice(range.start, range.end) }, dispose() { this.disposed = true } }
+    editor: { setModelMarkers(model, _owner, markers) { model.markers = markers }, createModel(sql, _language, uri) {
+      const model = { uri, text: sql, setCalls: 0, disposed: false, getValue() { return this.text }, setValue(text) { this.setCalls++; this.text = text }, getValueInRange(range) { return this.text.slice(range.start, range.end) }, getOffsetAt(position) { return this.text.split('\n').slice(0, position.lineNumber - 1).reduce((offset, line) => offset + line.length + 1, 0) + position.column - 1 }, getPositionAt(offset) { const lines = this.text.slice(0, offset).split('\n'); return { lineNumber: lines.length, column: lines.at(-1).length + 1 } }, getWordAtPosition() { return null }, dispose() { this.disposed = true } }
       models.push(model); return model
     } },
     languages: { registerCompletionItemProvider: register, registerHoverProvider: register, registerSignatureHelpProvider: register },
@@ -196,5 +220,28 @@ test('removed models dispose their providers while retained models remain intact
   assert.equal(f.models[0].disposed, true); assert.equal(f.models[1].disposed, false)
   assert.equal(f.registrations.filter(item => item.disposed).length, 3)
   assert.equal(f.editor.model, f.models[1])
+  f.manager.dispose()
+})
+
+test('markers belong to their model and clear when the diagnostic disappears', () => {
+  const f = editorFixture(), sql = "SELECT '😀';\nSELECT missing"
+  const tabs = [{ key: 'first', sql, sqlError: { submission: { sql, documentSql: sql, startOffset: 0 }, position: [...sql.slice(0, sql.indexOf('missing'))].length + 1, message: 'missing' } }, { key: 'other', sql: 'SELECT 1' }]
+  f.manager.sync(tabs, 'other')
+  assert.equal(f.models[0].markers[0].startLineNumber, 2)
+  assert.equal(f.models[0].markers[0].startColumn, 8)
+  assert.deepEqual(f.models[1].markers, [])
+  tabs[0].sqlError = null
+  f.manager.sync(tabs, 'first')
+  assert.deepEqual(f.models[0].markers, [])
+  f.manager.dispose()
+})
+
+test('submission captures the exact selection and its UTF-16 origin', () => {
+  const f = editorFixture(), sql = "SELECT '😀';\nSELECT missing"
+  f.manager.sync([{ key: 'tab', sql }], 'tab')
+  assert.deepEqual(f.manager.getSubmission(), { sql, documentSql: sql, startOffset: 0 })
+  const start = sql.indexOf('SELECT missing')
+  f.editor.selection = { start, end: sql.length, isEmpty: () => false, getStartPosition: () => ({ lineNumber: 2, column: 1 }) }
+  assert.deepEqual(f.manager.getSubmission(), { sql: 'SELECT missing', documentSql: sql, startOffset: start })
   f.manager.dispose()
 })

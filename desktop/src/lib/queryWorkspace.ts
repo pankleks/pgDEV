@@ -3,11 +3,14 @@ import type { QueryResult } from '../generated/contracts'
 import { appendNoticeOutput, errorNotices, type NoticeOutput } from './notices'
 import { errorMessage, transactionFromError } from './errors'
 import { sanitizeSettings } from './settings'
+import { sqlDiagnostic, type SqlDiagnostic, type SqlSubmission } from './sqlDiagnostics'
 
 export interface QueryTab {
   key: string
   title: string
   sql: string
+  sqlError: SqlDiagnostic | null
+  editorError: string
   results: QueryResult[]
   transactionId: string | null
   durationMs: number | null
@@ -24,7 +27,7 @@ type QueryApi = Pick<typeof api, 'query' | 'fetchMore' | 'cancel' | 'closeSessio
 const emptyNotices = (): NoticeOutput => ({ notices: [], noticesTruncated: false })
 
 export function createQueryTab(key: string, title: string, sql = ''): QueryTab {
-  return { key, title, sql, results: [], transactionId: null, durationMs: null, message: '', running: false, cancelling: false, saving: false, closing: false, operation: 0, notices: emptyNotices() }
+  return { key, title, sql, sqlError: null, editorError: '', results: [], transactionId: null, durationMs: null, message: '', running: false, cancelling: false, saving: false, closing: false, operation: 0, notices: emptyNotices() }
 }
 export function createQueryWorkspace(takeKey: () => string = () => crypto.randomUUID()): QueryWorkspace {
   const tab = createQueryTab(takeKey(), 'Query 1', 'SELECT current_database(), version();')
@@ -65,19 +68,26 @@ export function createQueryController(
     workspace.activeKey = key
     return true
   }
-  function setSql(key: string, sql: string) { const tab = find(key); if (tab) tab.sql = sql }
+  function setSql(key: string, sql: string) {
+    const tab = find(key)
+    if (tab && tab.sql !== sql) { tab.sql = sql; tab.sqlError = null; tab.editorError = '' }
+  }
+  function setEditorError(key: string, message: string) { const tab = find(key); if (tab) tab.editorError = message }
   function resetConnection() {
     for (const tab of workspace.tabs) {
       ++tab.operation
       tab.results = []; tab.transactionId = null; tab.durationMs = null; tab.message = ''
+      tab.sqlError = null; tab.editorError = ''
       tab.running = false; tab.cancelling = false; tab.saving = false; tab.closing = false; tab.notices = emptyNotices()
     }
   }
-  async function run(key: string, sql: string) {
+  async function run(key: string, sql: string, source?: SqlSubmission) {
     const tab = find(key), connection = getConnection()
     if (!tab || !connection || disabled() || busy(tab)) return false
     const id = connection.id, operation = ++tab.operation
+    const submission: SqlSubmission = source ? { ...source, sql } : { sql, documentSql: tab.sql, startOffset: 0 }
     tab.running = true; tab.message = ''; tab.results = []; tab.durationMs = null; tab.notices = emptyNotices()
+    tab.sqlError = null; tab.editorError = ''
     try {
       const response = await transport.query({ id, tabKey: key, sql, transactionId: tab.transactionId, maxRows: sanitizeSettings({ maxRows: getMaxRows() }).maxRows })
       if (!current(tab, id, operation)) return false
@@ -85,7 +95,10 @@ export function createQueryController(
       tab.notices = appendNoticeOutput(tab.notices, response)
       return true
     } catch (error) {
-      if (current(tab, id, operation)) failure(tab, error)
+      if (current(tab, id, operation)) {
+        failure(tab, error)
+        tab.sqlError = sqlDiagnostic(error, submission, tab.sql)
+      }
       return false
     } finally { if (current(tab, id, operation)) tab.running = false }
   }
@@ -148,5 +161,5 @@ export function createQueryController(
     else if (workspace.activeKey === key) workspace.activeKey = workspace.tabs[Math.min(index, workspace.tabs.length - 1)]!.key
     return true
   }
-  return { addTab, activateTab, setSql, resetConnection, run, more, cancel, rowUpdate, closeTab }
+  return { addTab, activateTab, setSql, setEditorError, resetConnection, run, more, cancel, rowUpdate, closeTab }
 }

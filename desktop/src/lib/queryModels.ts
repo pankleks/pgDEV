@@ -3,6 +3,7 @@ import type { QueryTab } from './queryWorkspace'
 import type { SchemaData } from '../generated/contracts'
 import { modelUri } from '../../../web/src/lib/modeluri'
 import { registerSqlProviders } from './sqlProviders'
+import { diagnosticOffset, type SqlDiagnostic, type SqlSubmission } from './sqlDiagnostics'
 
 type Entry = { model: Monaco.editor.ITextModel; providers: Monaco.IDisposable; view: Monaco.editor.ICodeEditorViewState | null }
 
@@ -17,7 +18,7 @@ export class QueryModels {
     for (const [key, entry] of this.entries) if (entry.model === model) return key
     return undefined
   }
-  sync(tabs: readonly Pick<QueryTab, 'key' | 'sql'>[], activeKey: string) {
+  sync(tabs: readonly (Pick<QueryTab, 'key' | 'sql'> & { sqlError?: SqlDiagnostic | null })[], activeKey: string) {
     for (const tab of tabs) {
       let entry = this.entries.get(tab.key)
       if (!entry) {
@@ -25,6 +26,7 @@ export class QueryModels {
         entry = { model, providers: registerSqlProviders(this.monaco, model, this.getSchema), view: null }
         this.entries.set(tab.key, entry)
       } else if (entry.model.getValue() !== tab.sql) entry.model.setValue(tab.sql)
+      this.syncMarker(entry.model, tab.sqlError)
     }
     if (this.activeKey !== activeKey) {
       const previous = this.activeKey ? this.entries.get(this.activeKey) : undefined
@@ -46,6 +48,26 @@ export class QueryModels {
     const model = this.editor.getModel(), selection = this.editor.getSelection()
     if (!model) return ''
     return selection && !selection.isEmpty() ? model.getValueInRange(selection) : model.getValue()
+  }
+  getSubmission(): SqlSubmission | null {
+    const model = this.editor.getModel(), selection = this.editor.getSelection()
+    if (!model) return null
+    const documentSql = model.getValue()
+    if (!selection || selection.isEmpty()) return { sql: documentSql, documentSql, startOffset: 0 }
+    return { sql: model.getValueInRange(selection), documentSql, startOffset: model.getOffsetAt(selection.getStartPosition()) }
+  }
+  private syncMarker(model: Monaco.editor.ITextModel, diagnostic: SqlDiagnostic | null | undefined) {
+    const text = model.getValue(), offset = diagnosticOffset(diagnostic, text)
+    if (offset === null || !diagnostic) { this.monaco.editor.setModelMarkers(model, 'pgdev-sql', []); return }
+    const start = model.getPositionAt(offset), word = model.getWordAtPosition(start)
+    const end = word && word.endColumn > start.column
+      ? { lineNumber: start.lineNumber, column: word.endColumn }
+      : model.getPositionAt(Math.min(text.length, offset + (text.codePointAt(offset)! > 0xffff ? 2 : 1)))
+    this.monaco.editor.setModelMarkers(model, 'pgdev-sql', [{
+      severity: this.monaco.MarkerSeverity.Error, message: diagnostic.message,
+      startLineNumber: start.lineNumber, startColumn: start.column,
+      endLineNumber: end.lineNumber, endColumn: end.column,
+    }])
   }
   dispose() {
     for (const entry of this.entries.values()) { entry.providers.dispose(); entry.model.dispose() }

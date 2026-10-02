@@ -4,14 +4,27 @@
   import { QueryModels } from './lib/queryModels'
   import type { QueryTab } from './lib/queryWorkspace'
   import type { SchemaData } from './generated/contracts'
+  import type { SqlSubmission } from './lib/sqlDiagnostics'
+  import { formatEditor } from './lib/sqlEditing'
+  import { errorMessage } from './lib/errors'
 
-  let { tabs, activeKey, catalog = null, fontSize = 14, onchange, onrun }: { tabs: QueryTab[]; activeKey: string; catalog?: SchemaData | null; fontSize?: number; onchange: (key: string, sql: string) => void; onrun: (sql: string) => void } = $props()
+  let { tabs, activeKey, catalog = null, fontSize = 14, onchange, onerror, onrun }: { tabs: QueryTab[]; activeKey: string; catalog?: SchemaData | null; fontSize?: number; onchange: (key: string, sql: string) => void; onerror: (key: string, message: string) => void; onrun: (submission: SqlSubmission) => void } = $props()
   let host: HTMLDivElement
   let editor: monaco.editor.IStandaloneCodeEditor | undefined
   let models: QueryModels | undefined
 
   export function getSql(): string {
     return models?.getSql() ?? tabs.find(tab => tab.key === activeKey)?.sql ?? ''
+  }
+  export function getSubmission(): SqlSubmission {
+    return models?.getSubmission() ?? { sql: getSql(), documentSql: getSql(), startOffset: 0 }
+  }
+  export function formatSql(): void {
+    if (!editor || !models) return
+    const key = models.keyFor(editor.getModel())
+    if (!key) return
+    try { formatEditor(editor); onerror(key, '') }
+    catch (error) { onerror(key, `Format failed: ${errorMessage(error)}`) }
   }
 
   onMount(() => {
@@ -28,7 +41,8 @@
       const model = editor?.getModel(), key = models?.keyFor(model ?? null)
       if (key && model) onchange(key, model.getValue())
     })
-    editor.addAction({ id: 'pgdev.run', label: 'Run SQL', keybindings: [monaco.KeyCode.F5, monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter], run: () => onrun(getSql()) })
+    editor.addAction({ id: 'pgdev.run', label: 'Run SQL', keybindings: [monaco.KeyCode.F5, monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter], run: () => onrun(getSubmission()) })
+    editor.addAction({ id: 'pgdev.format', label: 'Format SQL', keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyF], contextMenuGroupId: '1_modification', run: formatSql })
     return () => {
       changes.dispose()
       editor?.dispose()
@@ -39,7 +53,7 @@
   })
 
   $effect(() => {
-    const snapshot = tabs.map(tab => ({ key: tab.key, sql: tab.sql }))
+    const snapshot = tabs.map(tab => ({ key: tab.key, sql: tab.sql, sqlError: tab.sqlError }))
     const key = activeKey
     const font = fontSize
     editor?.updateOptions({ fontSize: font })

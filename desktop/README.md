@@ -34,6 +34,7 @@ SQL-provider tests: `node --import tsx --test test/native-sql-providers.mjs`.
 Query-tab lifecycle/model tests: `node --import tsx --test test/native-query-workspace.mjs`.
 Query-session persistence tests: `node --import tsx --test test/native-query-session.mjs`.
 Settings/routing tests: `node --import tsx --test test/native-settings.mjs`.
+Formatting/error-position tests: `node --import tsx --test test/native-sql-editing.mjs`.
 
 Query transport types in `src/generated/contracts.ts` come from Rust DTOs.
 Regenerate them with `npm run generate:desktop:types`; the regular Rust test
@@ -108,6 +109,13 @@ use PNG (Linux), ICO (Windows) and ICNS (macOS) assets in `src-tauri/icons`.
   are scoped to their owning model and are disposed with the Svelte editor.
 - The same PostgreSQL grammar, dark theme and Monaco editor contributions as
   the original UI, including the suggest and parameter-help widgets.
+- Shared PostgreSQL SQL formatter via toolbar, context menu and
+  Ctrl/Cmd+Shift+F. Whole-document or selection formatting uses undoable edits;
+  parser failures leave text untouched and appear on the originating tab.
+- Model-scoped PostgreSQL error markers, including selection origins and
+  Unicode scalar-to-UTF-16 position conversion. Markers are cleared on edits,
+  new runs and disconnect, and late failures cannot mark changed SQL. Results
+  and transaction messages remain available independently of editor markers.
 - Object catalog for tables, views, functions, types and sequences, with
   columns, indexes, constraints, triggers and built-in completion metadata.
 - Snapshot-consistent DDL for all eight object kinds. A separate bounded catalog
