@@ -89,6 +89,7 @@ pub struct ConnectionConfig {
     pub user: Option<String>,
     pub password: Option<String>,
     pub ssl: Option<bool>,
+    pub tls_ca_pem: Option<String>,
     pub statement_timeout: Option<u32>,
 }
 
@@ -113,6 +114,7 @@ pub struct TextResult {
 #[derive(Clone)]
 struct Connection {
     config: Config,
+    tls: MakeTlsConnector,
     timeout: u32,
     opening: Arc<Mutex<()>>,
     catalog: Arc<CatalogPool>,
@@ -225,6 +227,7 @@ impl Drop for ClientOwner {
 pub(crate) struct Session {
     pub(crate) owner: Mutex<ClientOwner>,
     cancel: CancelToken,
+    tls: MakeTlsConnector,
     closed: AtomicBool,
     driver_abort: tokio::task::AbortHandle,
 }
@@ -262,14 +265,39 @@ pub struct Database {
     state: Arc<Mutex<State>>,
 }
 
-fn tls() -> Result<MakeTlsConnector, CoreError> {
+fn tls(ca: Option<&str>) -> Result<MakeTlsConnector, CoreError> {
     // Unlike the legacy SSL checkbox, verification is never silently disabled.
-    let connector = native_tls::TlsConnector::new().map_err(|e| CoreError::local(e.to_string()))?;
+    let mut builder = native_tls::TlsConnector::builder();
+    if let Some(ca) = ca {
+        if ca.len() > 64 * 1024 {
+            return Err(CoreError::local("Custom TLS CA is limited to 64 KiB"));
+        }
+        let ca = ca.trim();
+        if !ca.starts_with("-----BEGIN CERTIFICATE-----")
+            || !ca.ends_with("-----END CERTIFICATE-----")
+            || ca.matches("-----BEGIN CERTIFICATE-----").count() != 1
+            || ca.matches("-----END CERTIFICATE-----").count() != 1
+        {
+            return Err(CoreError::local(
+                "Custom TLS CA must contain exactly one PEM certificate",
+            ));
+        }
+        let certificate = native_tls::Certificate::from_pem(ca.as_bytes())
+            .map_err(|_| CoreError::local("Invalid custom TLS CA certificate"))?;
+        builder.add_root_certificate(certificate);
+    }
+    let connector = builder
+        .build()
+        .map_err(|_| CoreError::local("Could not initialize TLS trust configuration"))?;
     Ok(MakeTlsConnector::new(connector))
 }
 
-async fn open(config: &Config, timeout: u32) -> Result<ClientOwner, CoreError> {
-    let (client, mut connection) = config.connect(tls()?).await?;
+async fn open(
+    config: &Config,
+    timeout: u32,
+    tls: MakeTlsConnector,
+) -> Result<ClientOwner, CoreError> {
+    let (client, mut connection) = config.connect(tls).await?;
     let notices = crate::notices::NoticeSink::default();
     let sink = notices.clone();
     let driver = tokio::spawn(async move {
@@ -360,7 +388,13 @@ impl Database {
         config
             .application_name("pgDEV")
             .connect_timeout(Duration::from_secs(10));
-        let owner = open(&config, timeout).await?;
+        if input.tls_ca_pem.is_some()
+            && config.get_ssl_mode() != tokio_postgres::config::SslMode::Require
+        {
+            return Err(CoreError::local("Custom TLS CA requires sslmode=require (or SSL enabled); plaintext fallback is not allowed"));
+        }
+        let tls = tls(input.tls_ca_pem.as_deref())?;
+        let owner = open(&config, timeout, tls.clone()).await?;
         let row = owner.client.query_one("SHOW server_version", &[]).await?;
         let pg_version: String = row.get(0);
         let version = owner
@@ -376,6 +410,7 @@ impl Database {
             id.clone(),
             Connection {
                 config,
+                tls,
                 timeout,
                 opening: Arc::new(Mutex::new(())),
                 catalog: Arc::new(CatalogPool::new()),
@@ -415,7 +450,14 @@ impl Database {
         };
         let owner = match cached {
             Some(owner) => owner,
-            None => open(&connection.config, connection.timeout).await?,
+            None => {
+                open(
+                    &connection.config,
+                    connection.timeout,
+                    connection.tls.clone(),
+                )
+                .await?
+            }
         };
         let token = Uuid::new_v4().to_string();
         {
@@ -506,9 +548,15 @@ impl Database {
             }
             *state.generations.entry(key.clone()).or_default()
         };
-        let owner = open(&connection.config, connection.timeout).await?;
+        let owner = open(
+            &connection.config,
+            connection.timeout,
+            connection.tls.clone(),
+        )
+        .await?;
         let session = Arc::new(Session {
             cancel: owner.client.cancel_token(),
+            tls: connection.tls.clone(),
             driver_abort: owner.driver.abort_handle(),
             closed: AtomicBool::new(false),
             owner: Mutex::new(owner),
@@ -645,7 +693,7 @@ impl Database {
             .cloned()
             .ok_or_else(|| CoreError::local("Unknown query session"))?;
         // Separate socket: cancellation must not wait for the query mutex.
-        session.cancel.cancel_query(tls()?).await?;
+        session.cancel.cancel_query(session.tls.clone()).await?;
         Ok(())
     }
 

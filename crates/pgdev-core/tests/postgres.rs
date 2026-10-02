@@ -48,6 +48,37 @@ async fn rejects_invalid_uri_without_exposing_credentials() {
 }
 
 #[tokio::test]
+async fn custom_ca_rejects_plaintext_fallback_and_malformed_certificates_before_connecting() {
+    let db = Database::default();
+    for uri in [
+        "postgresql://localhost/db",
+        "postgresql://localhost/db?sslmode=disable",
+        "postgresql://localhost/db?sslmode=prefer",
+    ] {
+        let error = db
+            .connect(config(
+                json!({"connectionString": uri, "tlsCaPem": "secret-invalid-cert"}),
+            ))
+            .await
+            .err()
+            .unwrap();
+        assert!(error.message.contains("requires sslmode=require"));
+        assert!(!error.message.contains("secret-invalid-cert"));
+    }
+    for pem in ["", "secret-invalid-cert", "-----BEGIN CERTIFICATE-----\ninvalid\n-----END CERTIFICATE-----", "-----BEGIN CERTIFICATE-----\na\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\nb\n-----END CERTIFICATE-----"] {
+        let error = db.connect(config(json!({"connectionString": "postgresql://localhost/db?sslmode=require", "tlsCaPem": pem}))).await.err().unwrap();
+        assert!(error.message.contains("TLS CA"));
+        assert!(!error.message.contains("secret-invalid-cert"));
+    }
+    let error = db
+        .connect(config(json!({"ssl": true, "tlsCaPem": "x".repeat(65537)})))
+        .await
+        .err()
+        .unwrap();
+    assert!(error.message.contains("64 KiB"));
+}
+
+#[tokio::test]
 async fn unknown_connections_and_sessions_fail_cleanly() {
     let db = Database::default();
     assert!(db.query_text("missing", "tab", "SELECT 1").await.is_err());
@@ -215,6 +246,82 @@ fn data(response: &QueryResponse, index: usize) -> &pgdev_core::DataResult {
         QueryResult::Data(data) => data,
         _ => panic!("expected data result"),
     }
+}
+
+#[tokio::test]
+#[ignore = "requires live PostgreSQL and npm dependencies for transport parity"]
+async fn common_utility_names_and_counts_match_original_transport() {
+    use std::{
+        io::Write,
+        process::{Command, Stdio},
+    };
+    let sql = "START TRANSACTION;
+        CREATE TEMP TABLE pgdev_command_probe(id integer);
+        CREATE UNIQUE INDEX pgdev_command_idx ON pgdev_command_probe(id);
+        CREATE TEMP SEQUENCE pgdev_command_seq;
+        CREATE OR REPLACE TEMP VIEW pgdev_command_view AS SELECT id FROM pgdev_command_probe;
+        COMMENT ON TABLE pgdev_command_probe IS 'CREATE FUNCTION';
+        ALTER TABLE pgdev_command_probe ADD COLUMN label text;
+        INSERT INTO pgdev_command_probe VALUES (1, 'one'), (2, 'two');
+        UPDATE pgdev_command_probe SET label = 'changed' WHERE id = 1;
+        DELETE FROM pgdev_command_probe WHERE id = 2;
+        WITH source AS (SELECT 3 AS id) INSERT INTO pgdev_command_probe(id) SELECT id FROM source;
+        WITH source AS (SELECT 3 AS id) UPDATE pgdev_command_probe SET label='cte' WHERE id IN (SELECT id FROM source);
+        WITH source AS (SELECT 3 AS id) DELETE FROM pgdev_command_probe WHERE id IN (SELECT id FROM source);
+        SAVEPOINT pgdev_command_save;
+        ROLLBACK TO SAVEPOINT pgdev_command_save;
+        RELEASE SAVEPOINT pgdev_command_save;
+        TRUNCATE pgdev_command_probe;
+        DROP VIEW pgdev_command_view;
+        DROP SEQUENCE pgdev_command_seq;
+        DROP INDEX pgdev_command_idx;
+        DROP TABLE pgdev_command_probe;
+        END;
+        START TRANSACTION;
+        ABORT;";
+    let input = live_config();
+    let uri = input.connection_string.clone().unwrap();
+    let db = Database::default();
+    let connection = db.connect(input).await.unwrap();
+    let response = db
+        .query(request(&connection.id, "command-tags", sql, None, 10))
+        .await
+        .unwrap();
+    assert!(!response.transaction_open);
+    let actual = response
+        .results
+        .iter()
+        .map(|result| match result {
+            QueryResult::Command(result) => {
+                json!({"command": result.command, "rowCount": result.row_count})
+            }
+            _ => panic!("expected utility command result"),
+        })
+        .collect::<Vec<_>>();
+    db.disconnect(&connection.id).await.unwrap();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut child = Command::new("node")
+        .arg("test/native-command-reference.mjs")
+        .current_dir(root)
+        .env("PGDEV_MIGRATION_URL", uri)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(&serde_json::to_vec(&json!({"sql": sql})).unwrap())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "reference transport failed (details suppressed to protect credentials)"
+    );
+    let expected: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(actual, expected);
 }
 
 #[tokio::test]

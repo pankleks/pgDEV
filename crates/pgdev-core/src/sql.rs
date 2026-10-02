@@ -205,6 +205,44 @@ pub(crate) fn leading_words(sql: &str, limit: usize) -> Vec<String> {
     words
 }
 
+/// Match node-postgres's first-word command names where syntax determines them.
+/// The driver discards the wire tag: EXECUTE and aborted COMMIT still require
+/// protocol support. This function labels results; it never routes execution.
+pub(crate) fn command_name(sql: &str, standard_strings: bool) -> String {
+    let first = leading_words(sql, 1).pop().unwrap_or_else(|| "OK".into());
+    match first.as_str() {
+        "END" => return "COMMIT".into(),
+        "ABORT" => return "ROLLBACK".into(),
+        "WITH" => {}
+        _ => return first,
+    }
+    let mut at = 0;
+    let mut depth = 0usize;
+    while at < sql.len() {
+        let (end, next) = token(sql, at, standard_strings);
+        match next {
+            Some(Token::Other('(')) => depth += 1,
+            Some(Token::Other(')')) => depth = depth.saturating_sub(1),
+            Some(Token::Word(word))
+                if depth == 0
+                    && matches!(
+                        word.as_str(),
+                        "SELECT" | "INSERT" | "UPDATE" | "DELETE" | "MERGE" | "VALUES" | "TABLE"
+                    ) =>
+            {
+                return if matches!(word.as_str(), "VALUES" | "TABLE") {
+                    "SELECT".into()
+                } else {
+                    word
+                };
+            }
+            _ => {}
+        }
+        at = end;
+    }
+    first
+}
+
 #[derive(Debug, PartialEq)]
 pub(crate) enum TransactionControl {
     Unchanged,
@@ -347,6 +385,79 @@ mod tests {
             "SELECT 'ą😀';  ".chars().count() as u32
         );
         assert_eq!(split("SELECT $1, identifier$tag$; SELECT 2", true).len(), 2);
+    }
+
+    #[test]
+    fn command_names_match_legacy_short_names_and_skip_nested_cte_operations() {
+        for (statement, expected) in [
+            ("START /* BEGIN */ TRANSACTION", "START"),
+            ("END WORK AND CHAIN", "COMMIT"),
+            ("ABORT TRANSACTION", "ROLLBACK"),
+            ("ROLLBACK TO SAVEPOINT x", "ROLLBACK"),
+            ("RELEASE SAVEPOINT x", "RELEASE"),
+            ("COMMIT PREPARED 'x'", "COMMIT"),
+            ("ROLLBACK PREPARED 'x'", "ROLLBACK"),
+            ("PREPARE TRANSACTION 'x'", "PREPARE"),
+            ("CREATE GLOBAL TEMPORARY TABLE t (id int)", "CREATE"),
+            (
+                "CREATE UNIQUE INDEX CONCURRENTLY idx ON t(id)",
+                "CREATE",
+            ),
+            ("CREATE OR REPLACE TEMP VIEW v AS SELECT 1", "CREATE"),
+            (
+                "CREATE OR REPLACE FUNCTION f() RETURNS void AS $$ BEGIN END $$ LANGUAGE plpgsql",
+                "CREATE",
+            ),
+            (
+                "CREATE MATERIALIZED VIEW v AS SELECT 1",
+                "CREATE",
+            ),
+            (
+                "ALTER FOREIGN TABLE t ADD COLUMN id int",
+                "ALTER",
+            ),
+            ("DROP FOREIGN DATA WRAPPER f", "DROP"),
+            (
+                "CREATE USER MAPPING FOR CURRENT_USER SERVER s",
+                "CREATE",
+            ),
+            ("ALTER USER u RENAME TO v", "ALTER"),
+            ("DROP GROUP g", "DROP"),
+            (
+                "ALTER TEXT SEARCH CONFIGURATION c ADD MAPPING FOR word WITH simple",
+                "ALTER",
+            ),
+            (
+                "CREATE EVENT TRIGGER e ON ddl_command_start EXECUTE FUNCTION f()",
+                "CREATE",
+            ),
+            (
+                "REFRESH MATERIALIZED VIEW CONCURRENTLY v",
+                "REFRESH",
+            ),
+            ("TRUNCATE t", "TRUNCATE"),
+            ("COMMENT ON TABLE t IS 'DROP VIEW'", "COMMENT"),
+            ("SECURITY LABEL ON TABLE t IS 'value'", "SECURITY"),
+            ("/* CREATE TABLE */ VACUUM t", "VACUUM"),
+            ("CREATE SOMETHING unknown", "CREATE"),
+            ("WITH q AS (SELECT 1) DELETE FROM t", "DELETE"),
+            ("WITH q AS (DELETE FROM t RETURNING *) INSERT INTO t SELECT * FROM q", "INSERT"),
+            ("WITH RECURSIVE q(id) AS (VALUES(1)) UPDATE t SET id=1", "UPDATE"),
+            ("WITH \"INSERT\" AS (SELECT 'DELETE') SELECT * FROM \"INSERT\"", "SELECT"),
+            ("WITH q AS (SELECT $$ ) DELETE $$) /* UPDATE */ VALUES (1)", "SELECT"),
+            ("WITH q AS (SELECT 1) TABLE q", "SELECT"),
+            ("WITH q AS (SELECT 1) MERGE INTO t USING q ON false WHEN NOT MATCHED THEN DO NOTHING", "MERGE"),
+            ("-- no statement", "OK"),
+        ] {
+            assert_eq!(command_name(statement, true), expected, "{statement}");
+        }
+        assert_eq!(
+            command_name(
+                "WITH q AS (SELECT 'x\\' ) DELETE') UPDATE t SET id=1",
+                false
+            ),
+            "UPDATE"
+        );
     }
 
     #[test]

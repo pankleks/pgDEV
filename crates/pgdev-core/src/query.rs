@@ -314,7 +314,7 @@ impl Database {
                     TransactionControl::Unchanged => {},
                 }
                 if meta.names.is_empty() {
-                    results.push(QueryResult::Command(CommandResult { command: sql::leading_words(statement.text, 1).first().cloned().unwrap_or_else(|| "OK".to_owned()), row_count: count }));
+                    results.push(QueryResult::Command(CommandResult { command: sql::command_name(statement.text, owner.standard_strings), row_count: count }));
                 } else {
                     results.push(QueryResult::Data(Box::new(DataResult { columns: meta.names, column_types: meta.types, column_type_oids: meta.oids, column_type_lengths: meta.lengths, editable: meta.editable, row_count: rows.len() as u64, rows, truncated: false, limited, total_row_count: Some(count) })));
                 }

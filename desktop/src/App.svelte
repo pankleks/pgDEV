@@ -104,6 +104,7 @@
   }
 
   let uri = $state('')
+  let tlsCaPem = $state('')
   let connection = $state<Connected | null>(null)
   let connectionTimeout = $state<number | null>(null)
   let settings = $state(sanitizeSettings(null))
@@ -260,7 +261,7 @@
     connecting = true
     message = ''
     const timeout = settings.statementTimeout
-    try { connection = await api.connect(uri, timeout); connectionTimeout = timeout; uri = ''; void refreshCatalog() }
+    try { connection = await api.connect(uri, timeout, tlsCaPem.trim() || undefined); connectionTimeout = timeout; uri = ''; tlsCaPem = ''; void refreshCatalog() }
     catch (error) { message = errorMessage(error) }
     finally { connecting = false }
   }
@@ -316,6 +317,11 @@
     {:else}
       <label for="connection">Connection string</label>
       <input id="connection" type="password" bind:value={uri} placeholder="postgresql://user:password@localhost/database" autocomplete="off" />
+      <details><summary>Custom TLS CA (optional)</summary>
+        <label for="tls-ca">One PEM certificate · requires sslmode=require</label>
+        <textarea id="tls-ca" bind:value={tlsCaPem} maxlength={65536} rows={4} spellcheck={false} disabled={connecting} placeholder="-----BEGIN CERTIFICATE-----"></textarea>
+        <p class="notice">Adds trust without disabling certificate or hostname verification. Not saved locally.</p>
+      </details>
       <button onclick={connect} disabled={!native || !sessionReady || !settingsReady || appClosing || connecting || !uri.trim()}>{connecting ? 'Connecting…' : 'Connect'}</button>
     {/if}
   </section>

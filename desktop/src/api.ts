@@ -19,7 +19,7 @@ export const api = {
   openSqlFile: () => invoke<OpenSqlFile | null>('open_sql_file'),
   saveSqlFile: (content: string, token: string | null) => invoke<SqlFileInfo | null>('save_sql_file', { content, token }),
   releaseSqlFile: (token: string) => invoke<void>('release_sql_file', { token }),
-  connect: (connectionString: string, statementTimeout = 30) => invoke<Connected>('connect', { config: { connectionString, statementTimeout } }),
+  connect: (connectionString: string, statementTimeout = 30, tlsCaPem?: string) => invoke<Connected>('connect', { config: { connectionString, statementTimeout, tlsCaPem } }),
   disconnect: (id: string) => invoke<void>('disconnect', { id }),
   schema: (id: string) => invoke<SchemaData>('schema', { id }),
   ddl: (id: string, target: DdlTarget) => invoke<DdlResponse>('ddl', { id, target }),

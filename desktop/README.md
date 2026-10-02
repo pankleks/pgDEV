@@ -56,12 +56,28 @@ Native application icons are generated from the root `pgDEV.png` using
 use PNG (Linux), ICO (Windows) and ICNS (macOS) assets in `src-tauri/icons`.
 
 - Connection URI, PostgreSQL 14+ validation, verified TLS where requested.
+- Optional custom TLS CA: paste exactly one PEM certificate (up to 64 KiB) in
+  the connection form and use `sslmode=require`. It augments system trust without
+  disabling certificate or hostname verification; plaintext/prefer modes with
+  a custom CA are rejected before connecting. The same connector is retained
+  for query sessions, catalog clients and cancellation sockets. CA text is not
+  persisted and is cleared from the form on successful connection. PEM bundles,
+  client certificates and insecure/self-signed bypass modes are not supported.
+  Successful custom-CA handshakes and hostname rejection still require validation
+  against a TLS-enabled test PostgreSQL on each supported platform.
 - Dedicated query sessions per tab (maximum five busy/pinned sessions), with
   idle-slot reclamation and an idle reaper. Creating a client does not lock the
   global registry or block cancellation of queries on other connections.
 - Statement splitting handles PostgreSQL quotes, dollar bodies, nested
   comments and `standard_conforming_strings`; errors have batch-relative
   Unicode character positions.
+- Command results retain node-postgres's short command names (`CREATE`, `ALTER`,
+  `START`, etc.), normalize `END`/`ABORT` aliases, and identify the outer operation
+  of `WITH` statements without confusing nested CTE bodies, quotes or comments.
+  Live parity tests compare names and affected-row counts to node-postgres using
+  session-local temporary objects (`common_utility_names_and_counts_match_original_transport`).
+  These are syntax-derived labels, not complete wire command tags: dynamic
+  `EXECUTE` and a `COMMIT` that rolls back an aborted transaction remain gaps.
 - Typed columns (names, PostgreSQL type names and OIDs) with lossless text for
   bigint, numeric, JSON, temporal, arrays and custom types. Boolean and small
   integer values retain the existing JSON representation.
@@ -207,12 +223,11 @@ MCP migration are still outstanding. The prototype UI is not the final 1:1 UI.
 The production build has been verified locally on Windows; CI also checks
 macOS/Linux, but their installers still require validation on those platforms.
 
-TLS currently uses the system trust store and verifies server certificates.
+TLS uses the system trust store plus an optional custom CA and verifies server certificates.
 Connection URIs without `sslmode` retain the legacy non-TLS default; use
 `sslmode=require` to explicitly request encrypted, certificate-verified access.
-Custom CA certificates and explicit compatibility with legacy self-signed
-connections require a dedicated configuration design; verification must not be
-silently disabled.
+Legacy self-signed connections must explicitly trust a supplied certificate;
+there is no insecure bypass. TLS-enabled live/platform validation remains pending.
 
 The Rust packages are unpublished migration scaffolding (`0.0.0`), not a new
 application release version. Existing package versions have not been changed.
