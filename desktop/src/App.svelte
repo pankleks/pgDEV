@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { onMount } from 'svelte'
+  import { getCurrentWindow } from '@tauri-apps/api/window'
   import { isTauri } from '@tauri-apps/api/core'
   import { api, errorMessage, type Connected, type SchemaData, type DdlTarget } from './api'
   import QueryEditor from './QueryEditor.svelte'
@@ -7,6 +9,9 @@
   import TableEditor from './TableEditor.svelte'
   import NoticePanel from './NoticePanel.svelte'
   import CloseTabDialog from './CloseTabDialog.svelte'
+  import CloseAppDialog from './CloseAppDialog.svelte'
+  import { snapshotSession, restoreQuerySession, createSessionWriter } from './lib/querySession'
+  import { loadQuerySession, saveQuerySession } from './lib/sessionStorage'
   import { createQueryWorkspace, createQueryController, tabNeedsConfirmation } from './lib/queryWorkspace'
   import type { DataResult, TableEditState, TableEditRequest } from './generated/contracts'
 
@@ -92,7 +97,7 @@
   let uri = $state('')
   let connection = $state<Connected | null>(null)
   const workspace = $state(createQueryWorkspace())
-  const queries = createQueryController(workspace, api, () => connection, () => disconnecting)
+  const queries = createQueryController(workspace, api, () => connection, () => disconnecting || !sessionReady || appClosing)
   const activeTab = $derived(workspace.tabs.find(tab => tab.key === workspace.activeKey)!)
   const results = $derived(activeTab.results)
   const transactionId = $derived(activeTab.transactionId)
@@ -104,14 +109,72 @@
   const anySaving = $derived(workspace.tabs.some(tab => tab.saving))
   let closingKey = $state<string | null>(null)
   const closingTab = $derived(workspace.tabs.find(tab => tab.key === closingKey) ?? null)
-  let queryEditor: { getSql(): string } | undefined
+  let queryEditor = $state<{ getSql(): string } | undefined>(undefined)
   let message = $state('')
   let connecting = $state(false)
   let disconnecting = $state(false)
   const native = isTauri()
+  let sessionReady = $state(false)
+  let sessionWritable = $state(false)
+  let sessionError = $state('')
+  let exitHandlerError = $state('')
+  let appClosing = $state(false)
+  let exitDialog = $state(false)
+  let exitError = $state('')
+  const workInFlight = $derived(workspace.tabs.some(tab => tab.running || tab.saving || tab.cancelling || tab.closing || tab.transactionId !== null))
+  const sessionWriter = createSessionWriter(saveQuerySession)
+
+  async function saveSession() {
+    if (!sessionReady || !sessionWritable) throw new Error('Saved session could not be read. Automatic saving is disabled to protect existing SQL.')
+    try { await sessionWriter.save(snapshotSession(workspace)); sessionError = '' }
+    catch { sessionError = 'Could not save SQL tabs. Keep the application open and retry, or copy your SQL before exiting.'; throw new Error(sessionError) }
+  }
+
+  async function exitApplication(discard = false) {
+    if (appClosing) return
+    exitDialog = true; appClosing = true; exitError = ''
+    try {
+      if (!discard) await saveSession()
+      await getCurrentWindow().destroy()
+    } catch (error) { exitError = errorMessage(error); exitDialog = true }
+    finally { appClosing = false }
+  }
+
+  onMount(() => {
+    let disposed = false
+    let unlisten: (() => void) | undefined
+    if (native) {
+      void getCurrentWindow().onCloseRequested(event => {
+        event.preventDefault()
+        if (appClosing) return
+        if (workInFlight || editing || tableEditing) exitDialog = true
+        else void exitApplication()
+      }).then(stop => { if (disposed) stop(); else unlisten = stop }).catch(() => {
+        exitHandlerError = 'Could not install the exit-save handler. Save tabs manually before closing.'
+      })
+    }
+    void (async () => {
+      try {
+        const stored = await loadQuerySession()
+        if (disposed) return
+        if (stored) {
+          const restored = restoreQuerySession(stored)
+          workspace.tabs = restored.tabs; workspace.activeKey = restored.activeKey; workspace.nextTitle = restored.nextTitle
+          sessionWriter.markLoaded(stored)
+        }
+        sessionWritable = true
+      } catch {
+        if (!disposed) sessionError = 'Could not read saved SQL tabs. Automatic saving is disabled to protect the existing session. You can still work, but copy your SQL before exiting.'
+      } finally { if (!disposed) sessionReady = true }
+    })()
+    const interval = window.setInterval(() => {
+      if (sessionReady && sessionWritable && !appClosing) void saveSession().catch(() => {})
+    }, 10_000)
+    return () => { disposed = true; unlisten?.(); window.clearInterval(interval) }
+  })
 
   async function connect() {
-    if (connecting || connection || !uri.trim()) return
+    if (connecting || connection || !uri.trim() || !sessionReady || appClosing) return
     connecting = true
     message = ''
     try { connection = await api.connect(uri); uri = ''; void refreshCatalog() }
@@ -169,20 +232,24 @@
     {:else}
       <label for="connection">Connection string</label>
       <input id="connection" type="password" bind:value={uri} placeholder="postgresql://user:password@localhost/database" autocomplete="off" />
-      <button onclick={connect} disabled={!native || connecting || !uri.trim()}>{connecting ? 'Connecting…' : 'Connect'}</button>
+      <button onclick={connect} disabled={!native || !sessionReady || appClosing || connecting || !uri.trim()}>{connecting ? 'Connecting…' : 'Connect'}</button>
     {/if}
   </section>
   <div class="workspace">
   <ObjectBrowser data={catalog} loading={catalogLoading} error={catalogError} onrefresh={refreshCatalog} onopen={openDdl} onedit={openTableEditor} />
   <div class="query-pane">
+  {#if !sessionReady}<p class="notice">Restoring SQL tabs…</p>{/if}
+  {#if sessionError}<p class="error" role="alert">{sessionError}</p>{/if}
+  {#if exitHandlerError}<p class="error" role="alert">{exitHandlerError}</p>{/if}
+  <button onclick={() => { void saveSession().catch(() => {}) }} disabled={!sessionReady || !sessionWritable || appClosing}>Save SQL tabs</button>
   <div class="tabs" aria-label="SQL tabs">
     {#each workspace.tabs as tab (tab.key)}
       <div class:active={tab.key === workspace.activeKey} class="tab">
-        <button aria-pressed={tab.key === workspace.activeKey} onclick={() => queries.activateTab(tab.key)}>{tab.title}{tab.sql.length ? ' *' : ''}{tab.running ? ' · running' : ''}{tab.transactionId ? ' · transaction' : ''}</button>
-        <button aria-label={`Close ${tab.title}`} onclick={() => requestCloseTab(tab.key)} disabled={tab.saving || tab.cancelling || tab.closing || disconnecting}>×</button>
+        <button aria-pressed={tab.key === workspace.activeKey} disabled={!sessionReady || appClosing} onclick={() => queries.activateTab(tab.key)}>{tab.title}{tab.sql.length ? ' *' : ''}{tab.running ? ' · running' : ''}{tab.transactionId ? ' · transaction' : ''}</button>
+        <button aria-label={`Close ${tab.title}`} onclick={() => requestCloseTab(tab.key)} disabled={!sessionReady || appClosing || tab.saving || tab.cancelling || tab.closing || disconnecting}>×</button>
       </div>
     {/each}
-    <button onclick={() => queries.addTab()} disabled={disconnecting}>+ New query</button>
+    <button onclick={() => queries.addTab()} disabled={!sessionReady || appClosing || disconnecting}>+ New query</button>
   </div>
   <section class="toolbar">
     <span>Query</span>
@@ -194,7 +261,7 @@
       <button onclick={() => run('ROLLBACK')} disabled={running || saving || activeTab.cancelling || activeTab.closing || disconnecting}>Rollback</button>
     {/if}
   </section>
-  <QueryEditor bind:this={queryEditor} tabs={workspace.tabs} activeKey={workspace.activeKey} {catalog} onchange={queries.setSql} onrun={run} />
+  {#if sessionReady}<QueryEditor bind:this={queryEditor} tabs={workspace.tabs} activeKey={workspace.activeKey} {catalog} onchange={queries.setSql} onrun={run} />{/if}
   {#if tableLoading}<p class="notice">Loading table editor…</p>{/if}
   {#if tableError && !tableEditing}<pre class="error" role="alert">{tableError}</pre>{/if}
   {#if ddlLoading}<p class="notice">Loading DDL…</p>{/if}
@@ -231,6 +298,7 @@
 {#if editing && editingTab}<RowEditor result={editing.result} rowIndex={editing.rowIndex} saving={editingTab.saving} error={editingTab.message} output={editingTab.notices} onsave={saveRow} onclose={() => { editing = null }} />{/if}
 {#if closingTab}<CloseTabDialog tab={closingTab} onconfirm={confirmCloseTab} oncancel={() => { closingKey = null }} />{/if}
 {#if tableEditing}<TableEditor state={tableEditing} generating={tableGenerating} error={tableError} preview={tablePreview} ongenerate={generateTableSql} ondirty={() => { tablePreview = undefined; tableError = '' }} onclose={() => { tableEditing = null; tableError = ''; tablePreview = undefined }} />{/if}
+{#if exitDialog}<CloseAppDialog busy={workInFlight || !!editing || !!tableEditing} error={exitError} saving={appClosing} onconfirm={() => { void exitApplication() }} ondiscard={() => { void exitApplication(true) }} oncancel={() => { exitDialog = false; exitError = '' }} />{/if}
 
 <style>
   .workspace { display: flex; gap: 16px; }

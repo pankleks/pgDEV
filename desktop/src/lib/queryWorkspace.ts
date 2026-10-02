@@ -22,11 +22,11 @@ export interface QueryWorkspace { tabs: QueryTab[]; activeKey: string; nextTitle
 type QueryApi = Pick<typeof api, 'query' | 'fetchMore' | 'cancel' | 'closeSession' | 'rowUpdate'>
 const emptyNotices = (): NoticeOutput => ({ notices: [], noticesTruncated: false })
 
-function createTab(key: string, title: string, sql = ''): QueryTab {
+export function createQueryTab(key: string, title: string, sql = ''): QueryTab {
   return { key, title, sql, results: [], transactionId: null, durationMs: null, message: '', running: false, cancelling: false, saving: false, closing: false, operation: 0, notices: emptyNotices() }
 }
 export function createQueryWorkspace(takeKey: () => string = () => crypto.randomUUID()): QueryWorkspace {
-  const tab = createTab(takeKey(), 'Query 1', 'SELECT current_database(), version();')
+  const tab = createQueryTab(takeKey(), 'Query 1', 'SELECT current_database(), version();')
   return { tabs: [tab], activeKey: tab.key, nextTitle: 2 }
 }
 export function tabNeedsConfirmation(tab: QueryTab): boolean {
@@ -53,7 +53,7 @@ export function createQueryController(
     if (transaction !== undefined) tab.transactionId = transaction
   }
   function addTab() {
-    const tab = createTab(takeKey(), `Query ${workspace.nextTitle++}`)
+    const tab = createQueryTab(takeKey(), `Query ${workspace.nextTitle++}`)
     workspace.tabs.push(tab)
     workspace.activeKey = tab.key
     return find(tab.key)!

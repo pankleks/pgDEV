@@ -8,7 +8,7 @@
 
 <dialog bind:this={dialog} aria-label="Close SQL tab" oncancel={(event) => { event.preventDefault(); if (!tab.closing) oncancel() }}>
   <h2>Close {tab.title}?</h2>
-  {#if tab.sql.length}<p>SQL text in this tab will be discarded. Tab persistence is not migrated yet.</p>{/if}
+  {#if tab.sql.length}<p>SQL text in this tab will be discarded and removed from the saved session.</p>{/if}
   {#if tab.running}<p>The running query will be stopped.</p>{/if}
   {#if tab.transactionId}<p>The open transaction will be rolled back.</p>{/if}
   {#if tab.message && !tab.closing}<p class="error" role="alert">{tab.message}</p>{/if}
