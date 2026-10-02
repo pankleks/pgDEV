@@ -30,6 +30,7 @@ existing backend through a test-only Node helper, and clean up after assertions.
 Run all core tests with `cargo test -p pgdev-core --locked -- --include-ignored`.
 Browser-tree helper tests: `node --import tsx --test test/native-catalog-tree.mjs`.
 Notice-output helper tests: `node --import tsx --test test/native-notices.mjs`.
+SQL-provider tests: `node --import tsx --test test/native-sql-providers.mjs`.
 
 Query transport types in `src/generated/contracts.ts` come from Rust DTOs.
 Regenerate them with `npm run generate:desktop:types`; the regular Rust test
@@ -62,6 +63,13 @@ Opening Vite in a browser is not a supported application mode.
   PostgreSQL rolls back the terminated connection's open transaction.
 - Svelte 5 shell and Monaco with local worker assets, selection execution,
   type headers, load-more and manual commit/rollback controls.
+- Catalog-driven Monaco completion, hover and function signature help, shared
+  with the original editor through framework-independent provider factories.
+  Aliases, quoted identifiers, CTEs, routine-body symbols, overloads and built-ins
+  use the existing SQL parsing rules. Providers read the latest Rust catalog,
+  are scoped to their owning model and are disposed with the Svelte editor.
+- The same PostgreSQL grammar, dark theme and Monaco editor contributions as
+  the original UI, including the suggest and parameter-help widgets.
 - Object catalog for tables, views, functions, types and sequences, with
   columns, indexes, constraints, triggers and built-in completion metadata.
 - Snapshot-consistent DDL for all eight object kinds. A separate bounded catalog

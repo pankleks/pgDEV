@@ -1,14 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
-  import 'monaco-editor/esm/vs/basic-languages/sql/sql.contribution'
-  import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
+  import monaco from './monaco'
+  import { registerSqlProviders } from './lib/sqlProviders'
+  import type { SchemaData } from './generated/contracts'
 
-  let { value = $bindable(''), onrun }: { value?: string; onrun: (sql: string) => void } = $props()
+  let { value = $bindable(''), catalog = null, onrun }: { value?: string; catalog?: SchemaData | null; onrun: (sql: string) => void } = $props()
   let host: HTMLDivElement
   let editor: monaco.editor.IStandaloneCodeEditor | undefined
-
-  self.MonacoEnvironment = { getWorker: () => new EditorWorker() }
 
   export function getSql(): string {
     const selection = editor?.getSelection()
@@ -17,16 +15,21 @@
 
   onMount(() => {
     editor = monaco.editor.create(host, {
-      value, language: 'sql', theme: 'vs-dark', automaticLayout: true,
+      value, language: 'sql', theme: 'pgdev-dark', automaticLayout: true,
       minimap: { enabled: false }, fontSize: 14,
+      tabSize: 4, insertSpaces: false, detectIndentation: false,
+      scrollBeyondLastLine: false, wordWrap: 'on', renderWhitespace: 'selection',
+      wordBasedSuggestions: 'off',
     })
+    const model = editor.getModel()!
+    const providers = registerSqlProviders(monaco, model, () => catalog)
     const changes = editor.onDidChangeModelContent(() => { value = editor!.getValue() })
     editor.addAction({ id: 'pgdev.run', label: 'Run SQL', keybindings: [monaco.KeyCode.F5, monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter], run: () => onrun(getSql()) })
     return () => {
       changes.dispose()
-      const model = editor?.getModel()
+      providers.dispose()
       editor?.dispose()
-      model?.dispose()
+      model.dispose()
       editor = undefined
     }
   })

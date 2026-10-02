@@ -1,6 +1,7 @@
 import type * as Monaco from 'monaco-editor'
 import { useSchema } from '../composables/schema'
 import { computeSignatureHelp, type SignatureHelpData } from '../lib/signature'
+import { createSqlSignatureProvider } from './signatureProvider'
 
 let registered = false
 
@@ -14,18 +15,7 @@ export function registerSqlSignature(monaco: typeof Monaco): void {
   if (registered) return
   registered = true
 
-  const provider: Monaco.languages.SignatureHelpProvider = {
-    signatureHelpTriggerCharacters: ['(', ','],
-    signatureHelpRetriggerCharacters: [','],
-    provideSignatureHelp(model, position) {
-      const { state } = useSchema()
-      const data = state.data
-      if (!data) return null
-      const help = computeSignatureHelp(data, model.getValue(), model.getOffsetAt(position))
-      if (!help) return null
-      return { value: help, dispose() {} }
-    },
-  }
+  const provider = createSqlSignatureProvider(() => useSchema().state.data)
   monaco.languages.registerSignatureHelpProvider('sql', provider)
 }
 

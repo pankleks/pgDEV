@@ -228,7 +228,7 @@
       <button onclick={() => run('ROLLBACK')} disabled={running || disconnecting}>Rollback</button>
     {/if}
   </section>
-  <QueryEditor bind:this={queryEditor} bind:value={sql} onrun={run} />
+  <QueryEditor bind:this={queryEditor} bind:value={sql} {catalog} onrun={run} />
   {#if tableLoading}<p class="notice">Loading table editor…</p>{/if}
   {#if tableError && !tableEditing}<pre class="error" role="alert">{tableError}</pre>{/if}
   {#if ddlLoading}<p class="notice">Loading DDL…</p>{/if}
