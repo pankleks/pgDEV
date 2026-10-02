@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/pgdev-core", "desktop/src-tauri"]
+members = ["crates/pgdev-core", "crates/pgdev-mcp", "desktop/src-tauri"]
 resolver = "2"
 
 [workspace.dependencies]

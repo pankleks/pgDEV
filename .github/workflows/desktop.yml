@@ -37,3 +37,5 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test -p pgdev-core --locked
       - run: cargo test -p pgdev-desktop --locked
+      - run: cargo test -p pgdev-mcp --locked
+      - run: cargo test -p pgdev-mcp --locked official_mcp_sdk -- --include-ignored

@@ -106,6 +106,27 @@
 
   let uri = $state('')
   let tlsCaPem = $state('')
+  let mcpEndpoint = $state<{ url: string; token: string } | null>(null)
+  let mcpBusy = $state(false)
+  let mcpError = $state('')
+
+  async function toggleMcp() {
+    if (mcpBusy || appClosing || !native) return
+    mcpBusy = true; mcpError = ''
+    try {
+      if (mcpEndpoint) { await api.stopMcp(); mcpEndpoint = null }
+      else mcpEndpoint = await api.startMcp()
+    } catch (error) { mcpError = errorMessage(error) }
+    finally { mcpBusy = false }
+  }
+  async function copyMcpConfig() {
+    if (!mcpEndpoint || clipboardBusy || appClosing) return
+    clipboardBusy = true; mcpError = ''
+    const endpoint = mcpEndpoint
+    try { await api.writeClipboardText(JSON.stringify({ mcpServers: { pgDEV: { type: 'http', url: endpoint.url, headers: { Authorization: `Bearer ${endpoint.token}` } } } }, null, 2)) }
+    catch (error) { mcpError = errorMessage(error) }
+    finally { clipboardBusy = false }
+  }
   let connectionPassword = $state('')
   let profileLabel = $state('')
   let profiles = $state(emptyProfiles())
@@ -233,10 +254,11 @@
 
   async function exitApplication(discard = false) {
     if (appClosing) return
-    if (fileBusy || exportBusy || clipboardBusy) { exitError = 'Wait for file/clipboard operations to finish, or cancel the export before exiting.'; exitDialog = true; return }
+    if (fileBusy || exportBusy || clipboardBusy || mcpBusy) { exitError = 'Wait for file/clipboard/MCP operations to finish, or cancel the export before exiting.'; exitDialog = true; return }
     exitDialog = true; appClosing = true; exitError = ''
     try {
       if (!discard) { await saveSession(); await persistSettings(); await persistProfiles() }
+      await api.stopMcp(); mcpEndpoint = null
       await getCurrentWindow().destroy()
     } catch (error) { exitError = errorMessage(error); exitDialog = true }
     finally { appClosing = false }
@@ -380,6 +402,16 @@
       <button onclick={connect} disabled={!native || !sessionReady || !settingsReady || appClosing || connecting || !uri.trim()}>{connecting ? 'Connecting…' : 'Connect'}</button>
     {/if}
   </section>
+  <details><summary>MCP · catalog-only prototype</summary>
+    <p class="notice">Disabled by default. Start a local authenticated HTTP endpoint for get_schema/get_ddl on the active connection. No query execution or editor changes are exposed yet.</p>
+    <button onclick={toggleMcp} disabled={!native || mcpBusy || appClosing}>{mcpEndpoint ? 'Stop MCP' : 'Start MCP'}</button>
+    {#if mcpEndpoint}
+      <p class="notice">{mcpEndpoint.url}</p>
+      <button onclick={copyMcpConfig} disabled={clipboardBusy || mcpBusy || appClosing}>Copy HTTP client config (includes secret token)</button>
+      <p class="notice">Requires a Streamable HTTP MCP client. Keep the copied token private. Stopping/restarting revokes it; browsers, legacy SSE and stdio are not supported yet.</p>
+    {/if}
+    {#if mcpError}<pre class="error" role="alert">{mcpError}</pre>{/if}
+  </details>
   <div class="workspace">
   <ObjectBrowser data={catalog} loading={catalogLoading} error={catalogError} onrefresh={refreshCatalog} onopen={openDdl} onedit={openTableEditor} />
   <div class="query-pane">

@@ -11,6 +11,8 @@ export interface CoreError { message: string; code: string | null; position: num
 export { errorMessage, transactionFromError } from './lib/errors'
 
 export const api = {
+  startMcp: () => invoke<{ url: string; token: string }>('start_mcp'),
+  stopMcp: () => invoke<void>('stop_mcp'),
   writeClipboardText: (content: string) => invoke<void>('write_clipboard_text', { content }),
   startCsvExport: () => invoke<string | null>('start_csv_export'),
   appendCsvExport: (token: string, chunk: string) => invoke<void>('append_csv_export', { token, chunk }),

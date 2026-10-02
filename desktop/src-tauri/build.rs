@@ -20,6 +20,8 @@ fn main() {
             "finish_csv_export",
             "abort_csv_export",
             "write_clipboard_text",
+            "start_mcp",
+            "stop_mcp",
         ]),
     ))
     .expect("Could not generate desktop permissions");

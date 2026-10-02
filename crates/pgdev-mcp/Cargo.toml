@@ -1,0 +1,20 @@
+[package]
+name = "pgdev-mcp"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+pgdev-core = { path = "../pgdev-core" }
+serde.workspace = true
+serde_json = "1"
+tokio = { workspace = true, features = ["net", "macros"] }
+uuid.workspace = true
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json"] }
+getrandom = "0.3"
+subtle = "2"
+
+[dev-dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+dotenvy = "0.15"
+futures-util = "0.3"

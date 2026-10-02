@@ -56,7 +56,7 @@ Native application icons are generated from the root `pgDEV.png` using
 use PNG (Linux), ICO (Windows) and ICNS (macOS) assets in `src-tauri/icons`.
 
 - Connection URI, PostgreSQL 14+ validation, verified TLS where requested.
-- Rust MCP foundation (not yet externally accessible): per-client JSON-RPC
+- Rust catalog-only MCP: per-client JSON-RPC
   initialization/version negotiation, ping, tool discovery and validated calls
   for the existing `get_schema`/`get_ddl` names and response shapes. Tools use the
   application's shared Database/catalog pool and the native active-connection
@@ -66,9 +66,30 @@ use PNG (Linux), ICO (Windows) and ICNS (macOS) assets in `src-tauri/icons`.
   Requests are limited to 64 KiB, tool content to 1 MiB, catalog calls to 30s.
   Unit tests and live PostgreSQL tests cover protocol/argument errors, bounded
   output, generated DDL, disconnected state and preservation of editor-tab
-  transaction identity. There is no network listener, MCP IPC permission or
-  stdio entry point yet: authenticated local transport and editor/read-query
-  tools are later stages. No arbitrary query or editor mutation tool is exposed.
+  transaction identity. No arbitrary query or editor mutation tool is exposed.
+- Opt-in authenticated MCP Streamable HTTP (JSON responses) via the prototype's
+  MCP panel: disabled at launch, bound only to `127.0.0.1` on an ephemeral port,
+  protected by a random 256-bit bearer token held only in process memory.
+  Start/stop are authorized native-window commands. Explicit config copying
+  includes the token in the system clipboard: keep it private; it is not cleared
+  automatically. Stop/restart revokes previous tokens and sessions, cancels pending
+  catalog futures and closes the listener; normal application exit awaits stop.
+  Requests require the exact local Host, no Origin, bearer authorization, JSON
+  Content-Type and both JSON/SSE Accept types. Session requests require the
+  negotiated `MCP-Protocol-Version: 2025-06-18` header. Tokens in URLs are never
+  accepted; CORS, remote access, GET SSE and legacy HTTP+SSE are not supported.
+  Eight client sessions (10-minute lazy idle expiry), sixteen concurrent HTTP
+  requests, 64 KiB bodies, 5-second body-read and 40-second request deadlines.
+  One operation per session; concurrent requests on the same session return 409.
+  Session DELETE invalidates its pending work. Stdio adaptation, per-request MCP
+  cancellation, editor tools and arbitrary read-query tools remain future stages.
+  HTTP tests: `cargo test -p pgdev-mcp --locked`. They use actual loopback sockets
+  and run in the three-platform CI matrix; local verification is Windows only.
+  The copied HTTP config is a generic example, not universal client syntax.
+  This is not compatible with the old Node stdio adapter (`bin/pgdev-mcp.mjs`).
+  Full local transport verification: `cargo test -p pgdev-mcp --locked -- --include-ignored`
+  (live PostgreSQL plus npm dependencies). This also exercises the official MCP
+  SDK as a client; Node is test tooling only, not part of the desktop runtime.
 - Explicit password-free connection profiles in the desktop IndexedDB, separate
   from SQL tabs and settings: ten saved endpoints, named updates, forget actions,
   and stable never-reused profile numbers. Saving strips URI passwords (userinfo

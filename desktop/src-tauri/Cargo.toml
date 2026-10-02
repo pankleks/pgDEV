@@ -10,5 +10,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 pgdev-core = { path = "../../crates/pgdev-core" }
+pgdev-mcp = { path = "../../crates/pgdev-mcp" }
+tokio.workspace = true
 tauri-plugin-dialog = "2"
 tauri-plugin-clipboard-manager = "2"

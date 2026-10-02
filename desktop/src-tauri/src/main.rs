@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod clipboard;
+mod mcp;
 
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
@@ -230,6 +231,7 @@ fn main() {
         .manage(pgdev_core::CsvExports::default())
         .manage(database)
         .manage(mcp)
+        .manage(mcp::Host::default())
         .invoke_handler(tauri::generate_handler![
             connect,
             disconnect,
@@ -249,7 +251,9 @@ fn main() {
             append_csv_export,
             finish_csv_export,
             abort_csv_export,
-            clipboard::write_clipboard_text
+            clipboard::write_clipboard_text,
+            mcp::start_mcp,
+            mcp::stop_mcp
         ])
         .run(tauri::generate_context!())
         .expect("Could not start pgDEV");
