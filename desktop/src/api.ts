@@ -10,7 +10,7 @@ export interface CoreError { message: string; code: string | null; position: num
 export { errorMessage, transactionFromError } from './lib/errors'
 
 export const api = {
-  connect: (connectionString: string) => invoke<Connected>('connect', { config: { connectionString } }),
+  connect: (connectionString: string, statementTimeout = 30) => invoke<Connected>('connect', { config: { connectionString, statementTimeout } }),
   disconnect: (id: string) => invoke<void>('disconnect', { id }),
   schema: (id: string) => invoke<SchemaData>('schema', { id }),
   ddl: (id: string, target: DdlTarget) => invoke<DdlResponse>('ddl', { id, target }),

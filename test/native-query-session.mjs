@@ -88,14 +88,15 @@ test('loaded snapshots skip unnecessary writes, but closed tabs are removed from
 })
 
 function storageFixture(initial) {
-  let stored = initial, next = deferred()
+  const records = new Map([['current', initial]])
+  let next = deferred()
   const db = {
     close() {},
     transaction(_store, mode) {
-      let staged
+      let staged, key
       const transaction = {
-        objectStore: () => ({ get: () => ({ result: stored }), put: value => { staged = structuredClone(value) } }),
-        complete() { if (mode === 'readwrite') stored = staged; this.oncomplete() },
+        objectStore: () => ({ get: name => ({ result: records.get(name) }), put: (value, name) => { staged = structuredClone(value); key = name } }),
+        complete() { if (mode === 'readwrite') records.set(key, staged); this.oncomplete() },
         abort() { this.onabort() },
       }
       next.resolve(transaction)
@@ -104,7 +105,7 @@ function storageFixture(initial) {
   }
   const factory = { open() { const request = { result: db }; queueMicrotask(() => request.onsuccess()); return request } }
   const storage = createQuerySessionStorage(() => factory)
-  return { storage, db, get stored() { return stored }, async transaction() { const tx = await next.promise; next = deferred(); return tx } }
+  return { storage, db, records, get stored() { return records.get('current') }, async transaction() { const tx = await next.promise; next = deferred(); return tx } }
 }
 
 test('IndexedDB save awaits transaction commit and aborted writes preserve the previous session', async () => {
@@ -150,4 +151,23 @@ test('blocked IndexedDB opens close late connections rather than leaking them', 
   const retryRejected = assert.rejects(retry, /blocked/)
   assert.equal(requests.length, 2)
   requests[1].onblocked(); await retryRejected
+})
+
+test('settings use a separate record without overwriting SQL sessions', async () => {
+  const f = storageFixture(session('keep this SQL'))
+  const record = { version: 1, settings: { editorFontSize: 20, statementTimeout: 60, maxRows: 25 } }
+  const missing = f.storage.loadSettings()
+  const readTx = await f.transaction(); readTx.complete()
+  assert.equal(await missing, null)
+  const write = f.storage.saveSettings(record)
+  const writeTx = await f.transaction(); writeTx.complete(); await write
+  assert.deepEqual(f.stored, session('keep this SQL'))
+  const load = f.storage.loadSettings()
+  const loadTx = await f.transaction(); loadTx.complete()
+  assert.deepEqual(await load, record)
+  f.records.set('settings', { version: 2, settings: {} })
+  const corrupt = f.storage.loadSettings()
+  const failure = assert.rejects(corrupt, /unsupported/)
+  const corruptTx = await f.transaction(); corruptTx.complete(); await failure
+  assert.deepEqual(f.records.get('settings'), { version: 2, settings: {} })
 })

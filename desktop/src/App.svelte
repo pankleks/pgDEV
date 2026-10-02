@@ -11,7 +11,10 @@
   import CloseTabDialog from './CloseTabDialog.svelte'
   import CloseAppDialog from './CloseAppDialog.svelte'
   import { snapshotSession, restoreQuerySession, createSessionWriter } from './lib/querySession'
-  import { loadQuerySession, saveQuerySession } from './lib/sessionStorage'
+  import { loadQuerySession, saveQuerySession, loadSettings, saveSettings } from './lib/sessionStorage'
+  import { sanitizeSettings, settingsRecord, type DesktopSettings } from './lib/settings'
+  import { createSnapshotWriter } from './lib/snapshotWriter'
+  import SettingsDialog from './SettingsDialog.svelte'
   import { createQueryWorkspace, createQueryController, tabNeedsConfirmation } from './lib/queryWorkspace'
   import type { DataResult, TableEditState, TableEditRequest } from './generated/contracts'
 
@@ -96,8 +99,16 @@
 
   let uri = $state('')
   let connection = $state<Connected | null>(null)
+  let connectionTimeout = $state<number | null>(null)
+  let settings = $state(sanitizeSettings(null))
+  let settingsReady = $state(false)
+  let settingsWritable = $state(false)
+  let settingsSaving = $state(false)
+  let settingsError = $state('')
+  let settingsOpen = $state(false)
+  const settingsWriter = createSnapshotWriter(saveSettings)
   const workspace = $state(createQueryWorkspace())
-  const queries = createQueryController(workspace, api, () => connection, () => disconnecting || !sessionReady || appClosing)
+  const queries = createQueryController(workspace, api, () => connection, () => disconnecting || !sessionReady || !settingsReady || appClosing, undefined, () => settings.maxRows)
   const activeTab = $derived(workspace.tabs.find(tab => tab.key === workspace.activeKey)!)
   const results = $derived(activeTab.results)
   const transactionId = $derived(activeTab.transactionId)
@@ -130,11 +141,26 @@
     catch { sessionError = 'Could not save SQL tabs. Keep the application open and retry, or copy your SQL before exiting.'; throw new Error(sessionError) }
   }
 
+  async function persistSettings() {
+    if (!settingsReady || !settingsWritable) return
+    try { await settingsWriter.save(settingsRecord(settings)); settingsError = '' }
+    catch { settingsError = 'Could not save settings. Changes apply for this run; retry saving before exiting.'; throw new Error(settingsError) }
+  }
+
+  async function applySettings(value: DesktopSettings) {
+    if (settingsSaving || appClosing || !settingsReady) return
+    settings = sanitizeSettings(value)
+    settingsSaving = true
+    try { await persistSettings(); settingsOpen = false }
+    catch { /* Keep the dialog open for retry; the error is visible. */ }
+    finally { settingsSaving = false }
+  }
+
   async function exitApplication(discard = false) {
     if (appClosing) return
     exitDialog = true; appClosing = true; exitError = ''
     try {
-      if (!discard) await saveSession()
+      if (!discard) { await saveSession(); await persistSettings() }
       await getCurrentWindow().destroy()
     } catch (error) { exitError = errorMessage(error); exitDialog = true }
     finally { appClosing = false }
@@ -147,7 +173,7 @@
       void getCurrentWindow().onCloseRequested(event => {
         event.preventDefault()
         if (appClosing) return
-        if (workInFlight || editing || tableEditing) exitDialog = true
+        if (workInFlight || editing || tableEditing || settingsOpen || settingsSaving) exitDialog = true
         else void exitApplication()
       }).then(stop => { if (disposed) stop(); else unlisten = stop }).catch(() => {
         exitHandlerError = 'Could not install the exit-save handler. Save tabs manually before closing.'
@@ -167,17 +193,29 @@
         if (!disposed) sessionError = 'Could not read saved SQL tabs. Automatic saving is disabled to protect the existing session. You can still work, but copy your SQL before exiting.'
       } finally { if (!disposed) sessionReady = true }
     })()
+    void (async () => {
+      try {
+        const stored = await loadSettings()
+        if (disposed) return
+        if (stored) { settings = stored.settings; settingsWriter.markLoaded(stored) }
+        settingsWritable = true
+      } catch {
+        if (!disposed) settingsError = 'Could not read saved settings. Defaults are in use; saving settings is disabled to protect the stored record.'
+      } finally { if (!disposed) settingsReady = true }
+    })()
     const interval = window.setInterval(() => {
       if (sessionReady && sessionWritable && !appClosing) void saveSession().catch(() => {})
+      if (settingsReady && settingsWritable && !appClosing) void persistSettings().catch(() => {})
     }, 10_000)
     return () => { disposed = true; unlisten?.(); window.clearInterval(interval) }
   })
 
   async function connect() {
-    if (connecting || connection || !uri.trim() || !sessionReady || appClosing) return
+    if (connecting || connection || !uri.trim() || !sessionReady || !settingsReady || appClosing) return
     connecting = true
     message = ''
-    try { connection = await api.connect(uri); uri = ''; void refreshCatalog() }
+    const timeout = settings.statementTimeout
+    try { connection = await api.connect(uri, timeout); connectionTimeout = timeout; uri = ''; void refreshCatalog() }
     catch (error) { message = errorMessage(error) }
     finally { connecting = false }
   }
@@ -211,7 +249,7 @@
     disconnecting = true
     try {
       await api.disconnect(connection.id)
-      connection = null; queries.resetConnection(); closingKey = null
+      connection = null; connectionTimeout = null; queries.resetConnection(); closingKey = null
       catalog = null; ddlPreview = null; catalogError = ''; ddlError = ''; editing = null
       tableEditing = null; tableError = ''; tablePreview = undefined; ++tableRequest; tableLoading = false
       ++catalogRequest; ++ddlRequest; catalogLoading = false; ddlLoading = false
@@ -221,18 +259,18 @@
   }
 </script>
 
-<header><strong>pgDEV</strong><span>Desktop migration prototype</span></header>
+<header><strong>pgDEV</strong><span>Desktop migration prototype</span><button onclick={() => { settingsOpen = true }} disabled={!settingsReady || appClosing}>Settings</button></header>
 <main>
   <p class="notice">Integration prototype — not the final 1:1 interface. Object catalog, DDL previews, row updates and table-change SQL generation are available alongside typed results, cursor paging and transactions.</p>
   {#if !native}<p class="error">Open this interface through Tauri. Browser operation is not supported.</p>{/if}
   <section class="toolbar">
     {#if connection}
-       <span>Connected · PostgreSQL {connection.pgVersion}</span>
+       <span>Connected · PostgreSQL {connection.pgVersion} · timeout {connectionTimeout}s</span>
       <button onclick={disconnect} disabled={disconnecting || anySaving}>Disconnect</button>
     {:else}
       <label for="connection">Connection string</label>
       <input id="connection" type="password" bind:value={uri} placeholder="postgresql://user:password@localhost/database" autocomplete="off" />
-      <button onclick={connect} disabled={!native || !sessionReady || appClosing || connecting || !uri.trim()}>{connecting ? 'Connecting…' : 'Connect'}</button>
+      <button onclick={connect} disabled={!native || !sessionReady || !settingsReady || appClosing || connecting || !uri.trim()}>{connecting ? 'Connecting…' : 'Connect'}</button>
     {/if}
   </section>
   <div class="workspace">
@@ -240,6 +278,7 @@
   <div class="query-pane">
   {#if !sessionReady}<p class="notice">Restoring SQL tabs…</p>{/if}
   {#if sessionError}<p class="error" role="alert">{sessionError}</p>{/if}
+  {#if settingsError}<p class="error" role="alert">{settingsError}</p>{/if}
   {#if exitHandlerError}<p class="error" role="alert">{exitHandlerError}</p>{/if}
   <button onclick={() => { void saveSession().catch(() => {}) }} disabled={!sessionReady || !sessionWritable || appClosing}>Save SQL tabs</button>
   <div class="tabs" aria-label="SQL tabs">
@@ -261,7 +300,7 @@
       <button onclick={() => run('ROLLBACK')} disabled={running || saving || activeTab.cancelling || activeTab.closing || disconnecting}>Rollback</button>
     {/if}
   </section>
-  {#if sessionReady}<QueryEditor bind:this={queryEditor} tabs={workspace.tabs} activeKey={workspace.activeKey} {catalog} onchange={queries.setSql} onrun={run} />{/if}
+  {#if sessionReady}<QueryEditor bind:this={queryEditor} tabs={workspace.tabs} activeKey={workspace.activeKey} {catalog} fontSize={settings.editorFontSize} onchange={queries.setSql} onrun={run} />{/if}
   {#if tableLoading}<p class="notice">Loading table editor…</p>{/if}
   {#if tableError && !tableEditing}<pre class="error" role="alert">{tableError}</pre>{/if}
   {#if ddlLoading}<p class="notice">Loading DDL…</p>{/if}
@@ -288,7 +327,7 @@
            <thead><tr>{#each result.columns as column, col}<th>{column}<small>{result.columnTypes[col]}{result.columnTypeLengths[col] !== null ? `(${result.columnTypeLengths[col]})` : ''}</small></th>{/each}{#if result.editable}<th>Edit</th>{/if}</tr></thead>
            <tbody>{#each result.rows as row, rowIndex}<tr>{#each row as cell}<td class:null={cell === null}>{cell === null ? 'NULL' : String(cell)}</td>{/each}{#if result.editable}<td><button disabled={running || disconnecting || saving || activeTab.closing} onclick={() => { activeTab.message = ''; editing = { tabKey: activeTab.key, resultIndex: index, result, rowIndex } }}>Edit row</button></td>{/if}</tr>{/each}</tbody>
         </table></div>
-         {#if result.truncated}<button onclick={() => more(index)} disabled={running || saving || activeTab.cancelling || activeTab.closing || disconnecting}>Load next 500 rows</button>{/if}
+         {#if result.truncated}<button onclick={() => more(index)} disabled={running || saving || activeTab.cancelling || activeTab.closing || disconnecting}>Load next {settings.maxRows} rows</button>{/if}
       {/if}
     </section>
   {/each}
@@ -298,7 +337,8 @@
 {#if editing && editingTab}<RowEditor result={editing.result} rowIndex={editing.rowIndex} saving={editingTab.saving} error={editingTab.message} output={editingTab.notices} onsave={saveRow} onclose={() => { editing = null }} />{/if}
 {#if closingTab}<CloseTabDialog tab={closingTab} onconfirm={confirmCloseTab} oncancel={() => { closingKey = null }} />{/if}
 {#if tableEditing}<TableEditor state={tableEditing} generating={tableGenerating} error={tableError} preview={tablePreview} ongenerate={generateTableSql} ondirty={() => { tablePreview = undefined; tableError = '' }} onclose={() => { tableEditing = null; tableError = ''; tablePreview = undefined }} />{/if}
-{#if exitDialog}<CloseAppDialog busy={workInFlight || !!editing || !!tableEditing} error={exitError} saving={appClosing} onconfirm={() => { void exitApplication() }} ondiscard={() => { void exitApplication(true) }} oncancel={() => { exitDialog = false; exitError = '' }} />{/if}
+{#if settingsOpen}<SettingsDialog {settings} saving={settingsSaving} error={settingsError} writable={settingsWritable} onsave={applySettings} onclose={() => { settingsOpen = false }} />{/if}
+{#if exitDialog}<CloseAppDialog busy={workInFlight || !!editing || !!tableEditing || settingsOpen} error={exitError} saving={appClosing} onconfirm={() => { void exitApplication() }} ondiscard={() => { void exitApplication(true) }} oncancel={() => { exitDialog = false; exitError = '' }} />{/if}
 
 <style>
   .workspace { display: flex; gap: 16px; }

@@ -1,4 +1,5 @@
 import { createQueryTab, type QueryWorkspace } from './queryWorkspace'
+import { createSnapshotWriter } from './snapshotWriter'
 
 export interface QuerySession {
   version: 1
@@ -41,22 +42,6 @@ export function restoreQuerySession(session: QuerySession, takeKey: () => string
   return { tabs, activeKey: tabs[session.activeIndex]!.key, nextTitle: session.nextTitle }
 }
 
-/** Capture before queuing, serialize writes, and mark saved only after success.
- * A failed write leaves the newest snapshot retryable, not falsely 'saved'. */
 export function createSessionWriter(write: (session: QuerySession) => Promise<void>) {
-  let queue = Promise.resolve()
-  let saved = ''
-  return {
-    markLoaded(session: QuerySession) { saved = JSON.stringify(session) },
-    save(session: QuerySession): Promise<void> {
-      const text = JSON.stringify(session)
-      const result = queue.then(async () => {
-        if (text === saved) return
-        await write(JSON.parse(text) as QuerySession)
-        saved = text
-      })
-      queue = result.catch(() => {})
-      return result
-    },
-  }
+  return createSnapshotWriter(write)
 }

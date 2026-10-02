@@ -33,6 +33,7 @@ Notice-output helper tests: `node --import tsx --test test/native-notices.mjs`.
 SQL-provider tests: `node --import tsx --test test/native-sql-providers.mjs`.
 Query-tab lifecycle/model tests: `node --import tsx --test test/native-query-workspace.mjs`.
 Query-session persistence tests: `node --import tsx --test test/native-query-session.mjs`.
+Settings/routing tests: `node --import tsx --test test/native-settings.mjs`.
 
 Query transport types in `src/generated/contracts.ts` come from Rust DTOs.
 Regenerate them with `npm run generate:desktop:types`; the regular Rust test
@@ -90,6 +91,16 @@ use PNG (Linux), ICO (Windows) and ICNS (macOS) assets in `src-tauri/icons`.
 - Exit confirmation for running work/open transactions and row/table dialogs.
   A failed exit save keeps the application open; exiting without saving requires
   an explicit choice. Dialog edits themselves are not persisted.
+- Prototype settings dialog: editor font (8–32 px, default 14), statement timeout
+  (1–600 seconds, default 30) and query/page row limit (1–10000, default 500).
+  Font changes update Monaco options without resetting models or undo history.
+  Timeout is captured when connecting and applies to that connection's Rust
+  query/catalog sockets; changing it requires reconnecting, as in the original.
+  Row limits apply to the next run or fetch, leaving existing results unchanged.
+  Preferences are stored separately from SQL tabs, with serialized/retryable
+  writes, autosave and exit flush. Read failures disable preference writes but
+  allow temporary settings. Cancel leaves the draft unapplied; reset affects
+  only the draft until Apply. Other original settings remain to be migrated.
 - Catalog-driven Monaco completion, hover and function signature help, shared
   with the original editor through framework-independent provider factories.
   Aliases, quoted identifiers, CTEs, routine-body symbols, overloads and built-ins
@@ -131,7 +142,7 @@ rather than silently discard cursor rows. Statement timeout still bounds the
 work performed by PostgreSQL. The initial raw-text API remains a legacy test
 fixture and is no longer exposed as a Tauri command.
 
-Exact utility command tags, final 1:1 table-editor UI, settings/connection persistence, file operations and
+Exact utility command tags, final 1:1 table-editor UI, remaining settings/connection persistence, file operations and
 MCP migration are still outstanding. The prototype UI is not the final 1:1 UI.
 The production build has been verified locally on Windows; CI also checks
 macOS/Linux, but their installers still require validation on those platforms.

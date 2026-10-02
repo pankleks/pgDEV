@@ -1,4 +1,5 @@
 import { parseSession, type QuerySession } from './querySession'
+import { parseSettingsRecord, type SettingsRecord } from './settings'
 
 // A separate desktop database avoids changing the reference application's
 // stores. Dev and packaged WebViews have separate origins and saved sessions.
@@ -27,29 +28,40 @@ export function createQuerySessionStorage(getFactory: () => IDBFactory | undefin
     return opening
   }
 
-  async function loadQuerySession(): Promise<QuerySession | null> {
+  async function loadRecord(key: string): Promise<unknown> {
     const db = await database()
     const value = await new Promise<unknown>((resolve, reject) => {
       const transaction = db.transaction('session', 'readonly')
-      const request = transaction.objectStore('session').get('current')
+      const request = transaction.objectStore('session').get(key)
       transaction.oncomplete = () => resolve(request.result)
       transaction.onabort = () => reject(transaction.error ?? new Error('Could not read saved SQL session'))
       transaction.onerror = () => reject(transaction.error ?? new Error('Could not read saved SQL session'))
     })
-    return value === undefined ? null : parseSession(value)
+    return value
   }
 
-  async function saveQuerySession(session: QuerySession): Promise<void> {
+  async function saveRecord(key: string, record: unknown): Promise<void> {
     const db = await database()
     await new Promise<void>((resolve, reject) => {
       const transaction = db.transaction('session', 'readwrite')
       transaction.oncomplete = () => resolve()
       transaction.onabort = () => reject(transaction.error ?? new Error('Could not save SQL session'))
       transaction.onerror = () => reject(transaction.error ?? new Error('Could not save SQL session'))
-      transaction.objectStore('session').put(session, 'current')
+      transaction.objectStore('session').put(record, key)
     })
   }
-  return { loadQuerySession, saveQuerySession }
+  return {
+    async loadQuerySession(): Promise<QuerySession | null> {
+      const value = await loadRecord('current')
+      return value === undefined ? null : parseSession(value)
+    },
+    saveQuerySession: (session: QuerySession) => saveRecord('current', session),
+    async loadSettings(): Promise<SettingsRecord | null> {
+      const value = await loadRecord('settings')
+      return value === undefined ? null : parseSettingsRecord(value)
+    },
+    saveSettings: (record: SettingsRecord) => saveRecord('settings', record),
+  }
 }
 
-export const { loadQuerySession, saveQuerySession } = createQuerySessionStorage()
+export const { loadQuerySession, saveQuerySession, loadSettings, saveSettings } = createQuerySessionStorage()

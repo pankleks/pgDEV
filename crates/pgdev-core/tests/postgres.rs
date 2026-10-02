@@ -219,6 +219,39 @@ fn data(response: &QueryResponse, index: usize) -> &pgdev_core::DataResult {
 
 #[tokio::test]
 #[ignore = "requires a live PostgreSQL server via PGDEV_TEST_URL"]
+async fn configured_timeout_is_connection_scoped_and_recovers_after_expiry() {
+    let db = Database::default();
+    let mut input = live_config();
+    input.statement_timeout = Some(1);
+    let first = db.connect(input.clone()).await.unwrap();
+    input.statement_timeout = Some(7);
+    let second = db.connect(input).await.unwrap();
+    for (id, expected) in [(&first.id, "1s"), (&second.id, "7s")] {
+        for tab in ["first", "other"] {
+            let response = db
+                .query(request(id, tab, "SHOW statement_timeout", None, 10))
+                .await
+                .unwrap();
+            assert_eq!(data(&response, 0).rows[0][0], json!(expected));
+        }
+    }
+    let error = db
+        .query(request(&first.id, "first", "SELECT pg_sleep(2)", None, 10))
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(error.code.as_deref(), Some("57014"));
+    let response = db
+        .query(request(&first.id, "first", "SELECT 1", None, 10))
+        .await
+        .unwrap();
+    assert_eq!(data(&response, 0).rows[0][0], json!(1));
+    db.disconnect(&first.id).await.unwrap();
+    db.disconnect(&second.id).await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires a live PostgreSQL server via PGDEV_TEST_URL"]
 async fn notices_preserve_order_fields_errors_and_transaction_identity() {
     let db = Database::default();
     let connection = db.connect(live_config()).await.unwrap();

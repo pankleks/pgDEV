@@ -2,6 +2,7 @@ import type { api, Connected } from '../api'
 import type { QueryResult } from '../generated/contracts'
 import { appendNoticeOutput, errorNotices, type NoticeOutput } from './notices'
 import { errorMessage, transactionFromError } from './errors'
+import { sanitizeSettings } from './settings'
 
 export interface QueryTab {
   key: string
@@ -42,6 +43,7 @@ export function createQueryController(
   getConnection: () => Connected | null,
   disabled = () => false,
   takeKey: () => string = () => crypto.randomUUID(),
+  getMaxRows: () => number = () => 500,
 ) {
   const find = (key: string) => workspace.tabs.find(tab => tab.key === key)
   const busy = (tab: QueryTab) => tab.running || tab.cancelling || tab.saving || tab.closing
@@ -77,7 +79,7 @@ export function createQueryController(
     const id = connection.id, operation = ++tab.operation
     tab.running = true; tab.message = ''; tab.results = []; tab.durationMs = null; tab.notices = emptyNotices()
     try {
-      const response = await transport.query({ id, tabKey: key, sql, transactionId: tab.transactionId, maxRows: 500 })
+      const response = await transport.query({ id, tabKey: key, sql, transactionId: tab.transactionId, maxRows: sanitizeSettings({ maxRows: getMaxRows() }).maxRows })
       if (!current(tab, id, operation)) return false
       tab.results = response.results; tab.transactionId = response.transactionId; tab.durationMs = response.durationMs
       tab.notices = appendNoticeOutput(tab.notices, response)
@@ -93,7 +95,7 @@ export function createQueryController(
     const id = connection.id, operation = ++tab.operation
     tab.running = true; tab.message = ''
     try {
-      const page = await transport.fetchMore(id, key)
+      const page = await transport.fetchMore(id, key, sanitizeSettings({ maxRows: getMaxRows() }).maxRows)
       if (!current(tab, id, operation) || tab.results[index] !== result) return false
       result.rows.push(...page.rows); result.rowCount += page.rowCount; result.truncated = page.truncated
       tab.notices = appendNoticeOutput(tab.notices, page)
