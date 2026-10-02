@@ -260,7 +260,7 @@ struct State {
     generations: HashMap<(String, String), u64>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Database {
     state: Arc<Mutex<State>>,
 }

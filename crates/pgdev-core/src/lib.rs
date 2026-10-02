@@ -4,6 +4,7 @@ mod catalog;
 mod contracts;
 mod csvexport;
 mod files;
+pub mod mcp;
 mod notices;
 mod postgres;
 mod query;

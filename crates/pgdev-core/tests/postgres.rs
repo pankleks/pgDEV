@@ -249,6 +249,63 @@ fn data(response: &QueryResponse, index: usize) -> &pgdev_core::DataResult {
 }
 
 #[tokio::test]
+#[ignore = "requires a live PostgreSQL server via PGDEV_TEST_URL"]
+async fn mcp_catalog_uses_the_application_database_without_touching_query_transactions() {
+    let db = Database::default();
+    let connection = db.connect(live_config()).await.unwrap();
+    let service = pgdev_core::mcp::McpService::new(db.clone());
+    service.activate(connection.id.clone());
+    let response = db
+        .query(request(
+            &connection.id,
+            "mcp-owner",
+            "BEGIN; SELECT 1",
+            None,
+            10,
+        ))
+        .await
+        .unwrap();
+    let transaction = response.transaction_id.unwrap();
+    let mut session = service.session();
+    session.handle(&json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "1"}}}).to_string()).await.unwrap();
+    let response = session.handle(&json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "get_schema", "arguments": {"schema": "pgdev_nonexistent_mcp_test_schema"}}}).to_string()).await.unwrap();
+    assert_eq!(response["result"]["isError"], false);
+    let catalog: serde_json::Value =
+        serde_json::from_str(response["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(catalog["tables"], json!([]));
+    let existing = session.handle(&json!({"jsonrpc": "2.0", "id": "ddl", "method": "tools/call", "params": {"name": "get_ddl", "arguments": {"type": "table", "schema": "pg_catalog", "name": "pg_class"}}}).to_string()).await.unwrap();
+    assert_eq!(existing["result"]["isError"], false);
+    let generated: serde_json::Value =
+        serde_json::from_str(existing["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert!(generated["ddl"].as_str().unwrap().contains("CREATE TABLE"));
+    let ddl = session.handle(&json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "get_ddl", "arguments": {"type": "table", "schema": "pgdev_nonexistent_mcp_test_schema", "name": "missing"}}}).to_string()).await.unwrap();
+    assert_eq!(ddl["result"]["isError"], true);
+    let preserved = db
+        .query(request(
+            &connection.id,
+            "mcp-owner",
+            "SELECT 2",
+            Some(&transaction),
+            10,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        preserved.transaction_id.as_deref(),
+        Some(transaction.as_str())
+    );
+    assert_eq!(data(&preserved, 0).rows[0][0], json!(2));
+    service.disconnected(&connection.id);
+    let no_fallback = session.handle(&json!({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "get_schema"}}).to_string()).await.unwrap();
+    assert_eq!(no_fallback["result"]["isError"], true);
+    assert!(no_fallback["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("not connected"));
+    db.disconnect(&connection.id).await.unwrap();
+}
+
+#[tokio::test]
 #[ignore = "requires live PostgreSQL and npm dependencies for transport parity"]
 async fn common_utility_names_and_counts_match_original_transport() {
     use std::{

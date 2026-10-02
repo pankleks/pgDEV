@@ -56,6 +56,19 @@ Native application icons are generated from the root `pgDEV.png` using
 use PNG (Linux), ICO (Windows) and ICNS (macOS) assets in `src-tauri/icons`.
 
 - Connection URI, PostgreSQL 14+ validation, verified TLS where requested.
+- Rust MCP foundation (not yet externally accessible): per-client JSON-RPC
+  initialization/version negotiation, ping, tool discovery and validated calls
+  for the existing `get_schema`/`get_ddl` names and response shapes. Tools use the
+  application's shared Database/catalog pool and the native active-connection
+  binding, never client-supplied credentials or connection IDs. Explicit native
+  disconnect is authoritative; there is no fallback to an otherwise open pool.
+  Active-connection revisions reject stale catalog replies after switching.
+  Requests are limited to 64 KiB, tool content to 1 MiB, catalog calls to 30s.
+  Unit tests and live PostgreSQL tests cover protocol/argument errors, bounded
+  output, generated DDL, disconnected state and preservation of editor-tab
+  transaction identity. There is no network listener, MCP IPC permission or
+  stdio entry point yet: authenticated local transport and editor/read-query
+  tools are later stages. No arbitrary query or editor mutation tool is exposed.
 - Explicit password-free connection profiles in the desktop IndexedDB, separate
   from SQL tabs and settings: ten saved endpoints, named updates, forget actions,
   and stable never-reused profile numbers. Saving strips URI passwords (userinfo

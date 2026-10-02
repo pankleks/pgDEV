@@ -151,14 +151,23 @@ async fn row_update(
 #[tauri::command]
 async fn connect(
     database: tauri::State<'_, Database>,
+    mcp: tauri::State<'_, pgdev_core::mcp::McpService>,
     config: ConnectionConfig,
 ) -> Result<Connected, CoreError> {
-    database.connect(config).await
+    let connected = database.connect(config).await?;
+    mcp.activate(connected.id.clone());
+    Ok(connected)
 }
 
 #[tauri::command]
-async fn disconnect(database: tauri::State<'_, Database>, id: String) -> Result<(), CoreError> {
-    database.disconnect(&id).await
+async fn disconnect(
+    database: tauri::State<'_, Database>,
+    mcp: tauri::State<'_, pgdev_core::mcp::McpService>,
+    id: String,
+) -> Result<(), CoreError> {
+    database.disconnect(&id).await?;
+    mcp.disconnected(&id);
+    Ok(())
 }
 
 #[tauri::command]
@@ -212,12 +221,15 @@ async fn close_session(
 }
 
 fn main() {
+    let database = Database::default();
+    let mcp = pgdev_core::mcp::McpService::new(database.clone());
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(pgdev_core::SqlFiles::default())
         .manage(pgdev_core::CsvExports::default())
-        .manage(Database::default())
+        .manage(database)
+        .manage(mcp)
         .invoke_handler(tauri::generate_handler![
             connect,
             disconnect,
