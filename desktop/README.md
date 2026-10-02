@@ -63,8 +63,11 @@ use PNG (Linux), ICO (Windows) and ICNS (macOS) assets in `src-tauri/icons`.
   for query sessions, catalog clients and cancellation sockets. CA text is not
   persisted and is cleared from the form on successful connection. PEM bundles,
   client certificates and insecure/self-signed bypass modes are not supported.
-  Successful custom-CA handshakes and hostname rejection still require validation
-  against a TLS-enabled test PostgreSQL on each supported platform.
+  Offline loopback tests perform real PostgreSQL SSL negotiation and TLS startup,
+  verifying trusted self-signed success and rejection of untrusted, expired or
+  hostname-mismatched certificates. They run with normal core tests and in the
+  three-platform CI matrix. Full queries/catalog/cancellation against a TLS-enabled
+  PostgreSQL still require end-to-end validation on each supported platform.
 - Dedicated query sessions per tab (maximum five busy/pinned sessions), with
   idle-slot reclamation and an idle reaper. Creating a client does not lock the
   global registry or block cancellation of queries on other connections.
@@ -227,7 +230,8 @@ TLS uses the system trust store plus an optional custom CA and verifies server c
 Connection URIs without `sslmode` retain the legacy non-TLS default; use
 `sslmode=require` to explicitly request encrypted, certificate-verified access.
 Legacy self-signed connections must explicitly trust a supplied certificate;
-there is no insecure bypass. TLS-enabled live/platform validation remains pending.
+there is no insecure bypass. Loopback handshake tests have passed on Windows;
+TLS-enabled PostgreSQL end-to-end and macOS/Linux execution remain pending.
 
 The Rust packages are unpublished migration scaffolding (`0.0.0`), not a new
 application release version. Existing package versions have not been changed.

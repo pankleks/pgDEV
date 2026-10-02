@@ -292,6 +292,10 @@ fn tls(ca: Option<&str>) -> Result<MakeTlsConnector, CoreError> {
     Ok(MakeTlsConnector::new(connector))
 }
 
+#[cfg(test)]
+#[path = "tls_tests.rs"]
+mod tls_tests;
+
 async fn open(
     config: &Config,
     timeout: u32,

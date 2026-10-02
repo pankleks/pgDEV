@@ -19,5 +19,7 @@ ts-rs = { version = "11", features = ["serde-json-impl"] }
 tempfile = "3"
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros"] }
+tokio = { workspace = true, features = ["macros", "net", "io-util"] }
 dotenvy = "0.15"
+rcgen = "0.13"
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
