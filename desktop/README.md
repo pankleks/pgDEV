@@ -31,6 +31,7 @@ Run all core tests with `cargo test -p pgdev-core --locked -- --include-ignored`
 Browser-tree helper tests: `node --import tsx --test test/native-catalog-tree.mjs`.
 Notice-output helper tests: `node --import tsx --test test/native-notices.mjs`.
 SQL-provider tests: `node --import tsx --test test/native-sql-providers.mjs`.
+Query-tab lifecycle/model tests: `node --import tsx --test test/native-query-workspace.mjs`.
 
 Query transport types in `src/generated/contracts.ts` come from Rust DTOs.
 Regenerate them with `npm run generate:desktop:types`; the regular Rust test
@@ -41,6 +42,10 @@ with the Rust core through Tauri IPC; it does not run a Node sidecar or HTTP API
 Opening Vite in a browser is not a supported application mode.
 
 ## Current prototype
+
+Native application icons are generated from the root `pgDEV.png` using
+`npm exec --workspace desktop -- tauri icon ../pgDEV.png`. The desktop bundles
+use PNG (Linux), ICO (Windows) and ICNS (macOS) assets in `src-tauri/icons`.
 
 - Connection URI, PostgreSQL 14+ validation, verified TLS where requested.
 - Dedicated query sessions per tab (maximum five busy/pinned sessions), with
@@ -63,6 +68,15 @@ Opening Vite in a browser is not a supported application mode.
   PostgreSQL rolls back the terminated connection's open transaction.
 - Svelte 5 shell and Monaco with local worker assets, selection execution,
   type headers, load-more and manual commit/rollback controls.
+- Multiple SQL tabs with independent results, notices, paging and transaction
+  identities. Queries can run in the background while another tab is active.
+  Monaco retains each tab's model, undo history, selection and scroll position.
+- Closing a tab releases its Rust session, with confirmation before discarding
+  SQL, stopping running work or rolling back a transaction. Closing during a
+  row write is blocked. Stale responses after close/disconnect are discarded,
+  and cancellation must finish before the same tab can start another operation.
+  Disconnect preserves SQL text but clears database state on every tab.
+  Tab persistence across application restarts is not implemented yet.
 - Catalog-driven Monaco completion, hover and function signature help, shared
   with the original editor through framework-independent provider factories.
   Aliases, quoted identifiers, CTEs, routine-body symbols, overloads and built-ins

@@ -7,17 +7,7 @@ export type { QueryResult, DataResult, SchemaData, DdlTarget } from './generated
 export interface Connected { id: string; pgVersion: string }
 export interface CoreError { message: string; code: string | null; position: number | null; transactionOpen?: boolean | null; transactionId?: string | null; notices?: DatabaseNotice[]; noticesTruncated?: boolean }
 
-export function transactionFromError(error: unknown): string | null | undefined {
-  if (typeof error === 'object' && error !== null && 'transactionOpen' in error && typeof error.transactionOpen === 'boolean') {
-    return error.transactionOpen && 'transactionId' in error && typeof error.transactionId === 'string' ? error.transactionId : null
-  }
-  return undefined
-}
-
-export function errorMessage(error: unknown): string {
-  if (typeof error === 'object' && error !== null && 'message' in error) return String(error.message)
-  return String(error)
-}
+export { errorMessage, transactionFromError } from './lib/errors'
 
 export const api = {
   connect: (connectionString: string) => invoke<Connected>('connect', { config: { connectionString } }),
