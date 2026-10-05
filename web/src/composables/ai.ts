@@ -6,12 +6,13 @@ import { useConnection } from './connection'
 import { releaseTab, useResults } from './results'
 import { useSettings } from './settings'
 import { useTabs } from './tabs'
+import { desktop } from '../lib/desktop'
 
 export { AI_TAB_TITLE, applyBridgeAction }
 
 export function useAi() {
   const state = reactive({ enabled: false, connected: false })
-  let source: EventSource | null = null
+  let unsubscribe: (() => void) | null = null
 
   function deps(): AiBridgeDeps {
     const tabs = useTabs()
@@ -88,21 +89,12 @@ export function useAi() {
   }
 
   async function start(): Promise<void> {
-    if (source) return
+    if (unsubscribe) return
     const config = await api.aiConfig().catch(() => null)
     if (!config) return
     state.enabled = true
     void pushLimits()
-    source = new EventSource('/api/ai/bridge')
-    source.onopen = () => {
-      state.connected = true
-    }
-    source.onerror = () => {
-      state.connected = false
-    }
-    source.onmessage = (event) => {
-      void onAction(String(event.data))
-    }
+    unsubscribe = desktop().subscribeAi((data) => void onAction(data), (connected) => { state.connected = connected })
   }
 
   /** Push the user's row/byte preference; the server default stands until then. */
@@ -117,5 +109,6 @@ export function useAi() {
       .catch(() => undefined)
   }
 
-  return { state, start, pushLimits }
+  function stop() { unsubscribe?.(); unsubscribe = null; state.connected = false }
+  return { state, start, stop, pushLimits }
 }

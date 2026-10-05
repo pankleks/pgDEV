@@ -5,6 +5,7 @@ import { useTabs, type EditorTab } from '../composables/tabs'
 import { useConnection } from '../composables/connection'
 import { releaseTab } from '../composables/results'
 import QueryEditor from './QueryEditor.vue'
+import { confirmAction } from '../lib/desktop'
 
 const tabs = useTabs()
 const conn = useConnection()
@@ -96,38 +97,38 @@ function closeSession(key: string) {
   releaseTab(key, conn.state.id)
 }
 
-function canClose(tab: EditorTab): boolean {
-  return !tabs.isDirty(tab) || window.confirm(`Close unsaved changes in "${tab.title}"?`)
+async function canClose(tab: EditorTab): Promise<boolean> {
+  if (!tabs.isDirty(tab)) return true
+  const content = tab.content
+  return await confirmAction(`Close unsaved changes in "${tab.title}"?`) && tab.content === content
 }
 
-function closeTab(key: string) {
+async function closeTab(key: string) {
   const tab = tabs.state.tabs.find((t) => t.key === key)
-  if (!tab || !canClose(tab)) return
+  if (!tab || !await canClose(tab)) return
   closeSession(key)
   tabs.close(key)
 }
 
-function closeAllTabs() {
+async function closeAllTabs() {
   const openTabs = [...tabs.state.tabs]
-  if (openTabs.some((tab) => !canClose(tab))) return
-  for (const tab of openTabs) closeSession(tab.key)
-  tabs.closeAll()
+  for (const tab of openTabs) if (!await canClose(tab)) return
+  for (const tab of openTabs) { closeSession(tab.key); tabs.close(tab.key) }
 }
 
-function closeOtherTabs(key: string) {
+async function closeOtherTabs(key: string) {
   const toClose = tabs.state.tabs.filter((tab) => tab.key !== key)
-  if (toClose.some((tab) => !canClose(tab))) return
-  for (const tab of toClose) closeSession(tab.key)
-  tabs.closeOthers(key)
+  for (const tab of toClose) if (!await canClose(tab)) return
+  for (const tab of toClose) { closeSession(tab.key); tabs.close(tab.key) }
+  tabs.activate(key)
 }
 
-function closeRightTabs(key: string) {
+async function closeRightTabs(key: string) {
   const index = tabs.state.tabs.findIndex((tab) => tab.key === key)
   if (index === -1) return
   const toClose = tabs.state.tabs.slice(index + 1)
-  if (toClose.some((tab) => !canClose(tab))) return
-  for (const tab of toClose) closeSession(tab.key)
-  tabs.closeRight(key)
+  for (const tab of toClose) if (!await canClose(tab)) return
+  for (const tab of toClose) { closeSession(tab.key); tabs.close(tab.key) }
 }
 
 function onGlobalClick() {

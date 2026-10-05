@@ -3,6 +3,7 @@ import { readTextFileHandle, type FileHandle } from '../lib/files'
 import { loadTabSession, savePinnedFiles, saveTabSession, storageReady, type StoredPinnedFile } from '../lib/storage'
 import { isSessionTab, isTabDirty, restoreSession, serializeSession } from '../lib/tabsession'
 import { useToast } from './toast'
+import { confirmAction } from '../lib/desktop'
 
 export interface EditorTab {
   key: string
@@ -10,6 +11,7 @@ export interface EditorTab {
   source: 'untitled' | 'file'
   title: string
   fileName: string | null
+  filePath?: string
   content: string
   savedContent: string | null
   readOnly: boolean
@@ -87,26 +89,37 @@ export const SESSION_SAVE_INTERVAL_MS = 10_000
 
 let sessionLoaded = false
 let lastSessionSignature = ''
+let sessionWrite: Promise<void> | null = null
 
 function sessionSignature(): string {
   return JSON.stringify({
     active: state.activeKey,
     tabs: state.tabs
       .filter(isSessionTab)
-      .map((tab) => [tab.key, tab.title, tab.content, tab.kind, tab.savedContent]),
+      .map((tab) => [tab.key, tab.title, tab.content, tab.kind, tab.savedContent, tab.filePath]),
   })
 }
 
 async function saveSessionIfChanged(): Promise<void> {
   if (!sessionLoaded) return
+  // Closing must observe any in-flight save failure, even when its snapshot
+  // has the same signature. Re-check after it completes to capture newer edits.
+  if (sessionWrite) {
+    await sessionWrite
+    return saveSessionIfChanged()
+  }
   const signature = sessionSignature()
   if (signature === lastSessionSignature) return
   lastSessionSignature = signature
+  sessionWrite = saveTabSession(serializeSession(state.tabs, state.activeKey))
   try {
-    await saveTabSession(serializeSession(state.tabs, state.activeKey))
+    await sessionWrite
   } catch {
     // Let the next tick retry rather than silently dropping the change.
     lastSessionSignature = ''
+    throw new Error('The tab session could not be saved')
+  } finally {
+    sessionWrite = null
   }
 }
 
@@ -121,6 +134,9 @@ export const sessionsReady = (async () => {
     if (session && session.tabs.length) {
       const restored = restoreSession(session, () => `query-${state.counter++}`)
       state.tabs.splice(0, state.tabs.length, ...restored)
+      for (const tab of restored) {
+        if (tab.filePath) fileHandles.set(tab.key, { name: tab.fileName ?? tab.title, path: tab.filePath })
+      }
       state.activeKey = restored[session.activeIndex]?.key ?? restored[0]?.key ?? ''
     }
   } catch {
@@ -134,10 +150,10 @@ export const sessionsReady = (async () => {
 // import this module are not kept alive by a pending interval.
 if (typeof window !== 'undefined') {
   window.setInterval(() => {
-    void saveSessionIfChanged()
+    void saveSessionIfChanged().catch(() => useToast().show('The tab session could not be saved. Save your SQL files.'))
   }, SESSION_SAVE_INTERVAL_MS)
   window.addEventListener('pagehide', () => {
-    void saveSessionIfChanged()
+    void saveSessionIfChanged().catch(() => undefined)
   })
 }
 
@@ -173,7 +189,7 @@ export function useTabs() {
     state.activeKey = key
   }
 
-  function openDdl(
+  async function openDdl(
     type: string,
     schema: string,
     name: string,
@@ -192,15 +208,20 @@ export function useTabs() {
     const key = `${baseKey}${connKey}`
     const existing = state.tabs.find((t) => t.key === key)
     if (existing) {
+      const beforeConfirm = existing.content
       // Re-opening refreshes the tab from the database, which would discard
       // unsaved edits. Ask first (mirrors canClose in EditorTabs): declining
       // keeps the local edits and just focuses the tab.
       if (
         existing.content !== ddl &&
         isDirty(existing) &&
-        !window.confirm(`Discard unsaved changes in "${existing.title}" and reload from the database?`)
+        !await confirmAction(`Discard unsaved changes in "${existing.title}" and reload from the database?`)
       ) {
         state.activeKey = key
+        return
+      }
+      if (!state.tabs.includes(existing) || existing.content !== beforeConfirm) {
+        useToast().show('The tab changed while confirming. Re-open the object to refresh its DDL.')
         return
       }
       if (existing.content !== ddl) existing.content = ddl
@@ -232,6 +253,7 @@ export function useTabs() {
       source: 'file',
       title: name,
       fileName: name,
+      filePath: handle?.path,
       content,
       savedContent: content,
       readOnly: false,
@@ -358,6 +380,7 @@ export function useTabs() {
     if (!tab) return
     tab.source = 'file'
     tab.fileName = fileName
+    tab.filePath = handle?.path
     tab.title = fileName
     tab.savedContent = savedContent ?? tab.content
     if (handle) fileHandles.set(key, handle)
@@ -476,6 +499,7 @@ export function useTabs() {
     displayTitle,
     pinsReady,
     sessionsReady,
+    saveSession: saveSessionIfChanged,
     pinTab,
     unpinFile,
     isPinned,

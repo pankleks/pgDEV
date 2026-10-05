@@ -12,6 +12,7 @@ import { aiRoutes } from './routes/ai.js'
 import { loadOrCreateToken } from './ai/token.js'
 import { appVersion } from './version.js'
 import type { TransactionState } from './schema-types.js'
+import { timingSafeEqual } from 'node:crypto'
 
 // Application construction lives here rather than in index.ts so tests can
 // start the real app — including the origin guard — without binding a port.
@@ -28,6 +29,10 @@ export interface AppOptions {
    * file so suites never touch the real one.
    */
   aiTokenFile?: string
+  /** Desktop requests authenticate independently of the persistent MCP token. */
+  desktopToken?: string
+  mcpCommand?: string[]
+  mcpEndpointFile?: string
 }
 
 export function isLoopback(host: string): boolean {
@@ -94,6 +99,12 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
     // The MCP shim is not a browser: it authenticates with the bearer token
     // instead of an Origin, so the token check in the route is the guard.
     if (req.url.startsWith('/api/ai/tool/')) return
+    if (options.desktopToken) {
+      const given = Buffer.from(String(req.headers.authorization ?? ''))
+      const expected = Buffer.from(`Bearer ${options.desktopToken}`)
+      if (given.length === expected.length && timingSafeEqual(given, expected)) return
+      return reply.code(401).send({ error: 'Desktop authentication required' })
+    }
     const origin = req.headers.origin
     if (!origin) {
       if (req.headers['sec-fetch-site'] === 'same-origin') return
@@ -124,7 +135,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
   await app.register(queryRoutes)
   await app.register(tableEditRoutes)
   await app.register(rowUpdateRoutes)
-  await app.register(aiRoutes, { token: aiToken })
+  await app.register(aiRoutes, { token: aiToken, mcpCommand: options.mcpCommand, mcpEndpointFile: options.mcpEndpointFile })
 
   const webDist = fileURLToPath(new URL('../../web/dist', import.meta.url))
   if (options.serveStatic !== false && existsSync(webDist)) {

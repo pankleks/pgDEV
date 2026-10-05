@@ -12,6 +12,7 @@ import type {
   TableEditState,
   TransactionState,
 } from './types'
+import { desktop } from './lib/desktop'
 
 export type ApiError = Error & Partial<TransactionState> & { code?: string | null; position?: string | null }
 
@@ -36,13 +37,8 @@ async function unwrap<T>(res: Response): Promise<T> {
 /** One JSON round-trip: the method, the optional body, and the error mapping
  * are the same for every endpoint, so the callers name only the route. */
 async function send<T>(method: string, url: string, body?: unknown): Promise<T> {
-  const res = body === undefined
-    ? await fetch(url, { method })
-    : await fetch(url, {
-        method,
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body),
-      })
+  const response = await desktop().request(method, url, body)
+  const res = new Response(JSON.stringify(response.body), { status: response.status, headers: { 'content-type': 'application/json' } })
   return unwrap<T>(res)
 }
 

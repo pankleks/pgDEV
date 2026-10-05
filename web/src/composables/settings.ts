@@ -1,6 +1,7 @@
 import { reactive } from 'vue'
 import { saveSettings, storageReady } from '../lib/storage'
 import { AI_LIMIT_RANGES, DEFAULT_AI_LIMITS } from '../types'
+import { useToast } from './toast'
 
 /** Object-browser expansion state for one connection. Keys are catalog keys
  * (`t-<oid>`, `t-<oid>-cols`, …) and group keys; OIDs are only unique per
@@ -149,8 +150,7 @@ function ensureReady(): Promise<void> {
 }
 
 function persist() {
-  // Clone through JSON so the reactive proxies are not handed to structured
-  // cloning in the IndexedDB write.
+  // Snapshot reactive proxies before sending them through native IPC.
   const value = JSON.parse(JSON.stringify({
     groupObjects: state.groupObjects,
     panelSizes: state.panelSizes,
@@ -161,7 +161,7 @@ function persist() {
     aiLimitRows: state.aiLimitRows,
     aiLimitKb: state.aiLimitKb,
   })) as SettingsState
-  void ensureReady().then(() => saveSettings(value)).catch(() => undefined)
+  void ensureReady().then(() => saveSettings(value)).catch(() => useToast().show('Settings could not be saved. Check the application data directory.'))
 }
 
 export function useSettings() {

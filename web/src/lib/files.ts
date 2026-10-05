@@ -1,37 +1,9 @@
-export interface WritableFileStream {
-  write(data: string): Promise<void>
-  close(): Promise<void>
-}
+import { desktop } from './desktop'
 
-export interface FilePermissionDescriptor {
-  mode?: 'read' | 'readwrite'
-}
-
+/** Serializable native file reference. Filesystem access stays in Electron. */
 export interface FileHandle {
   readonly name: string
-  createWritable(): Promise<WritableFileStream>
-  getFile?: () => Promise<File>
-  queryPermission?: (descriptor?: FilePermissionDescriptor) => Promise<PermissionState>
-  requestPermission?: (descriptor?: FilePermissionDescriptor) => Promise<PermissionState>
-}
-
-export interface OpenFileHandle extends FileHandle {
-  getFile(): Promise<File>
-}
-
-interface SaveFilePickerOptions {
-  suggestedName?: string
-  types?: { description: string; accept: Record<string, string[]> }[]
-}
-
-interface OpenFilePickerOptions {
-  multiple?: boolean
-  types?: { description: string; accept: Record<string, string[]> }[]
-}
-
-interface FilePickerWindow extends Window {
-  showSaveFilePicker?: (options?: SaveFilePickerOptions) => Promise<FileHandle>
-  showOpenFilePicker?: (options?: OpenFilePickerOptions) => Promise<OpenFileHandle[]>
+  readonly path: string
 }
 
 export interface SavedFile {
@@ -39,84 +11,43 @@ export interface SavedFile {
   handle?: FileHandle
 }
 
-const SQL_SAVE_TYPES = [{ description: 'SQL script', accept: { 'application/sql': ['.sql'] } }]
-const SQL_OPEN_TYPES = [
-  { description: 'SQL/text script', accept: { 'application/sql': ['.sql'], 'text/plain': ['.txt', '.ddl'] } },
-]
-
-function pickerWindow(): FilePickerWindow {
-  return window as FilePickerWindow
+export interface WritableFileStream {
+  write(data: string): Promise<void>
+  close(): Promise<void>
+  abort(): Promise<void>
 }
 
 export function isPickerCancelled(error: unknown): boolean {
-  return error instanceof DOMException && error.name === 'AbortError'
+  return error instanceof Error && error.name === 'AbortError'
 }
 
-function downloadText(content: string, fileName: string): SavedFile {
-  const url = URL.createObjectURL(new Blob([content], { type: 'application/sql;charset=utf-8' }))
-  const link = document.createElement('a')
-  link.href = url
-  link.download = fileName
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
-  window.setTimeout(() => URL.revokeObjectURL(url), 0)
-  return { fileName }
-}
-
-export async function saveTextFile(
-  content: string,
-  suggestedName: string,
-  existingHandle?: FileHandle,
-  pickName = !existingHandle,
-): Promise<SavedFile | null> {
-  const win = pickerWindow()
-  let handle = pickName ? undefined : existingHandle
-
-  if (!handle && pickName && win.showSaveFilePicker) {
-    try {
-      handle = await win.showSaveFilePicker({ suggestedName, types: SQL_SAVE_TYPES })
-    } catch (error) {
-      if (isPickerCancelled(error)) return null
-      throw error
-    }
+export async function createOutput(
+  suggestedName: string, existing?: FileHandle, csv = false,
+): Promise<{ handle: FileHandle; writable: WritableFileStream } | null> {
+  const output = await desktop().files.begin({ suggestedName, existing, csv })
+  if (!output) return null
+  return {
+    handle: output.handle,
+    writable: {
+      write: (text) => desktop().files.write(output.id, text),
+      close: () => desktop().files.finish(output.id, true),
+      abort: () => desktop().files.finish(output.id, false),
+    },
   }
-
-  if (!handle) return downloadText(content, suggestedName)
-
-  const writable = await handle.createWritable()
-  await writable.write(content)
-  await writable.close()
-  return { fileName: handle.name || suggestedName, handle }
 }
 
-export async function openTextFiles(): Promise<{ file: File; handle?: OpenFileHandle }[] | null> {
-  const win = pickerWindow()
-  if (!win.showOpenFilePicker) return null
-
-  let handles: OpenFileHandle[]
+export async function saveTextFile(content: string, suggestedName: string, existingHandle?: FileHandle, pickName = !existingHandle): Promise<SavedFile | null> {
+  const output = await createOutput(suggestedName, pickName ? undefined : existingHandle)
+  if (!output) return null
   try {
-    handles = await win.showOpenFilePicker({ multiple: true, types: SQL_OPEN_TYPES })
+    await output.writable.write(content)
+    await output.writable.close()
+    return { fileName: output.handle.name, handle: output.handle }
   } catch (error) {
-    if (isPickerCancelled(error)) return []
+    await output.writable.abort().catch(() => undefined)
     throw error
   }
-
-  return Promise.all(handles.map(async (handle) => ({ file: await handle.getFile(), handle })))
 }
 
-export async function readTextFileHandle(handle: FileHandle): Promise<{ fileName: string; content: string }> {
-  if (!handle.getFile) throw new Error(`Cannot read "${handle.name}" in this browser`)
-
-  if (handle.queryPermission) {
-    const permission = await handle.queryPermission({ mode: 'read' })
-    if (permission !== 'granted') {
-      if (!handle.requestPermission) throw new Error(`Read permission for "${handle.name}" is unavailable`)
-      const requested = await handle.requestPermission({ mode: 'read' })
-      if (requested !== 'granted') throw new Error(`Read permission for "${handle.name}" was denied`)
-    }
-  }
-
-  const file = await handle.getFile()
-  return { fileName: file.name || handle.name, content: await file.text() }
-}
+export const openTextFiles = () => desktop().files.open()
+export const readTextFileHandle = (handle: FileHandle) => desktop().files.read(handle)

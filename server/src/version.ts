@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 let cached: string | null = null
 
 export function appVersion(): string {
+  if (process.env.PGDEV_APP_VERSION) return process.env.PGDEV_APP_VERSION
   if (cached) return cached
   try {
     const url = new URL('../../package.json', import.meta.url)

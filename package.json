@@ -1,7 +1,9 @@
 {
   "name": "@pankleks/pgdev",
   "version": "0.5.5",
-  "description": "A local web IDE for PostgreSQL: object browser, schema-aware editor and paged results, talking to your database from your own machine.",
+  "description": "A desktop IDE for PostgreSQL with a schema-aware editor, paged results and AI integration.",
+  "private": true,
+  "main": "desktop/main.mjs",
   "keywords": [
     "postgresql",
     "postgres",
@@ -21,16 +23,6 @@
   },
   "author": "Krzysztof Heim <krzysztof.heim@gmail.com>",
   "license": "MIT",
-  "bin": {
-    "pgdev": "bin/pgdev.mjs",
-    "pgdev-mcp": "bin/pgdev-mcp.mjs"
-  },
-  "files": [
-    "bin/",
-    "server/dist/",
-    "web/dist/",
-    "README.md"
-  ],
   "workspaces": [
     "server",
     "web"
@@ -39,14 +31,19 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "concurrently -k -n server,web -c blue,green \"cd server && npm run dev\" \"cd web && npm run dev\"",
-    "build": "npm run build:web && npm run build:server",
-    "start": "node bin/pgdev.mjs",
+    "dev": "npm run build:desktop && node desktop/scripts/dev.mjs",
+    "build": "npm run build:web && npm run build:server && npm run build:desktop",
+    "start": "electron .",
     "test": "npm run build:server && node test/run.mjs",
     "test:unit": "npm run build:server && node test/run.mjs --unit",
-    "start:no-open": "node bin/pgdev.mjs --no-open",
     "build:web": "cd web && vue-tsc --noEmit && vite build",
-    "build:server": "cd server && tsc"
+    "build:server": "cd server && tsc",
+    "build:desktop": "node desktop/scripts/build.mjs",
+    "test:desktop": "node --test test/desktop/*.test.mjs",
+    "test:desktop:smoke": "node desktop/scripts/smoke.mjs",
+    "test:desktop:tree": "node test/desktop/tree.mjs",
+    "package:desktop": "npm run build && electron-builder --config desktop/electron-builder.yml --publish never",
+    "package:desktop:dir": "npm run build && electron-builder --config desktop/electron-builder.yml --dir --publish never"
   },
   "dependencies": {
     "@fastify/static": "^10.1.3",
@@ -59,12 +56,14 @@
     "@types/pg": "^8.11.10",
     "@vitejs/plugin-vue": "^5.2.1",
     "concurrently": "^9.1.2",
+    "electron": "^44.5.1",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.25.12",
+    "playwright": "^1.63.0",
+    "postject": "^1.0.0-alpha.6",
     "typescript": "^5.7.3",
     "vite": "^6.0.7",
     "vue-tsc": "^2.2.0"
-  },
-  "publishConfig": {
-    "access": "public"
   },
   "allowScripts": {
     "esbuild@0.28.2": true,

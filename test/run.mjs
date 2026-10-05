@@ -62,16 +62,14 @@ if (!process.env.PGDEV_TEST_URL) {
   for (const file of DATABASE_SUITES) {
     if (!run(file)) ok = false
   }
-  if (process.env.PGDEV_BROWSER) {
-    if (!run(join('browser', 'app.mjs'))) ok = false
-  } else {
-    console.log(`\n${'='.repeat(72)}`)
-    console.log('SKIPPED: browser/app.mjs')
-    console.log('Set PGDEV_BROWSER=1 to drive Chrome. It needs a Chrome binary, and it')
-    console.log('starts its own API + Vite on ports 3010/5173, so those must be free.')
-    console.log('The origin guard only permits that exact cross-port pair.')
-    console.log('='.repeat(72))
-  }
+}
+
+// The desktop replaces the retired standalone browser entry. PGDEV_BROWSER is
+// accepted as a temporary test-runner alias, not as a distribution mode.
+if (process.env.PGDEV_DESKTOP || process.env.PGDEV_BROWSER) {
+  if (!run(join('..', 'desktop', 'scripts', 'smoke.mjs'))) ok = false
+} else {
+  console.log('SKIPPED: Electron smoke (set PGDEV_DESKTOP=1 after npm run build).')
 }
 
 console.log(`\n${ok ? 'ALL SUITES PASSED' : 'SOME SUITES FAILED'}`)

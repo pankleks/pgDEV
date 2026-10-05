@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { confirmAction } from '../lib/desktop'
 import { computed, reactive, ref } from 'vue'
 import {
   CodeXml,
@@ -79,9 +80,9 @@ function drop(label: string) {
   conn.forget(label)
 }
 
-function clearAll() {
+async function clearAll() {
   if (!saved.length) return
-  if (window.confirm('Forget all saved connections?')) conn.forgetAll()
+  if (await confirmAction('Forget all saved connections?')) conn.forgetAll()
 }
 
 async function submit() {
@@ -227,7 +228,7 @@ async function submit() {
               </label>
               <label class="check-item">
                 <input v-model="remember" type="checkbox" />
-                <span><strong>Remember in this browser</strong><small>Save connection details locally</small></span>
+                <span><strong>Remember on this device</strong><small>Credentials use secure OS storage when available</small></span>
               </label>
             </div>
 
@@ -245,7 +246,7 @@ async function submit() {
             <div class="checks">
               <label class="check-item">
                 <input v-model="remember" type="checkbox" />
-                <span><strong>Remember in this browser</strong><small>Save connection details locally</small></span>
+                <span><strong>Remember on this device</strong><small>Credentials use secure OS storage when available</small></span>
               </label>
             </div>
             <button class="primary connect-btn" type="submit" :disabled="conn.state.connecting">

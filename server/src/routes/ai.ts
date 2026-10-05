@@ -25,6 +25,8 @@ const AI_TAB_KEY = 'ai'
 
 export interface AiRouteOptions {
   token: string
+  mcpCommand?: string[]
+  mcpEndpointFile?: string
 }
 
 function bearerMatches(header: unknown, token: string): boolean {
@@ -64,16 +66,20 @@ export async function aiRoutes(app: FastifyInstance, options: AiRouteOptions) {
   })
 
   app.get('/api/ai/config', async () => {
-    const port = Number(process.env.PORT) || 3010
-    const url = `http://localhost:${port}`
-    const command = fileURLToPath(new URL('../../../bin/pgdev-mcp.mjs', import.meta.url))
+    const address = app.server.address()
+    const port = address && typeof address === 'object' ? address.port : Number(process.env.PORT) || 3010
+    const url = `http://127.0.0.1:${port}`
+    const command = options.mcpCommand?.[0] ?? fileURLToPath(new URL('../../../bin/pgdev-mcp.mjs', import.meta.url))
     const config = {
       $schema: 'https://opencode.ai/config.json',
       mcp: {
         pgdev: {
           type: 'local',
-          command: ['node', command],
-          environment: { PGDEV_URL: url, PGDEV_TOKEN: options.token },
+          command: options.mcpCommand ?? ['node', command],
+          environment: {
+            ...(options.mcpEndpointFile ? { PGDEV_ENDPOINT_FILE: options.mcpEndpointFile } : { PGDEV_URL: url }),
+            PGDEV_TOKEN: options.token,
+          },
           enabled: true,
         },
       },

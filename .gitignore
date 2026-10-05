@@ -4,3 +4,5 @@ dist/
 .env
 .shim/
 .p2shim
+desktop/generated/
+release/

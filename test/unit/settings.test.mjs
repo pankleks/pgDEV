@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { sourceLoader } from '../lib/load.mjs'
 
 const load = sourceLoader()
-// In Node there is no IndexedDB, so the settings store runs on its in-memory
+// In Node there is no Electron preload, so the settings store runs on its in-memory
 // defaults — exactly what these behaviors exercise.
 const { useSettings } = await load('web/composables/settings.ts')
 const settings = useSettings()

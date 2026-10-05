@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { confirmAction } from '../lib/desktop'
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { Save, X } from 'lucide-vue-next'
 import { useToast } from '../composables/toast'
@@ -194,10 +195,10 @@ async function save() {
   }
 }
 
-function close() {
+async function close() {
   if (saving.value) return
   const count = changeCount.value
-  if (count && !window.confirm(`Discard ${count} unsaved change(s)?`)) return
+  if (count && !await confirmAction(`Discard ${count} unsaved change(s)?`)) return
   emit('close')
 }
 
