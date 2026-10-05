@@ -778,7 +778,7 @@ async function refresh() {
                       class="caret"
                       :class="{ open: tableOpen(t) }"
                       title="Expand"
-                      @dblclick.stop @click.stop="!isFiltering && toggleChildren('t-' + t.oid)"
+                      @dblclick.stop @click.stop="toggleChildren('t-' + t.oid)"
                     ><ChevronRight :size="12" /></span>
                     <span class="obj-icon">
                       <Table2 :size="14" />
@@ -800,7 +800,7 @@ async function refresh() {
                       <span
                         class="caret"
                         :class="{ open: catOpen(t, 'cols') }"
-                        @dblclick.stop @click.stop="!isFiltering && toggleChildren(`t-${t.oid}-cols`)"
+                        @dblclick.stop @click.stop="toggleChildren(`t-${t.oid}-cols`)"
                       ><ChevronRight :size="11" /></span>
                       <span class="obj-icon"><Columns3 :size="13" /></span>
                       <span class="obj-name">Columns</span>
@@ -826,7 +826,7 @@ async function refresh() {
                       <span
                         class="caret"
                         :class="{ open: expanded.has(`t-${t.oid}-idx`) }"
-                        @dblclick.stop @click.stop="!isFiltering && toggleChildren(`t-${t.oid}-idx`)"
+                        @dblclick.stop @click.stop="toggleChildren(`t-${t.oid}-idx`)"
                       ><ChevronRight :size="11" /></span>
                       <span class="obj-icon"><ListTree :size="13" /></span>
                       <span class="obj-name">Indexes</span>
@@ -854,7 +854,7 @@ async function refresh() {
                       <span
                         class="caret"
                         :class="{ open: expanded.has(`t-${t.oid}-con`) }"
-                        @dblclick.stop @click.stop="!isFiltering && toggleChildren(`t-${t.oid}-con`)"
+                        @dblclick.stop @click.stop="toggleChildren(`t-${t.oid}-con`)"
                       ><ChevronRight :size="11" /></span>
                       <span class="obj-icon"><KeyRound :size="13" /></span>
                       <span class="obj-name">Constraints</span>
@@ -881,7 +881,7 @@ async function refresh() {
                       <span
                         class="caret"
                         :class="{ open: expanded.has(`t-${t.oid}-trg`) }"
-                        @dblclick.stop @click.stop="!isFiltering && toggleChildren(`t-${t.oid}-trg`)"
+                        @dblclick.stop @click.stop="toggleChildren(`t-${t.oid}-trg`)"
                       ><ChevronRight :size="11" /></span>
                       <span class="obj-icon"><Zap :size="13" /></span>
                       <span class="obj-name">Triggers</span>
@@ -940,7 +940,7 @@ async function refresh() {
                       class="caret"
                       :class="{ open: expanded.has('v-' + v.oid) || autoExpandRel(v.name, v.schema, v.columns) }"
                       title="Toggle columns"
-                      @dblclick.stop @click.stop="!isFiltering && toggleChildren('v-' + v.oid)"
+                      @dblclick.stop @click.stop="toggleChildren('v-' + v.oid)"
                     ><ChevronRight :size="12" /></span>
                     <span class="obj-icon"><Eye :size="14" /></span>
                     <span class="obj-name" v-html="highlightIn(displayName(v.schema, v.name), 'view')" />
@@ -1002,7 +1002,7 @@ async function refresh() {
                       class="caret"
                       :class="{ open: expanded.has('ty-' + t.oid) }"
                       title="Toggle detail"
-                      @dblclick.stop @click.stop="!isFiltering && toggleChildren('ty-' + t.oid)"
+                      @dblclick.stop @click.stop="toggleChildren('ty-' + t.oid)"
                     ><ChevronRight :size="12" /></span>
                     <span class="obj-icon"><Shapes :size="14" /></span>
                     <span class="obj-name" v-html="highlightIn(displayName(t.schema, t.name), 'type')" />
@@ -1057,7 +1057,7 @@ async function refresh() {
                         class="caret"
                         :class="{ open: expanded.has('f-' + f.oid) || autoExpandFunc(f.name, f.schema, f.args) }"
                         title="Toggle signature"
-                        @dblclick.stop @click.stop="!isFiltering && toggleChildren('f-' + f.oid)"
+                        @dblclick.stop @click.stop="toggleChildren('f-' + f.oid)"
                       ><ChevronRight :size="12" /></span>
                     <span class="obj-icon"><component :is="functionIcon(f.kind)" :size="14" /></span>
                     <span class="obj-name" v-html="highlightIn(displayName(f.schema, f.name), 'function')" />
@@ -1120,7 +1120,7 @@ async function refresh() {
                       class="caret"
                       :class="{ open: expanded.has('s-' + s.oid) }"
                       title="Toggle detail"
-                      @dblclick.stop @click.stop="!isFiltering && toggleChildren('s-' + s.oid)"
+                      @dblclick.stop @click.stop="toggleChildren('s-' + s.oid)"
                     ><ChevronRight :size="12" /></span>
                     <span class="obj-icon"><Hash :size="14" /></span>
                     <span class="obj-name" v-html="highlightIn(displayName(s.schema, s.name), 'sequence')" />

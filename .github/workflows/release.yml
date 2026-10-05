@@ -1,0 +1,153 @@
+name: Desktop release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag (must match package.json)
+        required: true
+        type: string
+      unsigned_preview:
+        description: Allow an unsigned preview draft without signing credentials
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_PASSWORD: pgdev
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      PGDEV_TEST_URL: postgres://postgres:pgdev@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: npm
+      - run: node desktop/scripts/verify-tag.mjs
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      - run: npm run test:desktop
+      - run: xvfb-run -a npm run test:desktop:smoke
+      - run: xvfb-run -a npm run test:desktop:tree
+
+  package:
+    needs: validate
+    environment: desktop-release
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: win
+            arch: x64
+            runner: windows-2022
+          - platform: mac
+            arch: arm64
+            runner: macos-15
+          - platform: linux
+            arch: x64
+            runner: ubuntu-24.04
+    env:
+      UNSIGNED_PREVIEW: ${{ inputs.unsigned_preview == true && 'true' || 'false' }}
+      CSC_IDENTITY_AUTO_DISCOVERY: ${{ inputs.unsigned_preview == true && 'false' || 'true' }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: npm
+          architecture: ${{ matrix.arch }}
+      - run: node desktop/scripts/verify-tag.mjs
+      - name: Verify release prerequisites
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+          CSC_LINK: ${{ inputs.unsigned_preview != true && (matrix.platform == 'mac' && secrets.MAC_CSC_LINK || matrix.platform == 'win' && secrets.WINDOWS_CSC_LINK) || '' }}
+          CSC_KEY_PASSWORD: ${{ inputs.unsigned_preview != true && (matrix.platform == 'mac' && secrets.MAC_CSC_KEY_PASSWORD || matrix.platform == 'win' && secrets.WINDOWS_CSC_KEY_PASSWORD) || '' }}
+          APPLE_ID: ${{ matrix.platform == 'mac' && inputs.unsigned_preview != true && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.platform == 'mac' && inputs.unsigned_preview != true && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ matrix.platform == 'mac' && inputs.unsigned_preview != true && secrets.APPLE_TEAM_ID || '' }}
+        run: node desktop/scripts/verify-signing.mjs
+      - run: npm ci
+      - name: Linux packaging dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm xvfb libnss3 libgbm1 libasound2t64
+      - run: npm run build
+      - run: npm run test:desktop
+      - name: Package
+        env:
+          CSC_LINK: ${{ inputs.unsigned_preview != true && (matrix.platform == 'mac' && secrets.MAC_CSC_LINK || matrix.platform == 'win' && secrets.WINDOWS_CSC_LINK) || '' }}
+          CSC_KEY_PASSWORD: ${{ inputs.unsigned_preview != true && (matrix.platform == 'mac' && secrets.MAC_CSC_KEY_PASSWORD || matrix.platform == 'win' && secrets.WINDOWS_CSC_KEY_PASSWORD) || '' }}
+          APPLE_ID: ${{ matrix.platform == 'mac' && inputs.unsigned_preview != true && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.platform == 'mac' && inputs.unsigned_preview != true && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ matrix.platform == 'mac' && inputs.unsigned_preview != true && secrets.APPLE_TEAM_ID || '' }}
+        run: npx --no-install electron-builder --config desktop/electron-builder.yml --${{ matrix.platform }} --${{ matrix.arch }} --publish never
+      - name: Verify signatures and notarization
+        run: node desktop/scripts/verify-signatures.mjs
+      - name: Smoke packaged application
+        env:
+          DESKTOP_PLATFORM: ${{ matrix.platform }}
+        run: node desktop/scripts/packaged-smoke.mjs
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-${{ matrix.platform }}-${{ matrix.arch }}
+          if-no-files-found: error
+          path: |
+            release/*.exe
+            release/*.dmg
+            release/*.zip
+            release/*.deb
+            release/*.rpm
+
+  draft:
+    needs: [validate, package]
+    environment: desktop-release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: release-artifacts
+      - name: Create draft release and checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UNSIGNED_PREVIEW: ${{ inputs.unsigned_preview == true && 'true' || 'false' }}
+        run: node desktop/scripts/release.mjs

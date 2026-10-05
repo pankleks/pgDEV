@@ -1,0 +1,60 @@
+appId: dev.pankleks.pgdev
+productName: pgDEV
+icon: pgDEV.png
+asar: true
+afterSign: desktop/scripts/after-sign.cjs
+directories:
+  output: release
+files:
+  - desktop/main.mjs
+  - desktop/preload.cjs
+  - desktop/*.mjs
+  - desktop/generated/backend.mjs
+  - web/dist/**
+  - package.json
+  - LICENSE
+  - pgDEV.png
+  - '!node_modules/**'
+electronFuses:
+  runAsNode: false
+  enableNodeOptionsEnvironmentVariable: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+artifactName: '${productName}-${version}-${os}-${arch}.${ext}'
+win:
+  extraResources:
+    - from: desktop/generated/pgdev-mcp.exe
+      to: helpers/pgdev-mcp.exe
+  target:
+    - target: nsis
+      arch: [x64]
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false
+mac:
+  extraResources:
+    - from: desktop/generated/pgdev-mcp
+      to: helpers/pgdev-mcp
+  category: public.app-category.developer-tools
+  target:
+    - target: dmg
+      arch: [arm64]
+    - target: zip
+      arch: [arm64]
+  hardenedRuntime: true
+  entitlements: desktop/entitlements.mac.plist
+  entitlementsInherit: desktop/entitlements.mac.plist
+linux:
+  extraResources:
+    - from: desktop/generated/pgdev-mcp
+      to: helpers/pgdev-mcp
+  category: Development
+  executableName: pgdev
+  target:
+    - target: deb
+      arch: [x64]
+    - target: rpm
+      arch: [x64]
+  maintainer: Krzysztof Heim

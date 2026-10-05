@@ -74,7 +74,7 @@ test('an SSL request the server declines ends the socket quietly', async () => {
   }
 })
 
-test('cancel is delivered over a Unix-domain socket', async () => {
+test('cancel is delivered over a Unix-domain socket', { skip: process.platform === 'win32' }, async () => {
   // A short prefix keeps the socket path under the ~104-char platform limit.
   const dir = mkdtempSync(join(tmpdir(), 'pgdevc-'))
   const port = 5432

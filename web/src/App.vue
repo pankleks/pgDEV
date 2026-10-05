@@ -15,6 +15,8 @@ import { useAi } from './composables/ai'
 import { api } from './api'
 import { getActiveSelection, triggerFormat, triggerParamMap } from './lib/formatbridge'
 import { isPickerCancelled, openTextFiles, saveTextFile } from './lib/files'
+import { confirmAction, desktop } from './lib/desktop'
+import { flushStorage, storageReady } from './lib/storage'
 
 const conn = useConnection()
 const tabs = useTabs()
@@ -36,8 +38,6 @@ const activeTab = computed(() =>
   tabs.state.tabs.find((t) => t.key === tabs.state.activeKey) ?? null,
 )
 
-const fileInput = ref<HTMLInputElement | null>(null)
-
 function suggestedFileName(tab: EditorTab): string {
   const base = (tab.fileName ?? tab.title)
     .trim()
@@ -46,22 +46,10 @@ function suggestedFileName(tab: EditorTab): string {
   return /\.[^./\\]+$/.test(base) ? base : `${base}.sql`
 }
 
-async function onFilesChosen(e: Event) {
-  const input = e.target as HTMLInputElement
-  for (const file of [...(input.files ?? [])]) {
-    tabs.openFile(file.name, await file.text())
-  }
-  input.value = ''
-}
-
 async function openFiles() {
   try {
     const picked = await openTextFiles()
-    if (picked === null) {
-      fileInput.value?.click()
-      return
-    }
-    for (const { file, handle } of picked) tabs.openFile(file.name, await file.text(), handle)
+    for (const { fileName, content, handle } of picked) tabs.openFile(fileName, content, handle)
   } catch (e) {
     if (!isPickerCancelled(e)) toast.show(`Open failed: ${(e as Error).message}`)
   }
@@ -171,7 +159,28 @@ function onKeyDown(e: KeyboardEvent) {
   }
 }
 
+const desktopSubscriptions: (() => void)[] = []
 onMounted(() => {
+  desktopSubscriptions.push(desktop().onBeforeClose(async () => {
+    const dirty = tabs.state.tabs.some(tabs.isDirty)
+    const busy = Object.values(results.state.byTab).some((result) => result.running || result.loadingMore || result.transactionOpen)
+    if ((dirty || busy) && !await confirmAction('Quit pgDEV? Unsaved editor text will be kept in the session; running queries will stop and open transactions will roll back.')) {
+      throw new Error('Close canceled')
+    }
+    flushSizes()
+    await tabs.saveSession()
+    await flushStorage()
+    ai.stop()
+  }))
+  desktopSubscriptions.push(desktop().onBackendFailure(() => {
+    conn.state.id = null
+    for (const key of Object.keys(results.state.byTab)) results.drop(key)
+    toast.show('Database service stopped. Save your work and restart pgDEV; open transactions have ended.')
+  }))
+  const warned = new Set<string>()
+  const warning = (message: string) => { if (!warned.has(message)) { warned.add(message); toast.show(message) } }
+  desktopSubscriptions.push(desktop().onStorageWarning(warning))
+  void storageReady.then((stored) => stored.warnings?.forEach(warning))
   window.addEventListener('pointermove', onMouseMove)
   window.addEventListener('pointerup', onMouseUp)
   window.addEventListener('pointercancel', onMouseUp)
@@ -192,6 +201,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  desktopSubscriptions.forEach((unsubscribe) => unsubscribe())
+  ai.stop()
   window.removeEventListener('pointermove', onMouseMove)
   window.removeEventListener('pointerup', onMouseUp)
   window.removeEventListener('pointercancel', onMouseUp)
@@ -314,15 +325,6 @@ provide('pgdev:run', runActive)
         title="Open the pgDEV project page on GitHub"
       >{{ version }}</a>
     </header>
-    <input
-      ref="fileInput"
-      type="file"
-      accept=".sql,.txt,.ddl"
-      multiple
-      style="display: none"
-      @change="onFilesChosen"
-    />
-
     <div v-if="paramBar" class="param-bar">
       <SlidersHorizontal :size="13" class="param-bar-icon" />
       <input

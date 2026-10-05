@@ -7,16 +7,17 @@ It integrates with the AI coding harness of your choice, bringing AI-assisted de
 
 ## 1. Start
 
->You need Node.js 24+ and a PostgreSQL server (14 or newer).
+Download the installer for your platform from [GitHub Releases](https://github.com/pankleks/pgdev/releases):
 
-Install/upgrade with:
-```bash
-npm i @pankleks/pgdev@latest -g
+| Platform | Build |
+| --- | --- |
+| Windows | x64 installer (`.exe`) |
+| macOS | Apple Silicon / arm64 (`.dmg` or `.zip`) |
+| Linux | x64 (`.deb` or `.rpm`) |
 
-pgdev
-```
+Install and open **pgDEV**. You need a PostgreSQL server (14 or newer), but **not Node.js, npm, or a separate browser**. Preview builds may be unsigned; signed public releases require the project's signing credentials.
 
-`pgdev` serves the API + UI on `http://localhost:3010/` and opens your browser. Press `Ctrl+C` to stop.
+The database service runs inside an isolated Electron utility process. Closing pgDEV saves the editor session, stops queries and rolls back open transactions. Application updates are manual initially.
 
 ![Not connected](docs/images/manual/01-app-not-connected.png)
 
@@ -24,7 +25,7 @@ pgdev
 
 ## 2. Connections
 
-Parameters or a `postgres://…` connection string, with optional SSL. Connections persist per browser (auto-connect on load) and support `?connect=N` deep links. The dialog manages the saved set — reuse, forget, or disconnect:
+Parameters or a `postgres://…` connection string, with optional SSL. Connections persist on this device and can auto-connect on startup. The dialog manages the saved set — reuse, forget, or disconnect:
 
 ![Connect dialog](docs/images/manual/02-connect-dialog.png)
 
@@ -98,10 +99,35 @@ Rename, retype (length/precision/scale), nullability, defaults, add/drop columns
 
 ![Settings](docs/images/manual/05-settings.png)
 
-Settings are per-browser: editor font size, statement timeout for new connections, object grouping by name prefix, and the AI row/size caps. **Reset to defaults** restores everything.
+Settings are per-device: editor font size, statement timeout for new connections, object grouping by name prefix, and the AI row/size caps. **Reset to defaults** restores everything.
+
+Settings, pinned file references and tab sessions use versioned JSON snapshots in Electron's application-data directory, with atomic replacement and backups. Database credentials use OS-backed encryption; on Linux without a secure keyring, passwords are not persisted. IndexedDB and browser-data migration are not used.
 
 ### MCP access
 
 pgDEV exposes an MCP server.
 
+The AI dialog provides a copyable configuration pointing at the bundled **pgdev-mcp** executable. The helper needs no system Node installation and authenticates to the running app with a separate persistent token. It discovers the current loopback port through a native endpoint file, so the configuration survives app restarts. Keep the token private.
+
 Read tools: `query`, `get_schema` (optional `schema`/`table` filters; relation lists truncate past 200 entries), `get_ddl` (`type`/`schema`/`name`, plus `oid`/`parent` to pin overloads and constraints), `get_active_result` (the active tab's grids capped like `query`, plus the last 100 Messages lines — so the agent sees the outcome, including errors, of scripts *you* ran; no database access happens here). Editor tools: `get_active_query`, `set_active_query` (`replace`/`append`/`insert`), `open_query_tab`, `list_tabs`, `activate_tab`, `close_tab`.
+
+## Development and packaging
+
+Node.js 24 is recommended **for development only**:
+
+```bash
+npm ci
+npm run dev                 # Vue/Vite + Electron; backend runs in a utility process
+npm run build
+npm start                   # Run the built frontend in Electron
+npm run test:unit
+npm run test:desktop
+npm run test:desktop:smoke
+npm run package:desktop     # Native installer in release/
+```
+
+The standalone MCP helper is built using Node's single-executable application support. Backend and helper dependencies are bundled with esbuild. Packaging runs on the target OS/architecture; macOS builds are arm64 only. Linux desktop smoke tests need a display (use `xvfb-run -a`).
+
+`npm test` includes live database suites when `PGDEV_TEST_URL` points at a disposable PostgreSQL instance where scratch databases can be created. Set `PGDEV_DESKTOP=1` to include the Electron smoke test. Never use production database credentials for tests.
+
+See [desktop architecture and release setup](docs/desktop.md) for storage recovery, signing secrets and CI details. The npm/browser distribution is retired; Vue remains in this phase, with Svelte migration planned separately.

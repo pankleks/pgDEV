@@ -2,6 +2,7 @@ name: CI
 
 on:
   push:
+    branches: ['**']
   pull_request:
 
 permissions:
@@ -12,24 +13,102 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-
+  database:
+    name: PostgreSQL ${{ matrix.postgres }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ['14', '18']
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}
+        env:
+          POSTGRES_PASSWORD: pgdev
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      PGDEV_TEST_URL: postgres://postgres:pgdev@127.0.0.1:5432/postgres
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      - run: npm run test:desktop
+      - name: Electron database smoke
+        run: xvfb-run -a npm run test:desktop:smoke
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build
-        run: npm run build
-
-      - name: Run unit tests
-        run: npm run test:unit
+  desktop:
+    name: ${{ matrix.platform }}-${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: win
+            arch: x64
+            runner: windows-2022
+          - platform: mac
+            arch: arm64
+            runner: macos-15
+          - platform: linux
+            arch: x64
+            runner: ubuntu-24.04
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: npm
+          architecture: ${{ matrix.arch }}
+      - name: Check runner architecture
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: node -e "if (process.arch !== process.env.EXPECTED_ARCH) process.exit(1)"
+      - run: npm ci
+      - name: Linux packaging dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm xvfb libnss3 libgbm1 libasound2t64
+      - run: npm run build
+      - run: npm run test:unit
+      - run: npm run test:desktop
+      - name: Electron smoke (Windows/macOS)
+        if: runner.os != 'Linux'
+        run: npm run test:desktop:smoke
+      - name: Electron smoke (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run test:desktop:smoke
+      - name: Tree interactions (Windows/macOS)
+        if: runner.os != 'Linux'
+        run: npm run test:desktop:tree
+      - name: Tree interactions (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run test:desktop:tree
+      - name: Package unsigned preview
+        run: npx --no-install electron-builder --config desktop/electron-builder.yml --${{ matrix.platform }} --${{ matrix.arch }} --publish never
+      - name: Smoke packaged application
+        env:
+          DESKTOP_PLATFORM: ${{ matrix.platform }}
+        run: node desktop/scripts/packaged-smoke.mjs
+      - name: Upload installers
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: preview-${{ matrix.platform }}-${{ matrix.arch }}
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            release/*.exe
+            release/*.dmg
+            release/*.zip
+            release/*.deb
+            release/*.rpm

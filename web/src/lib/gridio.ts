@@ -65,18 +65,10 @@ export function toDelimited(columns: string[], rows: unknown[][], separator: ','
 
 export async function copyText(text: string): Promise<boolean> {
   try {
-    await navigator.clipboard.writeText(text)
+    await desktop().copyText(text)
     return true
   } catch {
-    const ta = document.createElement('textarea')
-    ta.value = text
-    ta.style.position = 'fixed'
-    ta.style.opacity = '0'
-    document.body.appendChild(ta)
-    ta.select()
-    const ok = document.execCommand('copy')
-    ta.remove()
-    return ok
+    return false
   }
 }
 
@@ -84,16 +76,4 @@ export async function copyGrid(columns: string[], rows: unknown[][]): Promise<bo
   return copyText(toDelimited(columns, rows, '\t'))
 }
 
-export function downloadCsv(columns: string[], rows: unknown[][], filename: string): void {
-  const text = '\uFEFF' + toDelimited(columns, rows, ',')
-  const blob = new Blob([text], { type: 'text/csv;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  // Must be in the DOM for Safari/Firefox; delay revoke so the download can start.
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
-}
+import { desktop } from './desktop'

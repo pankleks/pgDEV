@@ -32,7 +32,16 @@ export interface SavedConnection extends ConnectionConfig {
 
 function labelOf(cfg: ConnectionConfig): string {
   if (cfg.connectionString) {
-    return cfg.connectionString.replace(/\/\/([^:]+):[^@]+@/, '//$1:***@')
+    try {
+      const url = new URL(cfg.connectionString)
+      if (url.password) url.password = '***'
+      for (const key of [...url.searchParams.keys()]) {
+        if (/password|secret|token/i.test(key)) url.searchParams.set(key, '***')
+      }
+      return url.toString()
+    } catch {
+      return 'Connection string'
+    }
   }
   return `${cfg.user ?? 'postgres'}@${cfg.host ?? 'localhost'}:${cfg.port ?? 5432}/${cfg.database ?? ''}`
 }
@@ -95,7 +104,7 @@ function ensureReady(): Promise<void> {
 function persist() {
   const saved = savedConnections.map((connection) => ({ ...connection }))
   const last = lastConnection ? { ...lastConnection } : null
-  void ensureReady().then(() => saveConnections(saved, last, seqHighWater)).catch(() => undefined)
+  void ensureReady().then(() => saveConnections(saved, last, seqHighWater)).catch(() => useToast().show('Connections could not be saved. Check the application data directory.'))
 }
 
 export function useConnection() {

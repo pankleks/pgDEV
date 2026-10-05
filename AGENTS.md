@@ -14,12 +14,14 @@
 
 ## Project facts
 
-- npm workspaces monorepo: `server/` (Fastify + TypeScript, NodeNext) and
-  `web/` (Vue 3 + Monaco + Vite).
-- Build gate: `npm run build` (vue-tsc + vite + server tsc).
+- npm workspaces monorepo: `server/` (Fastify + TypeScript, NodeNext),
+  `web/` (Vue 3 + Monaco + Vite), and an Electron shell in `desktop/`.
+- Desktop-only delivery; Node/npm are development tools, not user prerequisites.
+- Build gate: `npm run build` (vue-tsc + vite + server tsc + desktop/MCP bundles).
 - Tests: `npm test` (unit + live suites; live suites need `PGDEV_TEST_URL`
-  from `.env`, browser suite needs `PGDEV_BROWSER=1` + `CHROME_PATH` and
-  ports 3010/5173 free — stop the dev server first).
+  from `.env`; `npm run test:desktop` covers native/security units and
+  `npm run test:desktop:smoke` drives Electron. `PGDEV_DESKTOP=1` adds the
+  Electron smoke to `npm test`; Linux needs a display or xvfb).
 - Scratch databases are PID-suffixed (`pgdev_*_<pid>`); `.env` is gitignored
   and must never be committed.
 - PostgreSQL 14+ is the supported server baseline.

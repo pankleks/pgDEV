@@ -5,25 +5,35 @@
 // AI dialog, so pgDEV remains the one place that knows the connections, the
 // editor and the results.
 //
+// Built into a standalone stdio executable for the desktop distribution.
 // Configure a client with (see the AI dialog in pgDEV for a copyable version):
 //   PGDEV_URL=http://localhost:3010
 //   PGDEV_TOKEN=<from the AI dialog>
 import { readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 
-const HERE = dirname(fileURLToPath(import.meta.url))
-const version = JSON.parse(readFileSync(join(HERE, '..', 'package.json'), 'utf8')).version
+const version = process.env.PGDEV_APP_VERSION ?? JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version
 const url = (process.env.PGDEV_URL ?? 'http://localhost:3010').replace(/\/+$/, '')
 const token = process.env.PGDEV_TOKEN ?? ''
 
+function endpoint() {
+  if (!process.env.PGDEV_ENDPOINT_FILE) return url
+  let address
+  try { address = new URL(JSON.parse(readFileSync(process.env.PGDEV_ENDPOINT_FILE, 'utf8')).url) }
+  catch { throw new Error('Cannot find the running pgDEV instance. Open the desktop application first.') }
+  if (address.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(address.hostname)) {
+    throw new Error('Invalid desktop MCP endpoint')
+  }
+  return address.origin
+}
+
 async function callTool(name, args) {
+  const address = endpoint()
   let res
   try {
-    res = await fetch(`${url}/api/ai/tool/${name}`, {
+    res = await fetch(`${address}/api/ai/tool/${name}`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -32,7 +42,7 @@ async function callTool(name, args) {
       body: JSON.stringify(args ?? {}),
     })
   } catch (err) {
-    throw new Error(`Cannot reach pgDEV at ${url} — is it running? (${err.message})`)
+    throw new Error(`Cannot reach pgDEV at ${address} — is it running? (${err.message})`)
   }
   const body = await res.json().catch(() => null)
   if (res.status === 401) {
@@ -69,7 +79,7 @@ const server = new McpServer(
   { name: 'pgdev', version },
   {
     instructions:
-      'pgDEV is a PostgreSQL IDE that the user has open in a browser; work on the connection it has ' +
+      'pgDEV is a PostgreSQL desktop IDE; work on the connection it has ' +
       'open (there is no way to list or choose connections, and database tools fail while nothing is ' +
       'connected). `query` only runs read-only statements: SELECT, WITH, VALUES, TABLE, SHOW and ' +
       'EXPLAIN. To create, alter or drop anything, or to change data, author the SQL yourself — start ' +
@@ -258,4 +268,7 @@ server.registerResource(
   },
 )
 
-await server.connect(new StdioServerTransport())
+void server.connect(new StdioServerTransport()).catch(() => {
+  process.stderr.write('pgDEV MCP could not start\n')
+  process.exit(1)
+})

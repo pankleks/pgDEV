@@ -5,7 +5,8 @@ import { useResults } from '../composables/results'
 import { useConnection } from '../composables/connection'
 import { useTabs } from '../composables/tabs'
 import { useToast } from '../composables/toast'
-import { copyGrid, copyText, downloadCsv, csvHeader, csvRows, formatCellForDisplay } from '../lib/gridio'
+import { copyGrid, copyText, csvHeader, csvRows, formatCellForDisplay } from '../lib/gridio'
+import { createOutput } from '../lib/files'
 import ValueDialog, { type CellValueTarget } from './ValueDialog.vue'
 import RowEditDialog, { type RowEditTarget } from './RowEditDialog.vue'
 
@@ -253,17 +254,6 @@ async function copyResult() {
   toast.show(ok ? `Copied ${g.rows.length} row(s) to clipboard` : 'Copy to clipboard failed')
 }
 
-/** Minimal shape of the File System Access save picker (Chrome/Edge). */
-interface SavePicker {
-  showSaveFilePicker?: (options?: { suggestedName?: string }) => Promise<{
-    createWritable(): {
-      write(data: string): Promise<void>
-      close(): Promise<void>
-      abort(): Promise<void>
-    }
-  }>
-}
-
 async function exportCsv() {
   const connectionId = conn.state.id
   if (!connectionId) return
@@ -288,25 +278,19 @@ async function exportCsv() {
   const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19)
   const filename = `pgDEV-statement-${g.statementNumber}-${stamp}${g.limited ? '-partial' : ''}.csv`
 
-  // Stream pages straight to disk when the browser can: memory stays flat
+  // Stream pages straight to native disk: memory stays flat
   // (drained pages are not retained in the grid) and every write is awaited
   // so a failed write aborts the file instead of vanishing into a void.
-  const picker = (window as unknown as SavePicker).showSaveFilePicker
-  if (picker) {
-    let handle
+  {
+    let output
     try {
-      handle = await picker.call(window, { suggestedName: filename })
+      output = await createOutput(filename, undefined, true)
     } catch (e) {
       if ((e as Error).name !== 'AbortError') toast.show(`Export failed: ${(e as Error).message}`)
       return
     }
-    let writable
-    try {
-      writable = await handle.createWritable()
-    } catch (e) {
-      toast.show(`Export failed: ${(e as Error).message}`)
-      return
-    }
+    if (!output) return
+    const writable = output.writable
     let rows = 0
     try {
       await writable.write(csvHeader(g.columns))
@@ -334,20 +318,6 @@ async function exportCsv() {
     return
   }
 
-  // Fallback: drain into the grid, then download one Blob.
-  if (g.truncated) {
-    toast.show('Loading all rows for export…')
-    const ok = await results.loadAll(tabKey, connectionId, g)
-    if (!ok) {
-      toast.show('Export failed — see Messages')
-      return
-    }
-    toast.show(`Loaded all rows (${g.rows.length} total), exporting…`)
-  }
-  downloadCsv(g.columns, g.rows, filename)
-  toast.show(g.limited
-    ? `Exported first ${g.rows.length} of ${g.totalRowCount} rows to CSV (partial result)`
-    : `Exported ${g.rows.length} row(s) to CSV`)
 }
 </script>
 

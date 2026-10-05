@@ -19,6 +19,8 @@ export interface StoredTab {
   persist: boolean
   /** True for tabs the agent opened, so the tint survives a restart. */
   agentOpened: boolean
+  filePath?: string
+  fileName?: string
 }
 
 export interface TabSession {
@@ -59,6 +61,7 @@ export function serializeSession(tabs: readonly EditorTab[], activeKey: string):
       readOnly: tab.readOnly,
       persist: tab.persist === true,
       agentOpened: tab.agentOpened === true,
+      ...(tab.filePath ? { filePath: tab.filePath, fileName: tab.fileName ?? tab.title } : {}),
     })),
     activeIndex: activeIndex === -1 ? 0 : activeIndex,
   }
@@ -74,11 +77,12 @@ export function restoreSession(session: TabSession, takeKey: () => string): Edit
   return session.tabs.map((stored) => ({
     key: takeKey(),
     kind: stored.kind,
-    source: 'untitled',
+    source: stored.filePath ? 'file' : 'untitled',
     title: stored.title,
-    fileName: null,
+    fileName: stored.filePath ? stored.fileName ?? stored.title : null,
+    ...(stored.filePath ? { filePath: stored.filePath } : {}),
     content: stored.content,
-    savedContent: stored.persist ? null : stored.savedContent,
+    savedContent: stored.persist && !stored.filePath ? null : stored.savedContent,
     readOnly: stored.readOnly,
     persist: stored.persist ? true : undefined,
     agentOpened: stored.agentOpened ? true : undefined,
@@ -108,6 +112,8 @@ export function sanitizeSession(value: unknown): TabSession | null {
       // tabs, so a missing flag means true.
       persist: tab.persist !== false,
       agentOpened: tab.agentOpened === true,
+      ...(typeof tab.filePath === 'string' && typeof tab.fileName === 'string'
+        ? { filePath: tab.filePath, fileName: tab.fileName } : {}),
     })
   }
   const index = record.activeIndex

@@ -166,7 +166,7 @@ test('edited timestamptz keeps its instant via the browser offset', () => {
 // The probe path derives from this file's location, not process.cwd():
 // `npm test` runs node --test with cwd=test/, and a cwd-built path would
 // land at test/web/… which does not exist.
-const REPO = new URL('../..', import.meta.url).pathname.replace(/\/+$/, '')
+const EDITOR_MODULE = new URL('../../web/src/lib/celleditor.ts', import.meta.url).href
 const tzProbe = `
   import { registerHooks } from 'node:module';
   registerHooks({ resolve(s, c, n) {
@@ -175,7 +175,7 @@ const tzProbe = `
     }
     return n(s, c);
   } });
-  const { toEditorValue, fromEditorValue } = await import('file:///${REPO}/web/src/lib/celleditor.ts');
+  const { toEditorValue, fromEditorValue } = await import(${JSON.stringify(EDITOR_MODULE)});
   const instant = (raw) => new Date(raw.replace(' ', 'T').replace(/[+-][0-9][0-9]$/, (m) => m + ':00')).getTime();
   const out = [];
   for (const raw of [
