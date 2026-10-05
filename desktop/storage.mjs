@@ -8,7 +8,9 @@ function validRecord(kind, value) {
   if (kind === 'pinnedFiles') return Array.isArray(value) && value.every((pin) =>
     pin && typeof pin.id === 'string' && typeof pin.order === 'number' && typeof pin.fileName === 'string' && typeof pin.content === 'string')
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
-  if (kind === 'session') return Array.isArray(value.tabs) && value.tabs.every((tab) => tab && typeof tab.content === 'string')
+  if (kind === 'session') return Array.isArray(value.tabs) && value.tabs.every((tab) =>
+    tab && typeof tab.key === 'string' && typeof tab.title === 'string' && typeof tab.content === 'string' &&
+    (tab.savedContent === undefined || tab.savedContent === null || typeof tab.savedContent === 'string'))
   if (kind === 'connections') return Array.isArray(value.saved)
   return true
 }

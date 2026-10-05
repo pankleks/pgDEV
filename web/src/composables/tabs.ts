@@ -89,6 +89,7 @@ export const SESSION_SAVE_INTERVAL_MS = 10_000
 
 let sessionLoaded = false
 let lastSessionSignature = ''
+let sessionWrite: Promise<void> | null = null
 
 function sessionSignature(): string {
   return JSON.stringify({
@@ -101,15 +102,24 @@ function sessionSignature(): string {
 
 async function saveSessionIfChanged(): Promise<void> {
   if (!sessionLoaded) return
+  // Closing must observe any in-flight save failure, even when its snapshot
+  // has the same signature. Re-check after it completes to capture newer edits.
+  if (sessionWrite) {
+    await sessionWrite
+    return saveSessionIfChanged()
+  }
   const signature = sessionSignature()
   if (signature === lastSessionSignature) return
   lastSessionSignature = signature
+  sessionWrite = saveTabSession(serializeSession(state.tabs, state.activeKey))
   try {
-    await saveTabSession(serializeSession(state.tabs, state.activeKey))
+    await sessionWrite
   } catch {
     // Let the next tick retry rather than silently dropping the change.
     lastSessionSignature = ''
     throw new Error('The tab session could not be saved')
+  } finally {
+    sessionWrite = null
   }
 }
 
