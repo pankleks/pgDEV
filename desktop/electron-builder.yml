@@ -47,6 +47,10 @@ mac:
   entitlements: desktop/entitlements.mac.plist
   entitlementsInherit: desktop/entitlements.mac.plist
 linux:
+  icon: desktop/icons
+  desktop:
+    entry:
+      StartupWMClass: pgdev
   extraResources:
     - from: desktop/generated/pgdev-mcp
       to: helpers/pgdev-mcp
