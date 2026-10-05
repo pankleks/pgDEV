@@ -19,8 +19,12 @@ const errors = []
 try {
   application = await electron.launch({ executablePath, args, env, timeout: 30000 })
   application.process().stderr?.on('data', (chunk) => process.stderr.write(chunk))
+  const dialogs = []
+  application.process().stdout?.on('data', (chunk) => dialogs.push(chunk.toString()))
   // Replace native dialogs from the test driver, never from application code.
-  await application.evaluate(({ dialog }) => { dialog.showMessageBox = async () => ({ response: 1 }) })
+  await application.evaluate(({ dialog }) => {
+    dialog.showMessageBox = async () => { console.log('PGDEV_SMOKE_DIALOG'); return { response: 1 } }
+  })
   const page = await application.firstWindow()
   page.on('pageerror', (error) => errors.push(error.message))
   await page.locator('.monaco-editor').waitFor({ timeout: 30000 })
@@ -80,13 +84,17 @@ try {
   const closed = application.waitForEvent('close', { timeout: 15000 })
   await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close())
   await closed
+  assert.equal(dialogs.join('').includes('PGDEV_SMOKE_DIALOG'), false, 'idle quit with unsaved text must save silently, without confirmation')
   application = undefined
   const snapshot = JSON.parse(await readFile(join(directory, 'state/session.json'), 'utf8'))
   assert.ok(snapshot.value.tabs.some((tab) => tab.content.includes('persisted_desktop_session')))
   await assert.rejects(fetch(`${backendAddress}/api/version`), 'backend must exit with its window')
   // Relaunch against the same native data and verify session/config continuity.
   application = await electron.launch({ executablePath, args, env, timeout: 30000 })
-  await application.evaluate(({ dialog }) => { dialog.showMessageBox = async () => ({ response: 1 }) })
+  application.process().stdout?.on('data', (chunk) => dialogs.push(chunk.toString()))
+  await application.evaluate(({ dialog }) => {
+    dialog.showMessageBox = async () => { console.log('PGDEV_SMOKE_DIALOG'); return { response: 1 } }
+  })
   const reopened = await application.firstWindow()
   await reopened.locator('.monaco-editor').waitFor({ timeout: 30000 })
   await reopened.waitForFunction(() => document.querySelector('.monaco-editor .view-lines')?.textContent?.includes('persisted_desktop_session'))
@@ -96,6 +104,7 @@ try {
   const nextClosed = application.waitForEvent('close', { timeout: 15000 })
   await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close())
   await nextClosed
+  assert.equal(dialogs.join('').includes('PGDEV_SMOKE_DIALOG'), false, 'unchanged restored editor tabs must not prompt on quit')
   application = undefined
   assert.deepEqual(errors, [])
   console.log('Desktop smoke passed: sandbox, Monaco, API authentication, MCP, session restart and shutdown.')

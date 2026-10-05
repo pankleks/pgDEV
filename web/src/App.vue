@@ -162,9 +162,10 @@ function onKeyDown(e: KeyboardEvent) {
 const desktopSubscriptions: (() => void)[] = []
 onMounted(() => {
   desktopSubscriptions.push(desktop().onBeforeClose(async () => {
-    const dirty = tabs.state.tabs.some(tabs.isDirty)
     const busy = Object.values(results.state.byTab).some((result) => result.running || result.loadingMore || result.transactionOpen)
-    if ((dirty || busy) && !await confirmAction('Quit pgDEV? Unsaved editor text will be kept in the session; running queries will stop and open transactions will roll back.')) {
+    // Editor text is saved below before close is acknowledged. Restored or
+    // edited SQL alone is not a reason to interrupt an otherwise idle quit.
+    if (busy && !await confirmAction('Quit pgDEV? Running queries will stop and open transactions will roll back. Editor text will be kept in the session.')) {
       throw new Error('Close canceled')
     }
     flushSizes()
