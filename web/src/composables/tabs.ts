@@ -83,7 +83,7 @@ function newPinId(): string {
 // User-created query tabs, plus any other tab with unsaved changes, are
 // snapshotted every SESSION_SAVE_INTERVAL_MS and on exit, and restored once at
 // startup. A cheap signature comparison skips the write while nothing changed;
-// connection state is deliberately not part of any of this.
+// Database connections are not restored, but bound SQL keeps its run guard.
 
 export const SESSION_SAVE_INTERVAL_MS = 10_000
 
@@ -96,7 +96,7 @@ function sessionSignature(): string {
     active: state.activeKey,
     tabs: state.tabs
       .filter(isSessionTab)
-      .map((tab) => [tab.key, tab.title, tab.content, tab.kind, tab.savedContent, tab.filePath]),
+      .map((tab) => [tab.key, tab.title, tab.content, tab.kind, tab.savedContent, tab.filePath, tab.connectionId]),
   })
 }
 

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { EventEmitter } from 'node:events'
 import { createApp } from '../../server/dist/app.js'
 import { setPool, removePool } from '../../server/dist/pools.js'
 import { hasOpenTransaction } from '../../server/dist/queryshape.js'
@@ -32,6 +33,7 @@ function fakePool(options = {}) {
   const executed = []
   const state = { releases: 0, connects: 0, held: [] }
   const client = {
+    connection: new EventEmitter(),
     on() {},
     removeListener() {},
     // Synchronous by design: boundedQuery submits a Query object and ignores
@@ -39,6 +41,9 @@ function fakePool(options = {}) {
     query(query) {
       const text = typeof query === 'string' ? query : query.text
       executed.push(text)
+      if (text === 'SHOW standard_conforming_strings') {
+        return { fields: [], rows: [{ standard_conforming_strings: 'on' }], command: 'SHOW', rowCount: 1 }
+      }
       if (options.fail && text.includes(options.fail)) throw new Error(`boom: ${text}`)
       // Statements matching `hold` stay in flight: the Query object is kept so
       // the test can complete (or fail) it later, simulating a cancel race.

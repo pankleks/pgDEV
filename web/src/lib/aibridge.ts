@@ -240,6 +240,10 @@ export async function applyBridgeAction(deps: AiBridgeDeps, action: BridgeAction
 
     case 'close-tab': {
       const tab = resolveAgentTab(deps, args.tab, 'close')
+      const result = deps.activeResult(tab.key)
+      if (result?.running || result?.transactionOpen) {
+        throw new Error(`Refused: "${tab.title}" has active database work. Only the user can close it.`)
+      }
       if (tab.dirty === true) {
         throw new Error(`Refused: "${tab.title}" has unsaved changes. Only the user can close it.`)
       }

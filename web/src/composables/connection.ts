@@ -167,6 +167,15 @@ export function useConnection() {
         return
       }
       if (prevId && prevId !== id) {
+        const { confirmResultRelease } = await import('./results')
+        if (attempt !== connectionAttempt || !await confirmResultRelease('Switch connections')) {
+          await api.disconnect(id).catch(() => {})
+          return
+        }
+        if (attempt !== connectionAttempt) {
+          await api.disconnect(id).catch(() => {})
+          return
+        }
         // Switching connections from the badge dialog: close the old pool
         // and drop its per-tab results so stale data isn't shown.
         await api.disconnect(prevId).catch(() => {})
@@ -245,6 +254,9 @@ export function useConnection() {
     state.connecting = false
     const id = state.id
     if (id) {
+      const { confirmResultRelease } = await import('./results')
+      if (attempt !== connectionAttempt || !await confirmResultRelease('Disconnect from this database')) return
+      if (attempt !== connectionAttempt) return
       // Best-effort cancel of in-flight queries; the destructive clear below
       // runs only after the server confirms the pool is closed. A failed
       // DELETE keeps the UI connected so a stale pool cannot linger behind a

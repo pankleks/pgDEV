@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ListX, PanelRightClose, PanelTopClose, Pin, PinOff, X } from 'lucide-vue-next'
 import { useTabs, type EditorTab } from '../composables/tabs'
 import { useConnection } from '../composables/connection'
-import { releaseTab } from '../composables/results'
+import { confirmResultRelease, releaseTab } from '../composables/results'
 import QueryEditor from './QueryEditor.vue'
 import { confirmAction } from '../lib/desktop'
 
@@ -103,22 +103,30 @@ async function canClose(tab: EditorTab): Promise<boolean> {
   return await confirmAction(`Close unsaved changes in "${tab.title}"?`) && tab.content === content
 }
 
+async function canCloseTabs(openTabs: EditorTab[], action: string): Promise<boolean> {
+  const snapshot = openTabs.map((tab) => ({ tab, content: tab.content }))
+  for (const tab of openTabs) if (!await canClose(tab)) return false
+  if (!await confirmResultRelease(action, openTabs.map((tab) => tab.key))) return false
+  // Later confirmations must not discard edits made since an earlier approval.
+  return snapshot.every(({ tab, content }) => tabs.state.tabs.includes(tab) && tab.content === content)
+}
+
 async function closeTab(key: string) {
   const tab = tabs.state.tabs.find((t) => t.key === key)
-  if (!tab || !await canClose(tab)) return
+  if (!tab || !await canCloseTabs([tab], 'Close this tab')) return
   closeSession(key)
   tabs.close(key)
 }
 
 async function closeAllTabs() {
   const openTabs = [...tabs.state.tabs]
-  for (const tab of openTabs) if (!await canClose(tab)) return
+  if (!await canCloseTabs(openTabs, 'Close all tabs')) return
   for (const tab of openTabs) { closeSession(tab.key); tabs.close(tab.key) }
 }
 
 async function closeOtherTabs(key: string) {
   const toClose = tabs.state.tabs.filter((tab) => tab.key !== key)
-  for (const tab of toClose) if (!await canClose(tab)) return
+  if (!await canCloseTabs(toClose, 'Close other tabs')) return
   for (const tab of toClose) { closeSession(tab.key); tabs.close(tab.key) }
   tabs.activate(key)
 }
@@ -127,7 +135,7 @@ async function closeRightTabs(key: string) {
   const index = tabs.state.tabs.findIndex((tab) => tab.key === key)
   if (index === -1) return
   const toClose = tabs.state.tabs.slice(index + 1)
-  for (const tab of toClose) if (!await canClose(tab)) return
+  if (!await canCloseTabs(toClose, 'Close tabs to the right')) return
   for (const tab of toClose) { closeSession(tab.key); tabs.close(tab.key) }
 }
 

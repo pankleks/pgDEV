@@ -19,6 +19,8 @@ export interface StoredTab {
   persist: boolean
   /** True for tabs the agent opened, so the tint survives a restart. */
   agentOpened: boolean
+  /** Preserve the run guard; a restarted connection must not implicitly rebind SQL. */
+  connectionId?: string
   filePath?: string
   fileName?: string
 }
@@ -61,6 +63,7 @@ export function serializeSession(tabs: readonly EditorTab[], activeKey: string):
       readOnly: tab.readOnly,
       persist: tab.persist === true,
       agentOpened: tab.agentOpened === true,
+      ...(tab.connectionId ? { connectionId: tab.connectionId } : {}),
       ...(tab.filePath ? { filePath: tab.filePath, fileName: tab.fileName ?? tab.title } : {}),
     })),
     activeIndex: activeIndex === -1 ? 0 : activeIndex,
@@ -86,6 +89,7 @@ export function restoreSession(session: TabSession, takeKey: () => string): Edit
     readOnly: stored.readOnly,
     persist: stored.persist ? true : undefined,
     agentOpened: stored.agentOpened ? true : undefined,
+    ...(stored.connectionId ? { connectionId: stored.connectionId } : {}),
   }))
 }
 
@@ -112,6 +116,8 @@ export function sanitizeSession(value: unknown): TabSession | null {
       // tabs, so a missing flag means true.
       persist: tab.persist !== false,
       agentOpened: tab.agentOpened === true,
+      ...(typeof tab.connectionId === 'string' && tab.connectionId.length > 0
+        ? { connectionId: tab.connectionId } : {}),
       ...(typeof tab.filePath === 'string' && typeof tab.fileName === 'string'
         ? { filePath: tab.filePath, fileName: tab.fileName } : {}),
     })

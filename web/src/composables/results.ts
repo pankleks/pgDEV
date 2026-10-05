@@ -1,5 +1,6 @@
 import { reactive } from 'vue'
 import { api, type ApiError } from '../api'
+import { confirmAction } from '../lib/desktop'
 import type { DataResult, FetchMoreResponse, QueryResponse, TransactionState } from '../types'
 
 /** The slice of the API the results state machine drives; tests inject a fake. */
@@ -30,8 +31,8 @@ export interface Message {
 export type QueryErrorInfo = Message
 
 // Statement timeouts surface as 57014 "canceling statement due to statement
-// timeout" — previously misreported as a user cancel. The pool runs with a
-// 30s statement_timeout (see server connection config).
+// timeout" — previously misreported as a user cancel. The connection's
+// statement_timeout is configurable; do not claim a fixed duration here.
 export function describeQueryError(
   raw: string,
   code: unknown,
@@ -39,7 +40,7 @@ export function describeQueryError(
   position?: string | null,
 ): QueryErrorInfo {
   if (/statement timeout/i.test(raw)) {
-    return { text: 'Query timed out (30s statement limit).', level: 'error' }
+    return { text: 'Query timed out (statement timeout reached).', level: 'error' }
   }
   // A user-initiated cancel surfaces as SQLSTATE 57014 ("canceling statement
   // due to user request"); the timeout case is handled above. Matching the
@@ -437,6 +438,25 @@ const shared = createResults(api)
 /** The application-wide results store. */
 export function useResults(): Results {
   return shared
+}
+
+/** Warn before releasing database work, even when the editor text is clean.
+ * Refuse stale approval if a new operation/transaction starts during the dialog. */
+export async function confirmResultRelease(action: string, tabKeys?: readonly string[]): Promise<boolean> {
+  const capture = () => (tabKeys ?? Object.keys(shared.state.byTab)).map((key) => {
+    const r = shared.state.byTab[key]
+    return {
+      key,
+      operation: r?.operation,
+      transactionId: r?.transactionId,
+      busy: !!r && (r.running || r.loadingMore || r.transactionOpen),
+    }
+  })
+  const before = capture()
+  if (!before.some((r) => r.busy)) return true
+  const approved = await confirmAction(`${action}? Running queries will stop and open transactions will roll back.`).catch(() => false)
+  if (!approved) return false
+  return JSON.stringify(before) === JSON.stringify(capture())
 }
 
 /** Shared tab-close cleanup: drop the tab's local result state and close its

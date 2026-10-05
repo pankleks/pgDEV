@@ -85,24 +85,29 @@ export function requiresAutocommit(stmt: string): boolean {
   const words = leadingKeywords(stmt, 8).map((w) => w.toLowerCase())
   const first = words[0] ?? ''
   if (first === 'vacuum' || first === 'cluster' || first === 'checkpoint') return true
-  if (first === 'reindex') {
-    // REINDEX's parenthesized options (`REINDEX (VERBOSE) INDEX …`, and even
-    // `REINDEX (CONCURRENTLY) …`) sit before the object keyword, so the whole
-    // statement's bare words must be scanned — strings, comments and quoted
-    // identifiers stay opaque through the shared scanner.
-    let seen = false
-    scanSqlLexemes(stmt, (lex) => {
-      if (lex.kind === 'ident' && !lex.quoted && lex.name.toLowerCase() === 'concurrently') {
-        seen = true
-        return false
-      }
-    })
-    return seen
-  }
+  // Even non-concurrent INDEX/TABLE forms need top-level execution when the
+  // target is partitioned; do not guess the target's kind from its SQL name.
+  if (first === 'reindex') return true
+  if (first === 'discard') return words[1] === 'all'
+  // Routines may control transactions. Outside a user-opened transaction,
+  // give them the same top-level context as psql (never retry after effects).
+  if (first === 'call' || first === 'do') return true
   if (first === 'refresh') {
     return words[1] === 'materialized' && words[2] === 'view' && words.includes('concurrently')
   }
-  if (first === 'alter') return words[1] === 'system'
+  if (first === 'alter') {
+    if (words[1] === 'system') return true
+    if (words[1] === 'database') {
+      const tokens: string[] = []
+      scanSqlLexemes(stmt, (lex) => {
+        if (lex.kind !== 'whitespace' && lex.kind !== 'lineComment' && lex.kind !== 'blockComment') {
+          tokens.push(lex.kind === 'ident' && !lex.quoted ? lex.name.toLowerCase() : '')
+        }
+      })
+      return tokens[3] === 'set' && tokens[4] === 'tablespace'
+    }
+    return false
+  }
   if (first === 'create' || first === 'drop') {
     // The optional IF [NOT] EXISTS / UNIQUE lead-in must not defeat the match:
     // `DROP DATABASE IF EXISTS d` is just as unable to run in a transaction,

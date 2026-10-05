@@ -129,3 +129,19 @@ test('returns no statements for empty or comment-only input', () => {
 test('keeps a trailing statement with no semicolon', () => {
   assert.deepEqual(splitStatements('SELECT 1;\nSELECT 2'), ['SELECT 1', 'SELECT 2'])
 })
+
+test('transaction endings restore SET LOCAL string mode', () => {
+  for (const ending of ['COMMIT', 'ROLLBACK', 'END', 'ABORT', 'COMMIT AND CHAIN', 'ROLLBACK AND CHAIN']) {
+    const sql = `BEGIN; SET LOCAL standard_conforming_strings = off; ${ending}; SELECT 'a\\'; SELECT 2;`
+    assert.deepEqual(splitStatements(sql).slice(-2), ["SELECT 'a\\'", 'SELECT 2'], ending)
+  }
+})
+
+test('savepoint rollback restores the effective string mode', () => {
+  const sql = `BEGIN; SAVEPOINT "s"; SET LOCAL standard_conforming_strings = off; ROLLBACK TO SAVEPOINT "s"; SELECT 'a\\'; SELECT 2;`
+  assert.deepEqual(splitStatements(sql).slice(-2), ["SELECT 'a\\'", 'SELECT 2'])
+})
+
+test('splitting accepts the physical connection string mode', () => {
+  assert.deepEqual(splitStatements("SELECT 'a\\';b'; SELECT 2;", { standardConformingStrings: false }), ["SELECT 'a\\';b'", 'SELECT 2'])
+})

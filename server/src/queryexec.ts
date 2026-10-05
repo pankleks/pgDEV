@@ -3,7 +3,8 @@ import { getPool, setRunning, getRunning, deleteRunning, runningKeysForConnectio
 import { rawTextTypes } from './pgtypes.js'
 import { cancelClientQuery } from './pgcancel.js'
 import { guardCheckedOutClient } from './checkout.js'
-import { splitStatementsWithOffsets } from './sqlsplit.js'
+import { nextStatement, splitStatementsWithOffsets } from './sqlsplit.js'
+import { observeSqlState, standardConformingStrings } from './sqlstate.js'
 import { boundedQuery } from './boundedquery.js'
 import { pgErrorMessage } from './pgerror.js'
 import { plainSelectTable } from './selectshape.js'
@@ -222,6 +223,7 @@ function isMappedStatementError(err: unknown): err is MappedStatementError {
  * knows whether a transaction is still open. */
 interface TxnState {
   inTxn: boolean
+  userManaged: boolean
 }
 
 /**
@@ -232,11 +234,10 @@ interface TxnState {
  */
 async function executeStatements(
   client: PoolClient,
-  statements: string[],
+  sql: string,
   cap: number,
   useCursors: boolean,
   txn: TxnState,
-  starts: number[] = [],
 ): Promise<{ mapped: MappedResult[]; openCursor: string | null; pendingRow: unknown[] | null }> {
   const results: (
     | { kind: 'command'; command: string; rowCount: number }
@@ -244,6 +245,7 @@ async function executeStatements(
   )[] = []
   let seq = 0
   let openCursor: string | null = null
+  const statements: string[] = []
 
   // Direct execution for non-cursor statements. Throws on error so the batch
   // aborts with the statement's real message (never masked). Also tracks
@@ -256,8 +258,14 @@ async function executeStatements(
       // Ends the transaction server-side, taking any open cursor with it.
       openCursor = null
     }
-    if (control === 'end') txn.inTxn = false
-    if (control === 'start' || control === 'chain') txn.inTxn = true
+    if (control === 'end') {
+      txn.inTxn = false
+      txn.userManaged = false
+    }
+    if (control === 'start' || control === 'chain') {
+      txn.inTxn = true
+      txn.userManaged = true
+    }
     if (!res.fields || res.fields.length === 0) {
       results.push({
         kind: 'command',
@@ -282,10 +290,17 @@ async function executeStatements(
     }
   }
 
-  for (const [index, stmt] of statements.entries()) {
+  let offset = 0
+  while (true) {
+    const mode = standardConformingStrings(client)
+    const part = nextStatement(sql, offset, mode)
+    if (!part) break
+    offset = part.end
+    const stmt = part.text
+    statements.push(stmt)
     const cursor = `pgdev_cur_${++seq}`
-    const cursorForThisStatement = useCursors && index === statements.length - 1
-    const base = starts[index] ?? 0
+    const cursorForThisStatement = useCursors && !txn.userManaged && canUseCursor(stmt) && !nextStatement(sql, offset, mode)
+    const base = part.start
     if (!txn.inTxn || !cursorForThisStatement) {
       try {
         await execDirect(stmt)
@@ -398,18 +413,17 @@ async function executeStatements(
 async function runOnTransactionSession(
   connId: string,
   runKey: string,
-  statements: string[],
+  sql: string,
   cap: number,
-  starts: number[] = [],
 ): Promise<BatchOutcome> {
   if (getRunning(runKey)) return { kind: 'error', error: { kind: 'running' } }
   const sess = beginSession(runKey)
   if (!sess) return { kind: 'error', error: { kind: 'running' } }
   setRunning(runKey, sess.client)
   const start = performance.now()
-  const txn: TxnState = { inTxn: true }
+  const txn: TxnState = { inTxn: true, userManaged: true }
   try {
-    const { mapped } = await executeStatements(sess.client, statements, cap, false, txn, starts)
+    const { mapped } = await executeStatements(sess.client, sql, cap, false, txn)
     if (txn.inTxn) {
       await finishSession(runKey, sess, 'keep')
       return { kind: 'ok', results: mapped, durationMs: Math.round(performance.now() - start), transactionOpen: true }
@@ -450,10 +464,7 @@ export async function runBatch(
 ): Promise<BatchOutcome> {
   const transactionId = options.transactionId
   const pageable = options.pageable !== false
-  const parts = splitStatementsWithOffsets(sql)
-  const statements = parts.map((p) => p.text)
-  const starts = parts.map((p) => p.start)
-  if (!statements.length) return { kind: 'error', error: { kind: 'empty' } }
+  if (!sql.trim()) return { kind: 'error', error: { kind: 'empty' } }
   const pool = getPool(connId)
   const runKey = sessionKey(connId, tabKey)
   const generation = (operationGeneration.get(runKey) ?? 0) + 1
@@ -465,17 +476,12 @@ export async function runBatch(
   // instead of checking out a new one.
   const active = getSession(runKey)
   if (active?.kind === 'transaction') {
-    return runOnTransactionSession(connId, runKey, statements, cap, starts)
+    if (!nextStatement(sql, 0, standardConformingStrings(active.client))) return { kind: 'error', error: { kind: 'empty' } }
+    return runOnTransactionSession(connId, runKey, sql, cap)
   }
 
   // Drop any idle-open cursor from a previous truncated query on this tab.
   await teardownSession(runKey, 'rollback')
-  const autocommit = statements.some(requiresAutocommit)
-  // A batch that opens a transaction without closing it is user-managed: it
-  // runs without the implicit wrapper, and the client is kept pinned as a
-  // transaction session so the user's transaction is never committed behind
-  // their back.
-  const manual = hasOpenTransaction(statements)
 
   const start = performance.now()
   let client: PoolClient
@@ -502,9 +508,21 @@ export async function runBatch(
   // From here the client is owned either by the session map (kept open for
   // FETCH MORE or a user transaction) or released explicitly on every exit.
   let sessionKept = false
-  const txn: TxnState = { inTxn: false }
+  const txn: TxnState = { inTxn: false, userManaged: false }
   setRunning(runKey, client)
   try {
+    await observeSqlState(client)
+    const statements = splitStatementsWithOffsets(sql, {
+      standardConformingStrings: standardConformingStrings(client),
+    }).map((part) => part.text)
+    if (!statements.length) {
+      client.release()
+      return { kind: 'error', error: { kind: 'empty' } }
+    }
+    const autocommit = statements.some(requiresAutocommit)
+    // User-opened transactions retain their client and are never committed
+    // just to make a top-level command legal.
+    const manual = hasOpenTransaction(statements)
     if (!autocommit && !manual) {
       await client.query('BEGIN')
       txn.inTxn = true
@@ -519,7 +537,7 @@ export async function runBatch(
     // transaction, not a cursor. One-shot batches (agent reads) never page:
     // their rows are mirrored to a tab whose key cannot reach this session.
     const useCursors = pageable && !autocommit && !manual && statements.every(canUseCursor)
-    const { mapped, openCursor, pendingRow } = await executeStatements(client, statements, cap, useCursors, txn, starts)
+    const { mapped, openCursor, pendingRow } = await executeStatements(client, sql, cap, useCursors, txn)
     // A close that landed while this batch ran abandons the tab: nothing may
     // be kept, and the (possibly empty) transaction is rolled back instead of
     // committed. Consumed so a later run on the same tab retains normally.
@@ -529,7 +547,7 @@ export async function runBatch(
     if (openCursor && !abandoned) {
       setSession(runKey, connId, client, openCursor, pendingRow)
       sessionKept = true
-    } else if (!abandoned && manual && txn.inTxn) {
+    } else if (!abandoned && txn.userManaged && txn.inTxn) {
       // A forgotten transaction must not pin this client forever: bound its
       // idle life server-side the same way paged sessions are bounded.
       await client.query(`SET LOCAL idle_in_transaction_session_timeout = '5min'`)
@@ -562,7 +580,7 @@ export async function runBatch(
       kind: 'ok',
       results: mapped,
       durationMs: Math.round(performance.now() - start),
-      transactionOpen: !openCursor && manual && txn.inTxn && !abandoned,
+      transactionOpen: !openCursor && txn.userManaged && txn.inTxn && !abandoned,
     }
   } catch (err) {
     await teardownSession(runKey, 'rollback')

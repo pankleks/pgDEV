@@ -63,6 +63,14 @@ test('requiresAutocommit covers commands PostgreSQL refuses in a transaction', (
     'CREATE INDEX CONCURRENTLY i ON t (a)',
     'DROP INDEX CONCURRENTLY i',
     'REINDEX INDEX CONCURRENTLY i',
+    'REINDEX TABLE t',
+    'REINDEX DATABASE d',
+    'REINDEX SCHEMA public',
+    'REINDEX SYSTEM d',
+    'DISCARD ALL',
+    'CALL p()',
+    'DO $$ BEGIN COMMIT; END $$',
+    'ALTER DATABASE "My DB" SET TABLESPACE target',
     'REFRESH MATERIALIZED VIEW CONCURRENTLY mv',
     // the IF EXISTS form must be recognised too
     'DROP DATABASE IF EXISTS d',
@@ -82,8 +90,8 @@ test('requiresAutocommit leaves ordinary statements in the transaction', () => {
     'CREATE TABLE t (a int)',
     'CREATE INDEX i ON t (a)',
     'DROP INDEX i',
-    'REINDEX TABLE t',
     'REFRESH MATERIALIZED VIEW mv',
+    'DISCARD PLANS',
     'DROP TABLE IF EXISTS t',
   ]) {
     assert.equal(requiresAutocommit(stmt), false, stmt)
@@ -108,10 +116,10 @@ test('requiresAutocommit covers REINDEX parenthesized options', () => {
   // run alone cannot see CONCURRENTLY.
   assert.equal(requiresAutocommit('REINDEX (VERBOSE) INDEX CONCURRENTLY i'), true)
   assert.equal(requiresAutocommit('REINDEX (CONCURRENTLY) idx'), true)
-  assert.equal(requiresAutocommit('REINDEX (TABLESPACE x) idx'), false)
-  assert.equal(requiresAutocommit('REINDEX INDEX "concurrently"'), false,
-    'a quoted object name is data, not the CONCURRENTLY clause')
-  assert.equal(requiresAutocommit('REINDEX TABLE t'), false)
+  assert.equal(requiresAutocommit('REINDEX (TABLESPACE x) INDEX idx'), true)
+  assert.equal(requiresAutocommit('REINDEX INDEX "concurrently"'), true,
+    'all REINDEX forms run top-level because the target could be partitioned')
+  assert.equal(requiresAutocommit('REINDEX TABLE t'), true)
 })
 
 test('requiresAutocommit never reads keywords out of literals', () => {

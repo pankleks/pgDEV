@@ -18,13 +18,52 @@ export interface StatementWithOffset {
   start: number
 }
 
-export function splitStatements(sql: string): string[] {
-  return splitStatementsWithOffsets(sql).map((s) => s.text)
+export interface SplitOptions {
+  standardConformingStrings?: boolean
+  /** The batch runner normally supplies an implicit transaction. */
+  inTransaction?: boolean
 }
 
-export function splitStatementsWithOffsets(sql: string): StatementWithOffset[] {
+export function splitStatements(sql: string, options: SplitOptions = {}): string[] {
+  return splitStatementsWithOffsets(sql, options).map((s) => s.text)
+}
+
+/** Read exactly one statement using the server's current lexical setting.
+ * Execution calls this again after each response, never pre-splitting SQL
+ * whose string mode may be changed by a preceding statement or routine. */
+export function nextStatement(sql: string, offset: number, standardConformingStrings: boolean): (StatementWithOffset & { end: number }) | null {
+  while (offset < sql.length) {
+    const remaining = sql.slice(offset)
+    let end = remaining.length
+    let consumed = remaining.length
+    scanSqlLexemes(remaining, (lex) => {
+      if (lex.kind === 'punct' && lex.raw === ';') {
+        end = lex.start
+        consumed = lex.end
+        return false
+      }
+    }, { standardConformingStrings })
+    const segment = remaining.slice(0, end)
+    const text = segment.trim()
+    const start = offset + Math.max(0, segment.search(/\S/))
+    offset += consumed
+    if (text) return { text, start, end: offset }
+  }
+  return null
+}
+
+export function splitStatementsWithOffsets(sql: string, options: SplitOptions = {}): StatementWithOffset[] {
   const out: StatementWithOffset[] = []
-  const state: SqlLexState = { standardConformingStrings: true }
+  const initial = options.standardConformingStrings ?? true
+  const state: SqlLexState = { standardConformingStrings: initial }
+  let sessionMode = initial
+  let transactionMode = initial
+  let inTransaction = options.inTransaction ?? true
+  const savepoints: { name: string; session: boolean; effective: boolean }[] = []
+  const lastSavepoint = (name: string | undefined): number => {
+    for (let i = savepoints.length - 1; i >= 0; i--) if (savepoints[i].name === name) return i
+    return -1
+  }
   /** Real (non-whitespace, non-comment) lexemes of the statement being
    * assembled, capped. Comments never matter for the SET pattern, so they
    * must not consume the window. */
@@ -42,8 +81,44 @@ export function splitStatementsWithOffsets(sql: string): StatementWithOffset[] {
       const leading = segment.search(/\S/)
       const start = leading === -1 ? segEnd : segStart + leading
       out.push({ text, start })
+      const word = (i: number) => tokens[i]?.kind === 'ident' && !tokens[i]?.quoted ? tokens[i]?.name.toLowerCase() : ''
+      const name = (i: number) => tokens[i]?.quoted ? tokens[i]?.name : word(i)
+      const command = word(0)
       const setting = trackStandardConformingStrings(tokens)
-      if (setting) state.standardConformingStrings = setting === 'on'
+      if (command === 'begin' || (command === 'start' && word(1) === 'transaction')) {
+        if (!inTransaction) transactionMode = sessionMode
+        inTransaction = true
+      } else if (command === 'savepoint' && inTransaction) {
+        savepoints.push({ name: name(1) ?? '', session: sessionMode, effective: state.standardConformingStrings })
+      } else if (command === 'release') {
+        const key = name(word(1) === 'savepoint' ? 2 : 1)
+        const index = lastSavepoint(key)
+        if (index >= 0) savepoints.splice(index)
+      } else if (['commit', 'end', 'rollback', 'abort'].includes(command)) {
+        let k = 1
+        if (word(k) === 'work' || word(k) === 'transaction') k++
+        if (word(k) === 'to') {
+          k++
+          if (word(k) === 'savepoint') k++
+          const index = lastSavepoint(name(k))
+          const saved = savepoints[index]
+          if (saved) {
+            sessionMode = saved.session
+            state.standardConformingStrings = saved.effective
+            savepoints.splice(index + 1)
+          }
+        } else if (word(k) !== 'prepared') {
+          if (command === 'rollback' || command === 'abort') sessionMode = transactionMode
+          state.standardConformingStrings = sessionMode
+          savepoints.length = 0
+          inTransaction = word(k) === 'and' && word(k + 1) === 'chain'
+          transactionMode = sessionMode
+        }
+      } else if (setting) {
+        const local = word(1) === 'local'
+        if (!local) sessionMode = setting === 'on'
+        if (!local || inTransaction) state.standardConformingStrings = setting === 'on'
+      }
     }
     tokens = []
   }

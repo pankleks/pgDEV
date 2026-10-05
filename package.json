@@ -1,6 +1,6 @@
 {
   "name": "@pankleks/pgdev",
-  "version": "0.5.8",
+  "version": "0.5.9",
   "description": "A desktop IDE for PostgreSQL with a schema-aware editor, paged results and AI integration.",
   "private": true,
   "main": "desktop/main.mjs",
