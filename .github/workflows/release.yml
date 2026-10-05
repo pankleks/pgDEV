@@ -103,7 +103,11 @@ jobs:
           sudo apt-get install -y rpm xvfb libnss3 libgbm1 libasound2t64
       - run: npm run build
       - run: npm run test:desktop
-      - name: Package
+      - name: Package unsigned preview
+        if: inputs.unsigned_preview == true
+        run: npx --no-install electron-builder --config desktop/electron-builder.yml --${{ matrix.platform }} --${{ matrix.arch }} --publish never
+      - name: Package signed release
+        if: inputs.unsigned_preview != true
         env:
           CSC_LINK: ${{ inputs.unsigned_preview != true && (matrix.platform == 'mac' && secrets.MAC_CSC_LINK || matrix.platform == 'win' && secrets.WINDOWS_CSC_LINK) || '' }}
           CSC_KEY_PASSWORD: ${{ inputs.unsigned_preview != true && (matrix.platform == 'mac' && secrets.MAC_CSC_KEY_PASSWORD || matrix.platform == 'win' && secrets.WINDOWS_CSC_KEY_PASSWORD) || '' }}
