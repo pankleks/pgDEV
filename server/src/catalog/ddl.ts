@@ -703,8 +703,11 @@ export async function typeDdl(pool: Pool, oid: string, schema: string, name: str
           LEFT JOIN pg_collation co ON co.oid = a.attcollation AND a.attcollation <> 0
           LEFT JOIN pg_namespace cn ON cn.oid = co.collnamespace
           WHERE a.attrelid = t.typrelid AND a.attnum > 0 AND NOT a.attisdropped) AS attrs,
-       (SELECT string_agg('CONSTRAINT ' || quote_ident(c.conname) || ' ' || pg_get_constraintdef(c.oid), ' ' ORDER BY c.oid)
-          FROM pg_constraint c WHERE c.contypid = t.oid) AS cons,
+        (SELECT string_agg('CONSTRAINT ' || quote_ident(c.conname) || ' ' || pg_get_constraintdef(c.oid), ' ' ORDER BY c.oid)
+           FROM pg_constraint c WHERE c.contypid = t.oid) AS cons,
+        -- PG18 stores domain NOT NULL constraints here as contype='n'. Keep
+        -- their names in cons, but do not also emit the legacy typnotnull flag.
+        EXISTS (SELECT 1 FROM pg_constraint c WHERE c.contypid = t.oid AND c.contype = 'n') AS has_not_null_constraint,
        format_type(r.rngsubtype, NULL) AS subtype,
        -- rngsubopc is a plain oid, not a regclass: casting it straight to
        -- ::regclass::text renders the numeric oid, which SUBTYPE_OPCLASS
@@ -748,7 +751,7 @@ export async function typeDdl(pool: Pool, oid: string, schema: string, name: str
     const parts = [`CREATE DOMAIN ${q} AS ${row.base}`]
     if (row.domain_collation) parts.push(`COLLATE ${row.domain_collation}`)
     if (row.typdefault != null) parts.push(`DEFAULT ${row.typdefault}`)
-    if (row.typnotnull) parts.push('NOT NULL')
+    if (row.typnotnull && !row.has_not_null_constraint) parts.push('NOT NULL')
     if (row.cons) parts.push(String(row.cons).trim())
     ddl = parts.join(' ') + ';'
   } else if (row.typtype === 'r') {
