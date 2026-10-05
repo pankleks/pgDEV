@@ -1,4 +1,4 @@
-import { reactive } from 'vue'
+import { createState } from '../lib/state.svelte'
 import { api } from '../api'
 import { insertAtCursor } from '../lib/formatbridge'
 import { AI_TAB_TITLE, applyBridgeAction, type AiBridgeDeps, type BridgeAction } from '../lib/aibridge'
@@ -11,7 +11,7 @@ import { desktop } from '../lib/desktop'
 export { AI_TAB_TITLE, applyBridgeAction }
 
 export function useAi() {
-  const state = reactive({ enabled: false, connected: false })
+  const state = createState({ enabled: false, connected: false })
   let unsubscribe: (() => void) | null = null
 
   function deps(): AiBridgeDeps {

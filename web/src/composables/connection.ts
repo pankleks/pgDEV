@@ -1,4 +1,4 @@
-import { reactive } from 'vue'
+import { createState } from '../lib/state.svelte'
 import { api } from '../api'
 import type { ConnectionConfig } from '../types'
 import { saveConnections, storageReady } from '../lib/storage'
@@ -7,7 +7,7 @@ import { useSchema } from './schema'
 import { useSettings } from './settings'
 import { useToast } from './toast'
 
-const state = reactive({
+const state = createState({
   id: null as string | null,
   label: '',
   pgVersion: '',
@@ -16,7 +16,7 @@ const state = reactive({
   error: '',
 })
 
-const savedConnections = reactive<SavedConnection[]>([])
+const savedConnections = createState<SavedConnection[]>([])
 let lastConnection: ConnectionConfig | null = null
 let readyPromise: Promise<void> | null = null
 let locallyChanged = false

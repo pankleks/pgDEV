@@ -8,6 +8,8 @@
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, existsSync, lstatSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { stripTypeScriptTypes } from 'node:module'
+import { compileModule } from 'svelte/compiler'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO = join(HERE, '..', '..')
@@ -55,11 +57,16 @@ function copyTree(srcDir, destDir) {
       const rewritten = readFileSync(from, 'utf8').replace(
         /(['"])((?:\.\.?\/)[^'"]+?)(?:\.js)?\1/g,
         (match, quote, spec) => {
-          if (/\.(js|ts|json|css|vue)$/.test(spec)) return match
+          if (/\.(js|ts|json|css)$/.test(spec)) return match
           return `${quote}${shimSpecifier(from, to, spec)}${quote}`
         },
       )
-      writeFileSync(to, rewritten)
+      // Compile rune modules with the same client semantics as the renderer.
+      // Plain Node type stripping alone cannot execute $state/$derived.
+      const output = from.endsWith('.svelte.ts')
+        ? compileModule(stripTypeScriptTypes(rewritten), { filename: from, generate: 'client' }).js.code
+        : rewritten
+      writeFileSync(to, output)
     }
   }
   walk(srcDir)

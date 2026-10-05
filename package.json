@@ -1,6 +1,6 @@
 {
   "name": "@pankleks/pgdev",
-  "version": "0.5.9",
+  "version": "0.5.10",
   "description": "A desktop IDE for PostgreSQL with a schema-aware editor, paged results and AI integration.",
   "private": true,
   "main": "desktop/main.mjs",
@@ -37,11 +37,12 @@
     "start": "electron .",
     "test": "npm run build:server && node test/run.mjs",
     "test:unit": "npm run build:server && node test/run.mjs --unit",
-    "build:web": "cd web && vue-tsc --noEmit && vite build",
+    "build:web": "npm run build --workspace web",
     "build:server": "cd server && tsc",
     "build:desktop": "node desktop/scripts/build.mjs",
     "test:desktop": "node --test test/desktop/*.test.mjs",
     "test:desktop:smoke": "node desktop/scripts/smoke.mjs",
+    "test:desktop:svelte": "node desktop/scripts/svelte-smoke.mjs",
     "test:desktop:tree": "node test/desktop/tree.mjs",
     "package:desktop": "npm run build && electron-builder --config desktop/electron-builder.yml --publish never",
     "package:desktop:dir": "npm run build && electron-builder --config desktop/electron-builder.yml --dir --publish never"
@@ -55,16 +56,15 @@
   },
   "devDependencies": {
     "@types/pg": "^8.11.10",
-    "@vitejs/plugin-vue": "^5.2.1",
     "concurrently": "^9.1.2",
     "electron": "^44.5.1",
     "electron-builder": "^26.15.3",
     "esbuild": "^0.25.12",
     "playwright": "^1.63.0",
     "postject": "^1.0.0-alpha.6",
+    "svelte": "^5.57.1",
     "typescript": "^5.7.3",
-    "vite": "^6.0.7",
-    "vue-tsc": "^2.2.0"
+    "vite": "^6.0.7"
   },
   "allowScripts": {
     "esbuild@0.28.2": true,

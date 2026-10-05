@@ -1,6 +1,6 @@
-import { reactive } from 'vue'
+import { createState } from '../lib/state.svelte'
 
-const state = reactive({ text: '', visible: false, timer: 0 })
+const state = createState({ text: '', visible: false, timer: 0 })
 
 export function useToast() {
   function show(text: string) {

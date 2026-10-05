@@ -54,6 +54,7 @@ jobs:
       - run: npm run test:desktop
       - run: xvfb-run -a npm run test:desktop:smoke
       - run: xvfb-run -a npm run test:desktop:tree
+      - run: xvfb-run -a npm run test:desktop:svelte
 
   package:
     needs: validate

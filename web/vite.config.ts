@@ -1,8 +1,8 @@
 import { defineConfig } from 'vite'
-import vue from '@vitejs/plugin-vue'
+import { svelte } from '@sveltejs/vite-plugin-svelte'
 
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [svelte()],
   optimizeDeps: {
     // Monaco is imported through ESM subpaths. Listing them up front keeps the
     // dev optimizer from discovering one mid-session, which would rebuild the

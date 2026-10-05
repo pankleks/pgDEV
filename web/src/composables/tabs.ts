@@ -1,4 +1,4 @@
-import { reactive } from 'vue'
+import { createState } from '../lib/state.svelte'
 import { readTextFileHandle, type FileHandle } from '../lib/files'
 import { loadTabSession, savePinnedFiles, saveTabSession, storageReady, type StoredPinnedFile } from '../lib/storage'
 import { isSessionTab, isTabDirty, restoreSession, serializeSession } from '../lib/tabsession'
@@ -37,7 +37,7 @@ export interface PinnedFile {
   content: string
 }
 
-const state = reactive({
+const state = createState({
   tabs: [] as EditorTab[],
   activeKey: '',
   counter: 1,
@@ -125,7 +125,7 @@ async function saveSessionIfChanged(): Promise<void> {
 
 /**
  * Loads and restores the saved session exactly once. `sessionsReady` resolves
- * after the restore so App.vue can create the default tab only when nothing
+ * after the restore so App.svelte can create the default tab only when nothing
  * came back.
  */
 export const sessionsReady = (async () => {
@@ -267,7 +267,7 @@ export function useTabs() {
   /**
    * Generated SQL (e.g. the table editor's change-only script) in a fresh,
    * clean query tab. `savedContent` is preset so the tab is not flagged dirty,
-   * and an optional connection keeps the run-here guard from App.vue active:
+   * and an optional connection keeps the run-here guard from App.svelte active:
    * a script generated against one database must not run against another.
    */
   function openSqlTab(title: string, content: string, connectionId = '', agent = false) {

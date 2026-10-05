@@ -1,5 +1,5 @@
 // Lookups shared by the hover and signature-help providers so overloads are
-// ordered identically in both. Pure (no monaco / vue imports). The function
+// ordered identically in both. Pure (no Monaco / UI imports). The function
 // grouping and ordering live in the catalog index, built once per load.
 
 import type { FunctionInfo, SchemaData } from '../types'

@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { sourceLoader } from '../lib/load.mjs'
 
-// Execute the real composable with Vue reactivity and a controllable API
+// Execute the real store with Svelte reactivity and a controllable API
 // injected through the createResults factory — no source rewriting.
 const load = sourceLoader()
 const { createResults } = await load('web/composables/results.ts')

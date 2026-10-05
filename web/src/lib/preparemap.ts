@@ -1,5 +1,5 @@
 // PREPARE/EXECUTE template generation for queries written with $N parameters.
-// Pure helpers (no Vue/Monaco imports) so the scanner and the script builder
+// Pure helpers (no UI/Monaco imports) so the scanner and the script builder
 // are unit-testable directly, mirroring sqlsplit/selectshape on the server.
 //
 // The scanner finds top-level $N references while skipping string literals,

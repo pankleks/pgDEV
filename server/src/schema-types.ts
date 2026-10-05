@@ -2,7 +2,7 @@
 //
 // This is the single source of truth for the JSON contract: a field renamed
 // here breaks compilation on both sides instead of silently diverging.
-// Database-row shapes and Vue-only state stay local to their modules.
+// Database-row shapes and renderer-only state stay local to their modules.
 
 export interface ConnectionConfig {
   connectionString?: string

@@ -15,9 +15,9 @@
 ## Project facts
 
 - npm workspaces monorepo: `server/` (Fastify + TypeScript, NodeNext),
-  `web/` (Vue 3 + Monaco + Vite), and an Electron shell in `desktop/`.
+  `web/` (Svelte 5 + Monaco + Vite), and an Electron shell in `desktop/`.
 - Desktop-only delivery; Node/npm are development tools, not user prerequisites.
-- Build gate: `npm run build` (vue-tsc + vite + server tsc + desktop/MCP bundles).
+- Build gate: `npm run build` (svelte-check + vite + server tsc + desktop/MCP bundles).
 - Tests: `npm test` (unit + live suites; live suites need `PGDEV_TEST_URL`
   from `.env`; `npm run test:desktop` covers native/security units and
   `npm run test:desktop:smoke` drives Electron. `PGDEV_DESKTOP=1` adds the

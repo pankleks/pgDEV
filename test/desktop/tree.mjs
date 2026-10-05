@@ -1,4 +1,4 @@
-// Real Electron/Vue interaction regression, with a synthetic catalog (no DB).
+// Real Electron/Svelte interaction regression, with a synthetic catalog (no DB).
 import { _electron as electron } from 'playwright'
 import electronPath from 'electron'
 import { createServer } from 'vite'
@@ -35,7 +35,7 @@ try {
     const { useConnection } = await import('/src/composables/connection.ts')
     const { useSchema } = await import('/src/composables/schema.ts')
     const { useSettings } = await import('/src/composables/settings.ts')
-    const { nextTick } = await import('/node_modules/.vite/deps/vue.js')
+    const { tick } = await import('/@id/svelte')
     const column = { name: 'id', type: 'integer', nullable: false, defaultValue: null }
     const catalog = { tables: [], views: [], functions: [], types: [], sequences: [] }
     for (let i = 1; i <= 2; i++) {
@@ -53,9 +53,9 @@ try {
     const connection = useConnection()
     connection.state.label = 'tree-fixture'
     connection.state.id = 'tree-fixture'
-    await nextTick()
+    await tick()
     useSchema().state.data = catalog
-    await nextTick()
+    await tick()
   })
 
   const sections = ['Tables', 'Views', 'Types', 'Functions', 'Sequences']

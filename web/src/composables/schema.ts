@@ -1,8 +1,8 @@
-import { reactive } from 'vue'
+import { createState } from '../lib/state.svelte'
 import { api } from '../api'
 import type { SchemaData } from '../types'
 
-const state = reactive<{ data: SchemaData | null; loading: boolean; error: string | null }>({
+const state = createState<{ data: SchemaData | null; loading: boolean; error: string | null }>({
   data: null,
   loading: false,
   error: null,

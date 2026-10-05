@@ -1,4 +1,4 @@
-import { reactive } from 'vue'
+import { createState } from '../lib/state.svelte'
 import { saveSettings, storageReady } from '../lib/storage'
 import { AI_LIMIT_RANGES, DEFAULT_AI_LIMITS } from '../types'
 import { useToast } from './toast'
@@ -99,7 +99,7 @@ function sanitizeBrowserState(value: unknown): BrowserUiState | null {
   }
 }
 
-const state = reactive<SettingsState>({
+const state = createState<SettingsState>({
   groupObjects: true,
   panelSizes: { sideW: SIZE_LIMITS.sideW.fallback, resultsH: SIZE_LIMITS.resultsH.fallback },
   browserExpanded: {},

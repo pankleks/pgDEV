@@ -1,5 +1,5 @@
 // Pure SQL reference helpers for the Monaco completion provider.
-// Dependency-free (no monaco / vue imports) so the parsing logic can be
+// Dependency-free (no Monaco / UI imports) so the parsing logic can be
 // unit-tested in plain Node.
 
 import type { ColumnInfo } from '../types'

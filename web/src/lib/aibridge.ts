@@ -3,7 +3,7 @@
 // last result and messages, write SQL into it, open a tab, show agent rows,
 // and manage the tabs it opened (list, activate, close). Nothing here runs
 // SQL: the agent's reads go through the server, and the editor is for the user
-// to run. Everything is injected, so the reducer is unit-testable without Vue
+// to run. Everything is injected, so the reducer is unit-testable without the UI
 // or Monaco.
 
 import type { AiActiveResult, AiResultGrid, AiResultMessage, AiTabList } from '../types'

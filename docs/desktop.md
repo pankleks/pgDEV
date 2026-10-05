@@ -3,11 +3,11 @@
 ## Process boundaries
 
 - `desktop/main.mjs` owns the single application instance, window, native dialogs/files, clipboard, storage, and backend lifecycle.
-- `desktop/preload.cjs` exposes named operations only. The Vue renderer is sandboxed, context-isolated, and has no Node integration or raw IPC access.
+- `desktop/preload.cjs` exposes named operations only. The renderer is sandboxed, context-isolated, and has no Node integration or raw IPC access.
 - `desktop/backend.mjs` runs Fastify/PostgreSQL in an Electron utility process. It binds port 0 on `127.0.0.1` and reports the address to its parent. Desktop API requests require a per-launch secret; renderer code never receives it.
 - AI events are streamed in main and delivered through a narrow subscription. The persistent MCP token authorizes only agent tool routes, not the desktop API.
 - `bin/pgdev-mcp.mjs` is build input for a standalone Node SEA executable. Its stdin/stdout remain MCP-only. It does not own database connections.
-- Native API and persistence modules are independent of Vue and reusable during the later Svelte migration.
+- Native API and persistence modules are independent of the UI framework and were retained through the [Svelte migration](svelte.md).
 
 The frontend loads from `pgdev://app`, not a localhost website. Vite is used only during development. Navigation and new windows are restricted; the one approved external link opens the project on GitHub. Packaged Electron fuses disable RunAsNode and NODE_OPTIONS and require the integrity-checked application archive.
 

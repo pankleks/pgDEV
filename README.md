@@ -117,12 +117,13 @@ Node.js 24 is recommended **for development only**:
 
 ```bash
 npm ci
-npm run dev                 # Vue/Vite + Electron; backend runs in a utility process
+npm run dev                 # Vite + Electron; backend runs in a utility process
 npm run build
 npm start                   # Run the built frontend in Electron
 npm run test:unit
 npm run test:desktop
 npm run test:desktop:smoke
+npm run test:desktop:svelte  # Synthetic renderer regressions; no database needed
 npm run package:desktop     # Native installer in release/
 ```
 
@@ -130,4 +131,4 @@ The standalone MCP helper is built using Node's single-executable application su
 
 `npm test` includes live database suites when `PGDEV_TEST_URL` points at a disposable PostgreSQL instance where scratch databases can be created. Set `PGDEV_DESKTOP=1` to include the Electron smoke test. Never use production database credentials for tests.
 
-See [desktop architecture and release setup](docs/desktop.md) for storage recovery, signing secrets and CI details. The npm/browser distribution is retired; Vue remains in this phase, with Svelte migration planned separately.
+See [desktop architecture and release setup](docs/desktop.md) for storage recovery, signing secrets and CI details. The npm/browser distribution is retired. The renderer uses Svelte 5 and Monaco; see the [migration and regression notes](docs/svelte.md).

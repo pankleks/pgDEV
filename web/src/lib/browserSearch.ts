@@ -1,5 +1,5 @@
 // Pure helpers behind the object-browser search: query parsing, term
-// matching, highlighting, and function-argument parsing. No Vue imports —
+// matching, highlighting, and function-argument parsing. No UI-framework imports —
 // everything here is unit-testable directly.
 
 export type SearchType = 'table' | 'view' | 'function' | 'column' | 'parameter' | 'type' | 'sequence'

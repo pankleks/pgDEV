@@ -1,4 +1,4 @@
-import { reactive } from 'vue'
+import { createState } from '../lib/state.svelte'
 import { api, type ApiError } from '../api'
 import { confirmAction } from '../lib/desktop'
 import type { DataResult, FetchMoreResponse, QueryResponse, TransactionState } from '../types'
@@ -80,12 +80,12 @@ export interface TabResult {
  * with a fake and import this file directly — no source rewriting needed.
  */
 export function createResults(api: ResultsApi) {
-  const state = reactive<{ byTab: Record<string, TabResult> }>({ byTab: {} })
+  const state = createState<{ byTab: Record<string, TabResult> }>({ byTab: {} })
 
   function ensure(key: string): TabResult {
     let r = state.byTab[key]
     if (!r) {
-      r = reactive<TabResult>({
+      r = createState<TabResult>({
         operation: 0,
         running: false,
         cancelling: false,
