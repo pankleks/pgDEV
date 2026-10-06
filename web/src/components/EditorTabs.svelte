@@ -118,7 +118,7 @@
       </div>
     {/each}
   </div>
-  {#if staleDdl}<div class="stale-ddl">This DDL was generated from a different database connection. Re-open the object to refresh it; running it here is disabled.</div>{/if}
+   {#if staleDdl}<div class="stale-ddl">This SQL is bound to an earlier or different connection session. Restarting the app also starts a new session, even for the same database. Re-open the object to refresh it; running it here is disabled.</div>{/if}
   {#if active}<QueryEditor tab={active} {onrun} />
   {:else}<div class="editor-empty"><p>No open tabs</p><button class="primary" onclick={() => tabs.newQuery()}>New query</button></div>{/if}
   {#if menu}

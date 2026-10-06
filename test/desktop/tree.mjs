@@ -109,7 +109,34 @@ try {
     const section = page.locator('.browser-main section.group').filter({ has: page.locator('h3', { hasText: title }) })
     await checkToggle(section.locator('.object-group-node').first())
   }
-  assert.deepEqual(errors, [])
+   // Restored bindings contain an expired session ID, not proof of a different
+   // database. Keep the execution guard but do not misreport database identity.
+   await page.evaluate(async () => {
+     const { useTabs } = await import('/src/composables/tabs.ts')
+     const tabs = useTabs()
+     await tabs.openDdl('table', 'public', 'restart_probe', 'SELECT 1;', '', true, '', 'tree-fixture')
+     tabs.state.tabs.find((tab) => tab.key === tabs.state.activeKey).content = 'SELECT 2;'
+     await tabs.saveSession()
+   })
+   await page.reload()
+   await page.locator('.monaco-editor').waitFor()
+   await page.evaluate(async () => {
+     const { useConnection } = await import('/src/composables/connection.ts')
+     const { api } = await import('/src/api.ts')
+     useConnection().state.label = 'tree-fixture'
+     useConnection().state.id = 'tree-fixture-after-restart'
+     window.restartQueryCalls = 0
+     api.query = async () => { window.restartQueryCalls++; throw new Error('Expired binding must not run') }
+   })
+   await page.locator('.stale-ddl').waitFor()
+   const warning = await page.locator('.stale-ddl').innerText()
+   assert.ok(warning.includes('even for the same database'))
+   assert.ok(!warning.includes('different database'))
+   await page.locator('.monaco-editor textarea').focus()
+   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter')
+   await page.locator('.toast').filter({ hasText: 'including after an app restart' }).waitFor()
+   assert.equal(await page.evaluate(() => window.restartQueryCalls), 0)
+   assert.deepEqual(errors, [])
   console.log('Tree interactions passed: section/group arrows, all object types and table categories, filtered/unfiltered, names/icons and DDL double-click.')
 } finally {
   await application?.close().catch(() => undefined)

@@ -160,7 +160,7 @@
     if (!tab) { toast.show('No active tab'); return }
     if (tab.readOnly) { toast.show('DDL preview is read-only'); return }
     if (tab.connectionId && tab.connectionId !== conn.state.id) {
-      toast.show('This SQL belongs to another connection — re-open it to run against the current database')
+      toast.show('This SQL is bound to an earlier or different connection session — re-open it before running, including after an app restart')
       return
     }
     const existing = results.state.byTab[tab.key]
