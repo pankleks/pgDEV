@@ -408,6 +408,8 @@ try {
   const csvPath = join(directory, 'results.csv')
   await application.evaluate(({ dialog }, filePath) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath }) }, csvPath)
   await resultsPanel.getByTitle('Export all rows to CSV', { exact: true }).click()
+  // The grid updates when the cursor drains; the toast follows the file's atomic rename.
+  await page.getByText('Exported 3 row(s) to CSV', { exact: true }).waitFor()
   await resultsPanel.locator('.grid-foot').filter({ hasText: '3 row(s) exported to CSV' }).waitFor()
   assert.equal(await readFile(csvPath, 'utf8'), '\uFEFFenabled,note\ntrue,\nfalse,"line,\n""quoted"""\ntrue,last\n')
 
