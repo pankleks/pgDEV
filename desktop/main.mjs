@@ -253,13 +253,7 @@ async function runDesktop() {
   window.on('close', requestClose)
   app.on('before-quit', requestClose)
   app.on('activate', () => { window.show(); window.focus() })
-  Menu.setApplicationMenu(Menu.buildFromTemplate([
-    ...(process.platform === 'darwin' ? [{ role: 'appMenu' }] : []),
-    { label: 'File', submenu: [{ role: 'quit' }] },
-    { role: 'editMenu' },
-    { label: 'View', submenu: [{ role: 'togglefullscreen' }, ...(DEV ? [{ role: 'toggleDevTools' }] : [])] },
-    { label: 'Help', submenu: [{ label: 'pgDEV on GitHub', click: () => openProject('https://github.com/pankleks/pgdev') }] },
-  ]))
+  Menu.setApplicationMenu(null)
   await window.loadURL(DEV ? 'http://127.0.0.1:5173' : 'pgdev://app/index.html')
   window.show()
   void log(`pgDEV ${version} started.`)
