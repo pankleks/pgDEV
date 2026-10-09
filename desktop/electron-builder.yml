@@ -22,6 +22,7 @@ electronFuses:
   onlyLoadAppFromAsar: true
 artifactName: '${productName}-${version}-${os}-${arch}.${ext}'
 win:
+  icon: desktop/icons/icon.ico
   extraResources:
     - from: desktop/generated/pgdev-mcp.exe
       to: helpers/pgdev-mcp.exe
