@@ -14,6 +14,8 @@ const version = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).ver
 app.setName('pgDEV')
 // An opt-in data directory isolates development and packaged smoke tests.
 if (process.env.PGDEV_DESKTOP_TEST_DATA) app.setPath('userData', resolve(process.env.PGDEV_DESKTOP_TEST_DATA))
+// ponytail: portable keeps state next to the exe; same-machine DPAPI still applies
+else if (app.isPackaged && process.env.PORTABLE_EXECUTABLE_DIR) app.setPath('userData', join(process.env.PORTABLE_EXECUTABLE_DIR, 'pgDEV-data'))
 protocol.registerSchemesAsPrivileged([{ scheme: 'pgdev', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }])
 
 function utilityEnvironment(extra = {}) {

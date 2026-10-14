@@ -11,6 +11,7 @@ const files = (await readdir(directory)).filter((name) => /\.(exe|dmg|zip|deb|rp
 for (const extension of ['exe', 'dmg', 'zip', 'deb', 'rpm']) {
   if (!files.some((name) => name.endsWith(`.${extension}`))) throw new Error(`Missing ${extension} release artifact`)
 }
+if (!files.some((name) => name.endsWith('-portable.exe'))) throw new Error('Missing portable exe release artifact')
 const sums = []
 for (const name of files) {
   const hash = createHash('sha256').update(await readFile(join(directory, name))).digest('hex')

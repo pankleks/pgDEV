@@ -11,7 +11,7 @@ Download the installer for your platform from [GitHub Releases](https://github.c
 
 | Platform | Build |
 | --- | --- |
-| Windows | x64 installer (`.exe`) |
+| Windows | x64 installer (`-setup.exe`) or portable (`-portable.exe`, state in `pgDEV-data/` next to the exe) |
 | macOS | Apple Silicon / arm64 (`.dmg` or `.zip`) |
 | Linux | x64 (`.deb` or `.rpm`) |
 
