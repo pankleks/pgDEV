@@ -118,7 +118,8 @@ jobs:
         run: npx --no-install electron-builder --config desktop/electron-builder.yml --${{ matrix.platform }} --${{ matrix.arch }} --publish never
       - name: Verify portable artifact
         if: matrix.platform == 'win'
-        run: node -e "const fs=require('fs');const m=fs.readdirSync('release').filter(f=>f.endsWith('-portable.exe'));if(m.length!==1)throw new Error('Missing portable exe: '+JSON.stringify(fs.readdirSync('release')))"
+        run: |
+          node -e "const fs=require('fs');const m=fs.readdirSync('release').filter(f=>f.endsWith('-portable.exe'));if(m.length!==1)throw new Error('Missing portable exe - '+JSON.stringify(fs.readdirSync('release')))"
       - name: Verify signatures and notarization
         run: node desktop/scripts/verify-signatures.mjs
       - name: Smoke packaged application
