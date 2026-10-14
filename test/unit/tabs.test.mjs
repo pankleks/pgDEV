@@ -10,6 +10,21 @@ await tabs.pinsReady
 
 const keys = () => tabs.state.tabs.map((t) => t.key)
 
+test('Processes is a singleton, connection-bound, non-persisted utility tab', () => {
+  tabs.openProcesses('conn-1')
+  const process = tabs.state.tabs.find((tab) => tab.kind === 'processes')
+  assert.equal(tabs.state.activeKey, process.key)
+  tabs.newQuery()
+  tabs.openProcesses('conn-1')
+  assert.equal(tabs.state.activeKey, process.key)
+  assert.equal(tabs.state.tabs.filter((tab) => tab.kind === 'processes').length, 1)
+  assert.equal(serializeSession(tabs.state.tabs, process.key).tabs.some((tab) => tab.key === process.key), false)
+  tabs.openProcesses('conn-2')
+  assert.equal(tabs.state.tabs.filter((tab) => tab.kind === 'processes').length, 1)
+  assert.equal(tabs.state.tabs.find((tab) => tab.kind === 'processes').connectionId, 'conn-2')
+  tabs.closeAll()
+})
+
 function addTestPin(tab) {
   const id = `test-pin-${tab.key}`
   tabs.state.pinnedFiles.push({

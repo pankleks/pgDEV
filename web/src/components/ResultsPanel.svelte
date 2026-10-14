@@ -290,7 +290,7 @@
         {:else if grid.g.limited}<span>· first {grid.g.rows.length}{#if grid.g.totalRowCount} of {grid.g.totalRowCount}{/if} · row limit reached; remaining rows were not retained</span>
         {:else if grid.g.exported?.incomplete}<span>· export interrupted — re-run the query</span>
         {:else if grid.g.exported}<span>· first {grid.g.rows.length} shown · {grid.g.exported.rows} row(s) exported to CSV</span>{/if}
-        {#if grid.g.truncated}<button class="btn-sm" disabled={result.loadingMore} title="Fetch the next page of rows" onclick={loadMoreRows}>{result.loadingMore ? 'Loading…' : 'Load more'}</button>{/if}
+        {#if grid.g.truncated}<button class="btn-sm" disabled={result.loadingMore} title="Rerun the query for the next page. Data may change between pages; use a stable ORDER BY." onclick={loadMoreRows}>{result.loadingMore ? 'Loading…' : 'Load more'}</button>{/if}
       </div>
     </div>
   {/if}

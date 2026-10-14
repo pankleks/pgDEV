@@ -33,10 +33,22 @@ import {
 const operationGeneration = new Map<string, number>()
 const closedGeneration = new Map<string, number>()
 
+// Only query text and an offset survive between pages — never a client or lock.
+interface PagingQuery {
+  sql: string
+  offset: number
+  fields: FieldInfo[]
+  searchPath: string
+  stringMode: string
+  role: string
+  busy: boolean
+}
+const pagingQueries = new Map<string, PagingQuery>()
+
 // Batch execution engine, extracted from the Fastify route so HTTP concerns
 // (status codes, reply shapes) stay in routes/query.ts and client ownership
 // lives in exactly one place: from checkout to release, the client is owned
-// either by this function (request-owned) or by a cursor session (paged).
+// either by this function (request-owned) or by an explicit transaction.
 
 export interface MappedCommand {
   kind: 'command'
@@ -97,7 +109,6 @@ interface DataPage {
   fields: FieldInfo[]
   rows: unknown[][]
   hasMore: boolean
-  pendingRow: unknown[] | null
   limited?: boolean
   totalRowCount?: number
 }
@@ -131,7 +142,6 @@ async function fetchPage(
     fields: fetched.fields,
     rows: fetched.rows.slice(0, cap),
     hasMore,
-    pendingRow: hasMore ? fetched.rows[cap] : null,
   }
 }
 
@@ -238,7 +248,7 @@ async function executeStatements(
   cap: number,
   useCursors: boolean,
   txn: TxnState,
-): Promise<{ mapped: MappedResult[]; openCursor: string | null; pendingRow: unknown[] | null }> {
+): Promise<{ mapped: MappedResult[]; openCursor: string | null; fields: FieldInfo[] }> {
   const results: (
     | { kind: 'command'; command: string; rowCount: number }
     | { kind: 'data'; page: DataPage }
@@ -282,7 +292,6 @@ async function executeStatements(
           fields: (res.fields ?? []) as FieldInfo[],
           rows,
           hasMore: false,
-          pendingRow: null,
           limited: bounded.totalRowCount > cap,
           totalRowCount: bounded.totalRowCount,
         },
@@ -400,7 +409,7 @@ async function executeStatements(
   return {
     mapped,
     openCursor,
-    pendingRow: last?.kind === 'data' ? last.page.pendingRow : null,
+    fields: last?.kind === 'data' ? last.page.fields : [],
   }
 }
 
@@ -449,7 +458,7 @@ export interface BatchOptions {
   /** Expected transaction session id; null explicitly requires none. */
   transactionId?: string | null
   /** False for one-shot batches (agent reads): every result is bounded and no
-   * cursor session is retained — a mirrored result cannot page, so the
+   * paging state is retained — a mirrored result cannot page, so the
    * backend must not hold a pool slot for it. */
   pageable?: boolean
 }
@@ -470,7 +479,8 @@ export async function runBatch(
   const generation = (operationGeneration.get(runKey) ?? 0) + 1
   operationGeneration.set(runKey, generation)
   assertTransaction(runKey, transactionId)
-  if (getRunning(runKey)) return { kind: 'error', error: { kind: 'running' } }
+  if (getRunning(runKey) || pagingQueries.get(runKey)?.busy) return { kind: 'error', error: { kind: 'running' } }
+  pagingQueries.delete(runKey)
 
   // A user-opened transaction keeps its client pinned for the tab; continue it
   // instead of checking out a new one.
@@ -480,7 +490,7 @@ export async function runBatch(
     return runOnTransactionSession(connId, runKey, sql, cap)
   }
 
-  // Drop any idle-open cursor from a previous truncated query on this tab.
+  // Clean up any prior non-transaction session.
   await teardownSession(runKey, 'rollback')
 
   const start = performance.now()
@@ -506,7 +516,7 @@ export async function runBatch(
   guardCheckedOutClient(client)
 
   // From here the client is owned either by the session map (kept open for
-  // FETCH MORE or a user transaction) or released explicitly on every exit.
+  // a user transaction) or released explicitly on every exit.
   let sessionKept = false
   const txn: TxnState = { inTxn: false, userManaged: false }
   setRunning(runKey, client)
@@ -526,30 +536,39 @@ export async function runBatch(
     if (!autocommit && !manual) {
       await client.query('BEGIN')
       txn.inTxn = true
-      // Bounds how long a paged session may sit idle in its transaction
-      // server-side; the reaper and explicit teardown back this up.
+      // Backstop while executing the request, never between normal pages.
       await client.query(`SET LOCAL idle_in_transaction_session_timeout = '5min'`)
     }
 
-    // Only the final statement may retain a cursor. Earlier result sets are
-    // bounded and drained, so the UI never advertises a closed cursor as
-    // pageable. Manual transactions never page: the session must keep the
-    // transaction, not a cursor. One-shot batches (agent reads) never page:
+    // Only the final statement may page. Its cursor closes before COMMIT.
+    // Earlier results are bounded and drained. Manual transactions keep the
+    // transaction, not paging state. One-shot batches (agent reads) never page:
     // their rows are mirrored to a tab whose key cannot reach this session.
     const useCursors = pageable && !autocommit && !manual && statements.every(canUseCursor)
-    const { mapped, openCursor, pendingRow } = await executeStatements(client, sql, cap, useCursors, txn)
+    const { mapped, openCursor, fields } = await executeStatements(client, sql, cap, useCursors, txn)
+    let paging: PagingQuery | null = null
+    if (openCursor) {
+      await closeCursor(client, openCursor)
+      const settings = await client.query<{ search_path: string; string_mode: string; role: string }>(
+        "SELECT current_setting('search_path') AS search_path, current_setting('standard_conforming_strings') AS string_mode, current_setting('role') AS role",
+      )
+      // Replay only the final SELECT, never earlier statements from the batch.
+      const last = mapped.at(-1)
+      paging = {
+        sql: statements.at(-1)!, offset: last?.kind === 'data' ? last.rows.length : 0,
+        fields, searchPath: settings.rows[0].search_path, stringMode: settings.rows[0].string_mode,
+        role: settings.rows[0].role, busy: false,
+      }
+    }
     // A close that landed while this batch ran abandons the tab: nothing may
     // be kept, and the (possibly empty) transaction is rolled back instead of
     // committed. Consumed so a later run on the same tab retains normally.
     const abandoned = closedGeneration.get(runKey) === generation
     if (abandoned) closedGeneration.delete(runKey)
 
-    if (openCursor && !abandoned) {
-      setSession(runKey, connId, client, openCursor, pendingRow)
-      sessionKept = true
-    } else if (!abandoned && txn.userManaged && txn.inTxn) {
+    if (!abandoned && txn.userManaged && txn.inTxn) {
       // A forgotten transaction must not pin this client forever: bound its
-      // idle life server-side the same way paged sessions are bounded.
+      // idle life server-side as a backstop to the session reaper.
       await client.query(`SET LOCAL idle_in_transaction_session_timeout = '5min'`)
       setSession(runKey, connId, client, null, null, 'transaction')
       sessionKept = true
@@ -576,6 +595,7 @@ export async function runBatch(
       }
       client.release()
     }
+    if (paging && !abandoned) pagingQueries.set(runKey, paging)
     return {
       kind: 'ok',
       results: mapped,
@@ -608,51 +628,57 @@ export async function runBatch(
   }
 }
 
-/** Fetch the next cursor page for a tab's retained session. */
+/** Rerun the SELECT for one page and commit before returning any rows. */
 export async function fetchNextPage(
   connId: string,
   tabKey: string,
   cap: number,
 ): Promise<MoreOutcome> {
-  getPool(connId)
+  const pool = getPool(connId)
   const runKey = sessionKey(connId, tabKey)
   if (getRunning(runKey)) return { kind: 'error', error: { kind: 'running' } }
-  const existing = getSession(runKey)
-  if (!existing?.cursor) {
+  const paging = pagingQueries.get(runKey)
+  if (!paging) {
     return { kind: 'error', error: { kind: 'no-more' } }
   }
-  const sess = beginSession(runKey)
-  if (!sess?.cursor) return { kind: 'error', error: { kind: 'running' } }
-  setRunning(runKey, sess.client)
-  let finished = false
+  if (paging.busy) return { kind: 'error', error: { kind: 'running' } }
+  paging.busy = true
+  let client: PoolClient | undefined
   try {
-    if (!sess.pendingRow) {
-      await teardownSession(runKey, 'rollback')
+    client = await pool.connect()
+    guardCheckedOutClient(client)
+    if (pagingQueries.get(runKey) !== paging) {
       return { kind: 'error', error: { kind: 'no-more' } }
     }
-    const fetched = await fetchRows(sess.client, sess.cursor, cap)
-    const combined = [sess.pendingRow, ...fetched.rows]
-    const hasMore = combined.length > cap
-    const rows = combined.slice(0, cap)
-    if (!hasMore) {
-      const done = sess.cursor
-      sess.cursor = null
-      sess.pendingRow = null
-      await closeCursor(sess.client, done)
-      await finishSession(runKey, sess, 'commit')
-    } else {
-      // Refresh the idle reaper while pages are still being consumed.
-      sess.pendingRow = combined[cap] ?? null
-      await finishSession(runKey, sess, 'keep')
+    setRunning(runKey, client)
+    // A later page must never repeat writes hidden in a CTE or SELECT function.
+    await client.query('BEGIN READ ONLY')
+    await client.query("SELECT set_config('search_path', $1, true), set_config('standard_conforming_strings', $2, true), set_config('role', $3, true)",
+      [paging.searchPath, paging.stringMode, paging.role])
+    await client.query(`DECLARE "pgdev_page" NO SCROLL CURSOR FOR ${paging.sql}`)
+    // ponytail: O(offset) replay; keyset paging needs a known unique sort key.
+    await client.query(`MOVE FORWARD ${paging.offset} FROM "pgdev_page"`)
+    const page = await fetchPage(client, 'pgdev_page', cap)
+    const shape = (fields: FieldInfo[]) => fields.map((f) => [f.name, f.tableID, f.dataTypeID, f.dataTypeModifier])
+    if (JSON.stringify(shape(page.fields)) !== JSON.stringify(shape(paging.fields))) {
+      throw new Error('Result columns changed between pages. Re-run the query.')
     }
-    finished = true
-    return { kind: 'ok', rows, rowCount: rows.length, truncated: hasMore }
+    await client.query('COMMIT')
+    if (pagingQueries.get(runKey) === paging) {
+      paging.offset += page.rows.length
+      if (!page.hasMore) pagingQueries.delete(runKey)
+    }
+    return { kind: 'ok', rows: page.rows, rowCount: page.rows.length, truncated: page.hasMore }
   } catch (err) {
-    await teardownSession(runKey, 'rollback')
+    if (pagingQueries.get(runKey) === paging) pagingQueries.delete(runKey)
+    if (client) await client.query('ROLLBACK').catch(() => {})
     return { kind: 'error', error: sqlError(err) }
   } finally {
-    if (!finished) await finishSession(runKey, sess, 'rollback')
-    deleteRunning(runKey, sess.client)
+    paging.busy = false
+    if (client) {
+      deleteRunning(runKey, client)
+      client.release()
+    }
   }
 }
 
@@ -670,6 +696,7 @@ export function cancelRunning(connId: string, tabKey: string): boolean {
  * timeout fires. Sessions are handled separately by closeSessionsForConnection.
  */
 export function cancelConnection(connId: string): void {
+  for (const key of pagingQueries.keys()) if (key.startsWith(`${connId}|`)) pagingQueries.delete(key)
   for (const key of runningKeysForConnection(connId)) {
     const client = getRunning(key)
     if (client) cancelClientQuery(client)
@@ -687,6 +714,7 @@ export function cancelConnection(connId: string): void {
 export async function closeTabSession(connId: string, tabKey: string): Promise<void> {
   getPool(connId)
   const key = sessionKey(connId, tabKey)
+  pagingQueries.delete(key)
   const running = getRunning(key)
   if (running) cancelClientQuery(running)
   closedGeneration.set(key, operationGeneration.get(key) ?? 0)

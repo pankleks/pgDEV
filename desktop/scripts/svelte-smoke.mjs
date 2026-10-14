@@ -87,6 +87,14 @@ try {
         sequences: [{ schema: 'public', name: 'counter', oid: '81', dataType: 'bigint', detail: 'increment 1 · owned by fixture.id' }],
       } }
       if (path.includes('/ddl?')) return { status: 200, body: { ddl: '-- fixture DDL\nSELECT 1;' } }
+      if (path.endsWith('/processes')) return { status: 200, body: { processes: [
+        { pid: 33132, state: 'idle in transaction', blocking_pids: [], query: 'SELECT * FROM locked_view' },
+        { pid: 33201, state: 'active', blocking_pids: [33132], query: 'CREATE OR REPLACE VIEW locked_view AS SELECT 1' },
+        { pid: 33208, state: 'idle', blocking_pids: [], query: 'SELECT 1' },
+      ].map((process) => ({ backend_start: '2026-10-14 14:02:37.940894+00', database: 'fixture',
+        username: 'fixture', application_name: 'pgDEV', transaction_age: 120, query_age: 30,
+        wait_event_type: null, wait_event: null, ...process })) } }
+      if (/\/processes\/\d+\/(cancel|terminate)$/.test(path)) return { status: 200, body: { ok: true } }
       if (path.endsWith('/tableedit/42')) {
         const fixture = globalThis.__pgdevSvelteFixture
         if (method === 'POST') {
@@ -302,6 +310,40 @@ try {
   assert.equal(await savedConnection.count(), 1, 'cancelled confirmation must keep saved connections')
   await connection.getByRole('button', { name: 'Connect', exact: true }).click()
   await page.locator('.conn-badge:not(.off)').waitFor()
+  const sqlTabTitle = await page.locator('.tab.active .tab-title').innerText()
+  await page.getByRole('button', { name: 'Processes', exact: true }).click()
+  await page.getByRole('button', { name: 'Processes', exact: true }).click()
+  assert.equal(await page.locator('.tab-title').filter({ hasText: /^Processes$/ }).count(), 1)
+  const processes = page.getByRole('region', { name: 'Processes', exact: true })
+  assert.equal(await editorInput.isVisible(), false)
+  assert.equal(await page.locator('.results-area').isVisible(), false)
+  assert.ok(await page.getByTitle('Save active tab (Ctrl+S)', { exact: true }).isDisabled())
+  await processes.getByRole('button', { name: '33132', exact: true }).click()
+  await processes.getByText('Blocking sessions: 33201', { exact: true }).waitFor()
+  assert.ok(await processes.getByRole('button', { name: 'Cancel query', exact: true }).isDisabled())
+  await processes.getByLabel('Hide idle', { exact: true }).check()
+  assert.equal(await processes.getByRole('button', { name: '33208', exact: true }).count(), 0)
+  assert.equal(await processes.getByRole('button', { name: '33132', exact: true }).count(), 1)
+  await processes.getByRole('button', { name: 'Terminate session…', exact: true }).click()
+  assert.equal(await application.evaluate(() => globalThis.__pgdevSvelteFixture.requests.filter((r) => r.path.endsWith('/33132/terminate')).length), 0)
+  await application.evaluate(() => { globalThis.__pgdevSvelteFixture.confirm = true })
+  await processes.getByRole('button', { name: 'Terminate session…', exact: true }).click()
+  await processes.getByRole('status').filter({ hasText: 'Termination requested for 33132.' }).waitFor()
+  const termination = await application.evaluate(() => globalThis.__pgdevSvelteFixture.requests.find((r) => r.path.endsWith('/33132/terminate')))
+  assert.equal(termination.body.backendStart, '2026-10-14 14:02:37.940894+00')
+  await processes.getByRole('button', { name: '33201', exact: true }).click()
+  await processes.getByRole('button', { name: 'Cancel query', exact: true }).click()
+  await processes.getByRole('status').filter({ hasText: 'Cancellation requested for 33201.' }).waitFor()
+  await processes.getByLabel('Filter processes', { exact: true }).fill('no-match')
+  await processes.getByText('No matching sessions.', { exact: true }).waitFor()
+  assert.ok(await processes.getByRole('button', { name: 'Terminate session…', exact: true }).isDisabled())
+  await page.locator('.tab').filter({ hasText: sqlTabTitle }).click()
+  await processes.waitFor({ state: 'hidden' })
+  await page.getByRole('button', { name: 'Processes', exact: true }).click()
+  assert.equal(await processes.getByLabel('Filter processes', { exact: true }).inputValue(), 'no-match')
+  await page.locator('.tab.active').getByTitle('Close tab', { exact: true }).click()
+  await processes.waitFor({ state: 'detached' })
+  await application.evaluate(() => { globalThis.__pgdevSvelteFixture.confirm = false })
   await replaceSql('SELECT BROKEN')
   await page.keyboard.press(`${modifier}+Enter`)
   await page.locator('.monaco-editor .squiggly-error').first().waitFor()
@@ -396,8 +438,8 @@ try {
   assert.equal(await resultsPanel.locator('.bool-badge.false').innerText(), 'false')
   await resultsPanel.getByTitle('Copy loaded rows to clipboard (TSV)', { exact: true }).click()
   assert.equal(await application.evaluate(({ clipboard }) => clipboard.readText()), 'enabled\tnote\ntrue\t\nfalse\tline, "quoted"')
-  await resultsPanel.getByTitle('Fetch the next page of rows', { exact: true }).click()
-  await resultsPanel.getByTitle('Fetch the next page of rows', { exact: true }).waitFor({ state: 'detached' })
+  await resultsPanel.getByRole('button', { name: 'Load more', exact: true }).click()
+  await resultsPanel.locator('.grid-foot').filter({ hasText: '3 row(s)' }).waitFor()
   assert.ok((await resultsPanel.locator('.grid-foot').innerText()).includes('3 row(s)'))
   await resultsPanel.getByRole('button', { name: 'Messages', exact: true }).click()
   await resultsPanel.locator('.messages').waitFor()
@@ -563,6 +605,7 @@ try {
   await browser.getByTitle('Clear search', { exact: true }).click()
   // Pagehide flushes the same native snapshot used at real window shutdown.
   await page.evaluate(() => window.dispatchEvent(new Event('pagehide')))
+  await page.getByRole('button', { name: 'Processes', exact: true }).click()
   await openTableEditor()
 
   // Open the connection dialog beneath the modal from the test driver to
@@ -570,6 +613,7 @@ try {
   await page.locator('.conn-badge').evaluate((badge) => badge.click())
   await connection.getByTitle('Disconnect', { exact: true }).click()
   await page.locator('.conn-badge.off').waitFor()
+  assert.equal(await page.locator('.tab-title').filter({ hasText: /^Processes$/ }).count(), 0)
   await tableEditor.waitFor({ state: 'detached' })
   await connection.locator('.saved-item').click()
   await connection.getByRole('button', { name: 'Connect', exact: true }).click()

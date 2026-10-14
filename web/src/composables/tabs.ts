@@ -7,7 +7,7 @@ import { confirmAction } from '../lib/desktop'
 
 export interface EditorTab {
   key: string
-  kind: 'query' | 'ddl'
+  kind: 'query' | 'ddl' | 'processes'
   source: 'untitled' | 'file'
   title: string
   fileName: string | null
@@ -168,6 +168,20 @@ function updatePinnedFile(id: string, fileName: string, content: string, handle?
 }
 
 export function useTabs() {
+  function openProcesses(connectionId: string) {
+    const existing = state.tabs.find((tab) => tab.kind === 'processes')
+    if (existing?.connectionId === connectionId) {
+      state.activeKey = existing.key
+      return
+    }
+    if (existing) close(existing.key)
+    state.tabs.push({
+      key: 'processes', kind: 'processes', source: 'untitled', title: 'Processes',
+      fileName: null, content: '', savedContent: '', readOnly: true, connectionId,
+    })
+    state.activeKey = 'processes'
+  }
+
   function activate(key: string) {
     state.activeKey = key
   }
@@ -482,6 +496,7 @@ export function useTabs() {
     state,
     activate,
     newQuery,
+    openProcesses,
     openDdl,
     openFile,
     openSqlTab,

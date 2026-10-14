@@ -98,6 +98,29 @@ function grid(overrides = {}) {
   }
 }
 
+test('Processes is invisible to every MCP tab read and management action', async () => {
+  const { deps, state, tabs } = setup()
+  tabs.push({ key: 'processes', kind: 'processes', title: 'Processes', readOnly: true,
+    content: 'private process data', agentOpened: true, aiMirror: true })
+  state.activeKey = 'processes'
+  for (const action of ['get-context', 'list-tabs']) {
+    const response = await applyBridgeAction(deps, { id: '1', action })
+    assert.equal(response.activeKey, null)
+    assert.equal(JSON.stringify(response).includes('processes'), false)
+  }
+  for (const action of ['get-active-query', 'get-active-result', 'set-active-query']) {
+    await assert.rejects(applyBridgeAction(deps, { id: '1', action, args: { sql: 'SELECT 1' } }), /No tab/)
+  }
+  for (const action of ['activate-tab', 'close-tab']) {
+    for (const tab of ['processes', 'Processes']) {
+      await assert.rejects(applyBridgeAction(deps, { id: '1', action, args: { tab } }), /No agent tab/)
+    }
+  }
+  assert.deepEqual(state.written, [])
+  assert.deepEqual(state.activated, [])
+  assert.deepEqual(state.closed, [])
+})
+
 test('get-context reports the active connection and tabs', async () => {
   const { deps } = setup()
   const context = await applyBridgeAction(deps, { id: '1', action: 'get-context' })
@@ -447,4 +470,3 @@ test('show-result refuses when the AI log grid cannot be shown', async () => {
     /AI log tab is busy/,
   )
 })
-

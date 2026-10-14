@@ -341,3 +341,17 @@ export interface AiTabList {
   activeKey: string | null
   tabs: AiTabInfo[]
 }
+export interface DatabaseProcess {
+  pid: number
+  backend_start: string | null
+  database: string
+  username: string
+  application_name: string
+  state: string | null
+  wait_event_type: string | null
+  wait_event: string | null
+  transaction_age: number | null
+  query_age: number | null
+  blocking_pids: number[]
+  query: string | null
+}

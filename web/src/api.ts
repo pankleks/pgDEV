@@ -2,6 +2,7 @@ import type {
   AiConfig,
   AiLimits,
   ConnectionConfig,
+  DatabaseProcess,
   FetchMoreResponse,
   QueryResponse,
   RowUpdateRequest,
@@ -43,6 +44,14 @@ async function send<T>(method: string, url: string, body?: unknown): Promise<T> 
 }
 
 export const api = {
+  processes(id: string): Promise<{ processes: DatabaseProcess[] }> {
+    return send('GET', `/api/connections/${id}/processes`)
+  },
+
+  processAction(id: string, process: DatabaseProcess, action: 'cancel' | 'terminate'): Promise<{ ok: boolean }> {
+    return send('POST', `/api/connections/${id}/processes/${process.pid}/${action}`, { backendStart: process.backend_start })
+  },
+
   version(): Promise<string> {
     return send<{ version: string }>('GET', '/api/version').then((b) => b.version)
   },

@@ -1,6 +1,6 @@
 // Live API suite: transactions, paging and slow-query handling — manual
 // transactions spanning runs (rollback, chained commit, aborted, tab-close,
-// identity pinning), bounded direct results, cursor paging, the statement
+// identity pinning), bounded direct results, stateless paging, the statement
 // timeout, cancellation, the catalog pool surviving pinned sessions, and
 // disconnects cancelling in-flight queries.
 import { boot, Client } from './setup.mjs'
@@ -184,6 +184,27 @@ eq('session close ok', after.body.ok, true)
 const withq = await q('WITH n AS (SELECT g FROM generate_series(1,1200) g) SELECT g FROM n', 'cte', 500)
 eq('WITH query is paged (truncated flag)', withq.body.results[0].truncated, true)
 
+console.log('\n== pages release locks and see fresh data ==')
+const pageObserver = new Client({ ...base, database: DB })
+await pageObserver.connect()
+try {
+  await pageObserver.query("CREATE TABLE fresh_pages AS SELECT n AS id, 'before'::text AS label FROM generate_series(1, 6) n")
+  await pageObserver.query('CREATE VIEW fresh_page_view AS SELECT * FROM fresh_pages')
+  const first = await q('SELECT * FROM fresh_page_view ORDER BY id', 'fresh', 2)
+  eq('fresh first page is pageable', first.body.results[0].truncated, true)
+  eq('no paging transaction remains open', (await pageObserver.query("SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND application_name = 'pgDEV' AND state LIKE 'idle in transaction%'")).rows[0].n, 0)
+  await pageObserver.query("SET statement_timeout = '2s'")
+  await pageObserver.query('CREATE OR REPLACE VIEW fresh_page_view AS SELECT * FROM fresh_pages')
+  ok('view replacement is not blocked by the first page', true)
+  await pageObserver.query("UPDATE fresh_pages SET label = 'after' WHERE id = 3")
+  const next = await call('POST', `/api/connections/${id}/query/more`, { tabKey: 'fresh', maxRows: 2 })
+  eq('next page sees newly committed data', next.body.rows, [[3, 'after'], [4, 'before']])
+  eq('next page also releases its transaction', (await pageObserver.query("SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND application_name = 'pgDEV' AND state LIKE 'idle in transaction%'")).rows[0].n, 0)
+  await call('POST', `/api/connections/${id}/query/close`, { tabKey: 'fresh' })
+} finally {
+  await pageObserver.end()
+}
+
 console.log('\n== statement timeout and cancellation ==')
 const timeout = await app.inject({
   method: 'POST', url: `/api/connections/${id}/query`,
@@ -238,11 +259,11 @@ console.log('\n== catalog queries survive paged sessions (separate pool) ==')
   const pid = extra.body.id
   const qid = (sql, tabKey, maxRows) =>
     call('POST', `/api/connections/${pid}/query`, { sql, tabKey, maxRows })
-  // The main pool holds five clients; pin all of them with truncated cursors.
+  // Explicit transactions still pin clients; normal paging no longer does.
   let pinned = 0
   for (let i = 0; i < 5; i++) {
-    const r = await qid('SELECT id FROM big ORDER BY id', `pin${i}`, 50)
-    if (r.body?.results?.[0]?.truncated === true) pinned++
+    const r = await qid('BEGIN; SELECT id FROM big ORDER BY id', `pin${i}`, 50)
+    if (r.body?.transactionOpen === true) pinned++
   }
   eq('all main-pool clients pinned by sessions', pinned, 5)
   const t0 = Date.now()

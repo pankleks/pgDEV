@@ -68,7 +68,7 @@ Tables, plain views, sequences and functions open **editable**; materialized vie
 
 * Multi-statement batches run with per-statement result sets; typed column headers, `COPY`/`CSV` export, `N row(s)` footer. Failures land in **Messages**, never as a grid.
 * Double-click a cell to inspect its raw value (pretty-printed for JSON/JSONB, with a character count) — the dialog's COPY button is the copy path, and a successful copy closes it.
-* Large results page through a server cursor instead of loading everything.
+* Large results load in pages without holding transactions or locks between clicks. “Load more” reruns the SELECT and skips previously loaded rows; concurrent changes can cause skipped or duplicated rows. Use a stable `ORDER BY`. Each page may rerun expensive work; later pages are read-only and cannot repeat database writes from SELECT functions. Explicit `BEGIN` transactions remain open until you finish them.
 * Statement timeout (configurable, applies to new connections) plus explicit cancellation bound runaway queries.
 * Manual transactions can span runs with transaction-id pinning — a conflicting tab gets a 409 rather than joining the wrong transaction. Statements requiring autocommit (`VACUUM`, …) bypass the transaction path.
 * Run stays disabled while disconnected, while a query is in flight, or in the read-only `AI` log tab.

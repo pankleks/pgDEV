@@ -45,8 +45,8 @@ export function isTabDirty(tab: EditorTab): boolean {
 }
 
 /** User query tabs are always saved; every other tab only once it is dirty. */
-export function isSessionTab(tab: EditorTab): boolean {
-  return tab.persist === true || isTabDirty(tab)
+export function isSessionTab(tab: EditorTab): tab is EditorTab & { kind: 'query' | 'ddl' } {
+  return tab.kind !== 'processes' && (tab.persist === true || isTabDirty(tab))
 }
 
 /** Snapshot the session tabs, preserving order and the active tab. */

@@ -879,6 +879,10 @@ body.dragging-results {
       color: var(--agent);
     }
 
+    &.processes-tab .tab-title {
+      color: #e5a04b;
+    }
+
     /* Drag-and-drop reordering: dim the source and show the insertion line at
        the boundary. Pseudo-elements are used so the active tab's box-shadow is
        not overwritten. */
@@ -2568,5 +2572,4 @@ body.dragging-results {
     }
   }
 }
-
 

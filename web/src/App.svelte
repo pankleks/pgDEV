@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy, tick, untrack } from 'svelte'
-  import { Database, FileOutput, FilePlus2, FolderOpen, PanelLeftClose, PanelLeftOpen, Save, Settings, SlidersHorizontal, Wand2, X } from '@lucide/svelte'
+  import { Activity, FileOutput, FilePlus2, FolderOpen, PanelLeftClose, PanelLeftOpen, Save, Settings, SlidersHorizontal, Wand2, X } from '@lucide/svelte'
+  import appIcon from '../../desktop/icons/32.png'
   import ConnectDialog from './components/ConnectDialog.svelte'
   import SettingsDialog from './components/SettingsDialog.svelte'
   import ObjectBrowser from './components/ObjectBrowser.svelte'
@@ -31,6 +32,15 @@
   let saving = $state(false)
   let version = $state('')
   const activeTab = $derived(tabs.state.tabs.find((tab) => tab.key === tabs.state.activeKey) ?? null)
+  const processesActive = $derived(activeTab?.kind === 'processes')
+  $effect(() => {
+    const id = conn.state.id
+    untrack(() => {
+      for (const tab of [...tabs.state.tabs]) {
+        if (tab.kind === 'processes' && tab.connectionId !== id) tabs.close(tab.key)
+      }
+    })
+  })
 
   function suggestedFileName(tab: EditorTab) {
     const base = (tab.fileName ?? tab.title).trim().replace(/[<>:"/\\|?*\u0000-\u001F]/g, '_').replace(/[. ]+$/, '') || 'query'
@@ -46,7 +56,7 @@
   }
   async function saveActive(saveAs = false) {
     const tab = activeTab
-    if (!tab || saving) return
+    if (!tab || tab.kind === 'processes' || saving) return
     const key = tab.key
     const pinnedId = tab.pinnedId
     const content = tab.content
@@ -158,6 +168,7 @@
     if (!conn.state.id) { toast.show('Connect to a database first'); conn.state.dialog = true; return }
     const tab = tabs.state.tabs.find((tab) => tab.key === tabs.state.activeKey)
     if (!tab) { toast.show('No active tab'); return }
+    if (tab.kind === 'processes') return
     if (tab.readOnly) { toast.show('DDL preview is read-only'); return }
     if (tab.connectionId && tab.connectionId !== conn.state.id) {
       toast.show('This SQL is bound to an earlier or different connection session — re-open it before running, including after an app restart')
@@ -178,23 +189,24 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="app" data-renderer="svelte-5">
   <header class="topbar">
-    <span class="logo"><Database size={15} /> pgDEV</span>
+    <span class="logo"><img src={appIcon} width="20" height="20" alt="pgDEV" /></span>
     <button class="icon" title={sideCollapsed ? 'Expand navigation panel' : 'Collapse navigation panel'} onclick={toggleSide}>
       {#if sideCollapsed}<PanelLeftOpen size={15} />{:else}<PanelLeftClose size={15} />{/if}
     </button>
     {#if conn.state.id}<button class="conn-badge" title="Connection details, disconnect, or switch" onclick={() => { conn.state.dialog = true }}>{conn.state.label}</button>
     {:else}<button class="conn-badge off" title="Open the connection dialog" onclick={() => { conn.state.dialog = true }}>Not connected</button>{/if}
     <span class="spacer"></span>
+    <button class="icon" title="Processes" aria-label="Processes" disabled={!conn.state.id} onclick={() => { if (conn.state.id) tabs.openProcesses(conn.state.id) }}><Activity size={15} /></button>
     <button class="icon" title="Format SQL or selection (Ctrl+Shift+F)" disabled={!activeTab || activeTab.readOnly} onclick={triggerFormat}><Wand2 size={15} /></button>
     <button class="icon" title="Generate call of parameterized query." disabled={!activeTab || activeTab.readOnly} onclick={toggleParamBar}><SlidersHorizontal size={15} /></button>
     <button class="icon" title="New query tab (Ctrl+N)" onclick={() => tabs.newQuery()}><FilePlus2 size={15} /></button>
     <button class="icon" title="Open .sql file (Ctrl+O)" onclick={openFiles}><FolderOpen size={15} /></button>
-    <button class="icon" disabled={!activeTab || saving} title={saving ? 'Saving…' : 'Save active tab (Ctrl+S)'} aria-label={saving ? 'Saving' : 'Save active tab'} onclick={() => saveActive()}><Save size={15} /></button>
-    <button class="icon" disabled={!activeTab || saving} title="Save active tab as a new SQL file" aria-label="Save active tab as a new SQL file" onclick={() => saveActive(true)}><FileOutput size={15} /></button>
+    <button class="icon" disabled={!activeTab || processesActive || saving} title={saving ? 'Saving…' : 'Save active tab (Ctrl+S)'} aria-label={saving ? 'Saving' : 'Save active tab'} onclick={() => saveActive()}><Save size={15} /></button>
+    <button class="icon" disabled={!activeTab || processesActive || saving} title="Save active tab as a new SQL file" aria-label="Save active tab as a new SQL file" onclick={() => saveActive(true)}><FileOutput size={15} /></button>
     <button class="icon" title="Settings" onclick={() => { settingsOpen = true }}><Settings size={15} /></button>
     {#if version}<a class="app-version" href="https://github.com/pankleks/pgdev" target="_blank" rel="noopener noreferrer" title="Open the pgDEV project page on GitHub">{version}</a>{/if}
   </header>
-  {#if paramBar}
+  {#if paramBar && !processesActive}
     <div class="param-bar">
       <SlidersHorizontal size={13} class="param-bar-icon" />
       <input bind:this={paramInput} bind:value={paramValuesText} type="text" spellcheck="false" placeholder='Optional values as a JSON array — e.g. [1, "text", [10, 12], false, null] · Enter to apply'
@@ -208,8 +220,8 @@
     {#if !sideCollapsed}<div class="drag-v" onpointerdown={(event) => startDrag(event, 'side')}></div>{/if}
     <main class="pgdev-main">
       <section class="editor-area"><EditorTabs onrun={runActive} /></section>
-      <div class="drag-h" onpointerdown={(event) => startDrag(event, 'results')}></div>
-      <section class="results-area" style:height={`${resultsH}px`}><ResultsPanel onrun={runActive} /></section>
+      <div class="drag-h" style:display={processesActive ? 'none' : undefined} onpointerdown={(event) => startDrag(event, 'results')}></div>
+      <section class="results-area" style:display={processesActive ? 'none' : undefined} style:height={`${resultsH}px`}><ResultsPanel onrun={runActive} /></section>
     </main>
   </div>
   {#if conn.state.dialog}<ConnectDialog />{/if}

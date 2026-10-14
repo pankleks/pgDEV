@@ -3,6 +3,7 @@ import fastifyStatic from '@fastify/static'
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { connectionRoutes } from './routes/connections.js'
+import { processRoutes } from './routes/processes.js'
 import { metadataRoutes } from './routes/metadata.js'
 import { ddlRoutes } from './routes/ddl.js'
 import { queryRoutes } from './routes/query.js'
@@ -130,6 +131,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
   app.get('/api/version', async () => ({ version: appVersion() }))
 
   await app.register(connectionRoutes)
+  await app.register(processRoutes)
   await app.register(metadataRoutes)
   await app.register(ddlRoutes)
   await app.register(queryRoutes)

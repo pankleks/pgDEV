@@ -93,9 +93,18 @@ function text(value: unknown): string {
   return typeof value === 'string' ? value : ''
 }
 
+/** Utility tabs are never exposed through MCP, even while active. */
+function bridgeTabs(deps: AiBridgeDeps): AiTabView[] {
+  return deps.tabs().filter((tab) => tab.kind !== 'processes')
+}
+
+function bridgeActiveKey(deps: AiBridgeDeps): string {
+  return bridgeTabs(deps).some((tab) => tab.key === deps.activeKey()) ? deps.activeKey() : ''
+}
+
 /** Tabs the agent may manage: the ones it opened, plus its mirror tabs. */
 function agentTabs(deps: AiBridgeDeps): AiTabView[] {
-  return deps.tabs().filter((t) => t.agentOpened === true || t.aiMirror === true)
+  return bridgeTabs(deps).filter((t) => t.agentOpened === true || t.aiMirror === true)
 }
 
 function describeTab(tab: AiTabView): string {
@@ -117,7 +126,7 @@ function resolveAgentTab(deps: AiBridgeDeps, ref: unknown, verb: 'activate' | 'c
   if (byTitle.length === 1) return byTitle[0] as AiTabView
   if (!byTitle.length) {
     const foreign =
-      deps.tabs().find((t) => t.key === want) ?? deps.tabs().filter((t) => t.title === want)[0]
+      bridgeTabs(deps).find((t) => t.key === want) ?? bridgeTabs(deps).filter((t) => t.title === want)[0]
     if (foreign) {
       throw new Error(`"${want}" was not opened by the agent. The agent can only ${verb} tabs it opened itself.`)
     }
@@ -134,15 +143,15 @@ function resolveAgentTab(deps: AiBridgeDeps, ref: unknown, verb: 'activate' | 'c
 export async function applyBridgeAction(deps: AiBridgeDeps, action: BridgeAction): Promise<unknown> {
   const args = action.args ?? {}
   const activeTab = (): AiTabView | undefined =>
-    deps.tabs().find((t) => t.key === deps.activeKey())
+    bridgeTabs(deps).find((t) => t.key === deps.activeKey())
 
   switch (action.action) {
     case 'get-context':
       return {
         connectionId: deps.connectionId(),
         connectionLabel: deps.connectionLabel(),
-        activeKey: deps.activeKey() || null,
-        tabs: deps.tabs().map((t) => ({ key: t.key, title: t.title, readOnly: t.readOnly })),
+        activeKey: bridgeActiveKey(deps) || null,
+        tabs: bridgeTabs(deps).map((t) => ({ key: t.key, title: t.title, readOnly: t.readOnly })),
       }
 
     case 'get-active-query': {
@@ -213,12 +222,12 @@ export async function applyBridgeAction(deps: AiBridgeDeps, action: BridgeAction
       // neutral title so it never joins the mirror pool.
       const title = text(args.title).trim() || 'Agent SQL'
       deps.openSqlTab(title, sql, deps.connectionId() ?? '')
-      return { key: deps.activeKey(), title }
+      return { key: bridgeActiveKey(deps), title }
     }
 
     case 'list-tabs': {
       const owned = agentTabs(deps)
-      const activeKey = deps.activeKey()
+      const activeKey = bridgeActiveKey(deps)
       return {
         activeKey: activeKey || null,
         tabs: owned.map((t) => ({
@@ -248,7 +257,7 @@ export async function applyBridgeAction(deps: AiBridgeDeps, action: BridgeAction
         throw new Error(`Refused: "${tab.title}" has unsaved changes. Only the user can close it.`)
       }
       deps.closeTab(tab.key)
-      return { closed: tab.key, activeKey: deps.activeKey() }
+      return { closed: tab.key, activeKey: bridgeActiveKey(deps) }
     }
 
     case 'show-result': {

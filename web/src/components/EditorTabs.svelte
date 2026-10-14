@@ -6,6 +6,7 @@
   import { confirmAction } from '../lib/desktop'
   import { stateView } from '../lib/state.svelte'
   import QueryEditor from './QueryEditor.svelte'
+  import ProcessesPanel from './ProcessesPanel.svelte'
 
   let { onrun }: { onrun: () => void } = $props()
   const tabs = useTabs()
@@ -15,6 +16,11 @@
     activeKey: tabs.state.activeKey, connectionId: conn.state.id,
   }))
   const active = $derived(snapshot.current.tabs.find((tab) => tab.key === snapshot.current.activeKey) ?? null)
+  let lastSqlKey = $state('')
+  $effect(() => { if (active && active.kind !== 'processes') lastSqlKey = active.key })
+  const sqlTab = $derived(active?.kind !== 'processes' ? active :
+    snapshot.current.tabs.find((tab) => tab.key === lastSqlKey && tab.kind !== 'processes') ??
+    snapshot.current.tabs.find((tab) => tab.kind !== 'processes'))
   let menu = $state<{ x: number; y: number; tabKey: string } | null>(null)
   let dragKey = $state<string | null>(null)
   let dropIndex = $state<number | null>(null)
@@ -109,6 +115,7 @@
     ondragover={(event) => { if (event.target === event.currentTarget) onDragOverStrip(event) }} ondrop={onDrop}>
     {#each snapshot.current.tabs as tab, index (tab.key)}
       <div class="tab" class:active={tab.key === snapshot.current.activeKey} class:agent-tab={tab.agentOpened === true || tab.aiMirror === true}
+        class:processes-tab={tab.kind === 'processes'}
         class:dragging={dragKey === tab.key} class:drop-before={dropIndex === index} class:drop-after={dropIndex === index + 1}
         draggable="true" onmousedown={() => { suppressClick = false }} onclick={() => onTabClick(tab.key)}
         oncontextmenu={(event) => openMenu(event, tab.key)} ondragstart={(event) => onDragStart(event, tab.key)}
@@ -118,9 +125,16 @@
       </div>
     {/each}
   </div>
-   {#if staleDdl}<div class="stale-ddl">This SQL is bound to an earlier or different connection session. Restarting the app also starts a new session, even for the same database. Re-open the object to refresh it; running it here is disabled.</div>{/if}
-  {#if active}<QueryEditor tab={active} {onrun} />
-  {:else}<div class="editor-empty"><p>No open tabs</p><button class="primary" onclick={() => tabs.newQuery()}>New query</button></div>{/if}
+   {#if staleDdl && active?.kind !== 'processes'}<div class="stale-ddl">This SQL is bound to an earlier or different connection session. Restarting the app also starts a new session, even for the same database. Re-open the object to refresh it; running it here is disabled.</div>{/if}
+  {#if sqlTab}
+    <div style:display={active?.kind === 'processes' ? 'none' : 'contents'}><QueryEditor tab={sqlTab} {onrun} /></div>
+  {/if}
+  {#each snapshot.current.tabs.filter((tab) => tab.kind === 'processes') as tab (tab.key)}
+    <div class="processes-host" style:display={active?.key === tab.key ? 'flex' : 'none'}>
+      <ProcessesPanel connectionId={tab.connectionId!} label={conn.state.label} />
+    </div>
+  {/each}
+  {#if !active}<div class="editor-empty"><p>No open tabs</p><button class="primary" onclick={() => tabs.newQuery()}>New query</button></div>{/if}
   {#if menu}
     <div class="tab-menu" style:left={`${menu.x}px`} style:top={`${menu.y}px`} onclick={(event) => event.stopPropagation()}>
       {#if menuTab?.source === 'file'}
@@ -135,3 +149,7 @@
     </div>
   {/if}
 </div>
+
+<style>
+  .processes-host { flex: 1; min-height: 0; }
+</style>
