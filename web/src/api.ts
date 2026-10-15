@@ -75,8 +75,8 @@ export const api = {
     return send('GET', `/api/connections/${id}/ddl?${params}`)
   },
 
-  query(id: string, sql: string, tabKey: string, transactionId: string | null): Promise<QueryResponse> {
-    return send('POST', `/api/connections/${id}/query`, { sql, maxRows: 500, tabKey, transactionId })
+  query(id: string, sql: string, tabKey: string, transactionId: string | null, explain?: 'explain' | 'analyze'): Promise<QueryResponse> {
+    return send('POST', `/api/connections/${id}/query`, { sql, maxRows: 500, tabKey, transactionId, explain })
   },
 
   cancel(id: string, tabKey: string): Promise<{ ok: boolean }> {

@@ -11,7 +11,7 @@
   import { formatSql } from '../lib/sqlformat'
   import { modelUri } from '../lib/modeluri'
   import { mapParams, parseParamValues } from '../lib/preparemap'
-  import { setFormatHandler, setInsertHandler, setParamsHandler, setSelectionGetter } from '../lib/formatbridge'
+  import { editorSelection, getActiveSelection, setFormatHandler, setInsertHandler, setParamsHandler, setSelectionGetter } from '../lib/formatbridge'
   import { stateView } from '../lib/state.svelte'
 
   let { tab, onrun }: { tab: EditorTab; onrun: () => void } = $props()
@@ -63,6 +63,7 @@
       const selection = editor?.getSelection()
       return model && selection && !selection.isEmpty() ? model.getValueInRange(selection) : undefined
     })
+    editor.onDidChangeCursorSelection(() => { editorSelection.text = getActiveSelection() ?? '' })
     mounted = true
     // Existing development-only automation surface; never expose in production.
     if (import.meta.env.DEV) {

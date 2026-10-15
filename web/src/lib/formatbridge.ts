@@ -1,3 +1,7 @@
+import { createState } from './state.svelte'
+
+export const editorSelection = createState({ text: '' })
+
 type Handler = (values?: string) => void
 type SelectionGetter = () => string | undefined
 type InsertHandler = (text: string) => boolean
@@ -25,6 +29,7 @@ export function triggerParamMap(values?: string): void {
 
 export function setSelectionGetter(g: SelectionGetter | null): void {
   selectionGetter = g
+  if (!g) editorSelection.text = ''
 }
 
 export function getActiveSelection(): string | undefined {

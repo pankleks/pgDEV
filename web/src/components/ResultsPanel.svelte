@@ -13,8 +13,10 @@
   import type { RowEditTarget } from '../lib/rowEditTarget'
   import ValueDialog from './ValueDialog.svelte'
   import RowEditDialog from './RowEditDialog.svelte'
+  import ExecutionPlan from './ExecutionPlan.svelte'
+  import { editorSelection } from '../lib/formatbridge'
 
-  let { onrun }: { onrun: () => void } = $props()
+  let { onrun, onexplain }: { onrun: () => void; onexplain: (mode: 'explain' | 'analyze') => void } = $props()
   const results = useResults()
   const conn = useConnection()
   const tabs = useTabs()
@@ -28,6 +30,7 @@
     const result = results.state.byTab[tabs.state.activeKey]
     return {
       activeKey: tabs.state.activeKey, connectionId: conn.state.id,
+      hasSelection: !!editorSelection.text.trim(),
       readOnly: tabs.state.tabs.find((tab) => tab.key === tabs.state.activeKey)?.readOnly,
       tabKeys: tabs.state.tabs.map((tab) => tab.key),
       gridKeys: Object.values(results.state.byTab).flatMap((result) => result.grids.map((grid) => grid.key)),
@@ -229,7 +232,7 @@
     <div class="subtabs">
       {#each result?.grids ?? [] as current, index (current.key)}
         <button class="subtab" class:active={!result?.showMessages && result?.grid?.key === current.key} aria-pressed={!result?.showMessages && result?.grid?.key === current.key}
-          title={`Statement ${current.statementNumber} · ${current.rows.length} loaded row(s)${current.limited ? ' · partial result' : ''}`} onclick={() => results.selectGrid(tabs.state.activeKey, current.key)}>Result {index + 1}</button>
+          title={`Statement ${current.statementNumber} · ${current.rows.length} loaded row(s)${current.limited ? ' · partial result' : ''}`} onclick={() => results.selectGrid(tabs.state.activeKey, current.key)}>{current.plan ? 'Plan' : `Result ${index + 1}`}</button>
       {/each}
       <button class="subtab" class:active={!result || result.showMessages} onclick={showMessagesView}>Messages</button>
     </div>
@@ -239,13 +242,15 @@
       <button class="btn-sm commit" disabled={result.running || result.loadingMore} title="Commit the open transaction" onclick={() => runControl('COMMIT')}>COMMIT</button>
       <button class="btn-sm danger" disabled={result.running || result.loadingMore} title="Roll back the open transaction" onclick={() => runControl('ROLLBACK')}>ROLLBACK</button>
     {/if}
-    {#if activeGrid}
+    {#if activeGrid && !activeGrid.plan}
       <button class="btn-sm" title="Copy loaded rows to clipboard (TSV)" disabled={result?.loadingMore} onclick={copyResult}><Copy size={13} /> COPY</button>
       <button class="btn-sm" title={activeGrid.limited ? 'Export only the retained rows to CSV (partial result)' : 'Export all rows to CSV'} disabled={result?.loadingMore} onclick={exportCsv}><Download size={13} /> {activeGrid.limited ? 'CSV (partial)' : 'CSV'}</button>
     {/if}
     {#if result?.running || result?.loadingMore}
       <button class="danger" disabled={result.cancelling} title="Cancel running query or row load" onclick={cancelRun}><Square size={11} /> {result.cancelling ? 'Canceling…' : result.loadingMore ? 'Cancel load' : 'Cancel'}</button>
     {:else}
+      <button class="btn-sm" disabled={!snapshot.current.connectionId || !snapshot.current.hasSelection || snapshot.current.readOnly} title="Show estimated plan for the selected SQL (one statement)" onclick={() => onexplain('explain')}>Explain</button>
+      <button class="btn-sm" disabled={!snapshot.current.connectionId || !snapshot.current.hasSelection || snapshot.current.readOnly} title="Execute the selected SQL and show actual timings (requires confirmation)" onclick={() => onexplain('analyze')}>Explain Analyze</button>
       <button class="primary run-btn" disabled={!snapshot.current.connectionId || result?.loadingMore || snapshot.current.readOnly} title="Run (F5 or Ctrl+Enter)" onclick={onrun}><Play size={13} /> Run</button>
     {/if}
   </div>
@@ -254,6 +259,8 @@
       {#if !result || !result.messages.length}<div class="msg dim">Run a query to see results (F5 or Ctrl+Enter in the editor).</div>{/if}
       {#each result?.messages ?? [] as message, index (index)}<div class={`msg ${message.level}`}>{message.text}</div>{/each}
     </div>
+  {:else if activeGrid?.plan}
+    {#key activeGrid.key}<ExecutionPlan plan={activeGrid.plan} />{/key}
   {:else if grid}
     <div class="grid">
       <div bind:this={bodyEl} class="grid-body" onscroll={() => { if (bodyEl) scrollTop = bodyEl.scrollTop }}>

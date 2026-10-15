@@ -123,6 +123,14 @@ try {
         return { status: 200, body: { ok: true } }
       }
       if (path.endsWith('/query/more')) return { status: 200, body: { rows: [['true', 'last']], rowCount: 1, truncated: false } }
+      if (path.endsWith('/query') && body.explain) return { status: 200, body: {
+        durationMs: 2, transactionId: null, transactionOpen: false,
+        results: [{ kind: 'data', columns: ['QUERY PLAN'], columnTypes: ['json'], rowCount: 1, truncated: false,
+          rows: [[JSON.stringify([{ Plan: { 'Node Type': 'Sort', 'Total Cost': 30, 'Plan Rows': 5,
+            Plans: [{ 'Node Type': 'Seq Scan', 'Relation Name': 'orders', 'Total Cost': 20, 'Plan Rows': 5 }] },
+            ...(body.explain === 'analyze' ? { 'Execution Time': 0.12 } : {}),
+          }])]] }],
+      } }
       if (path.endsWith('/query') && body.sql === 'SLOW') return new Promise((resolve) => { globalThis.__pgdevSvelteFixture.pendingQuery = resolve })
       if (path.endsWith('/query') && ['BEGIN', 'COMMIT', 'ROLLBACK'].includes(body.sql)) return { status: 200, body: {
         results: [{ kind: 'command', command: body.sql, rowCount: 0 }], durationMs: 1,
@@ -401,6 +409,36 @@ try {
 
   const resultsPanel = page.locator('.results')
   assert.equal(await resultsPanel.getAttribute('data-component'), 'svelte-results-panel')
+  await replaceSql('SELECT * FROM orders')
+  const explain = resultsPanel.getByRole('button', { name: 'Explain', exact: true })
+  const analyze = resultsPanel.getByRole('button', { name: 'Explain Analyze', exact: true })
+  assert.ok(await explain.isDisabled(), 'explain requires selected SQL')
+  await page.keyboard.press(`${modifier}+A`)
+  await explain.click()
+  const plan = resultsPanel.locator('[data-component="execution-plan"]')
+  await plan.locator('.svelte-flow__node').first().waitFor()
+  assert.equal(await plan.locator('.svelte-flow__node').count(), 2)
+  const positions = await plan.locator('.svelte-flow__node').evaluateAll((nodes) => nodes.map(node => ({
+    label: node.textContent, x: node.getBoundingClientRect().x,
+  })))
+  assert.ok(positions.find(node => node.label.includes('Seq Scan')).x < positions.find(node => node.label.includes('Sort')).x)
+  await plan.getByText('Seq Scan', { exact: true }).click()
+  await plan.getByLabel('Plan node details').waitFor()
+  await plan.getByRole('button', { name: 'JSON', exact: true }).click()
+  assert.ok((await plan.locator('.raw-plan').innerText()).includes('orders'))
+  await plan.getByRole('button', { name: 'Graph', exact: true }).click()
+  const explainCount = () => application.evaluate(() => globalThis.__pgdevSvelteFixture.requests.filter(request => request.body?.explain).length)
+  const beforeAnalyze = await explainCount()
+  await analyze.click()
+  assert.equal(await explainCount(), beforeAnalyze, 'declining Analyze must not execute SQL')
+  await application.evaluate(() => { globalThis.__pgdevSvelteFixture.confirm = true })
+  await analyze.click()
+  await plan.getByText('Execution: 0.12 ms', { exact: true }).waitFor()
+  assert.equal(await explainCount(), beforeAnalyze + 1)
+  const explainRequest = await application.evaluate(() => globalThis.__pgdevSvelteFixture.requests.filter(request => request.body?.explain).at(-1))
+  assert.equal(explainRequest.body.sql, 'SELECT * FROM orders')
+  assert.equal(explainRequest.body.explain, 'analyze')
+  await application.evaluate(() => { globalThis.__pgdevSvelteFixture.confirm = false })
   await replaceSql('SLOW')
   await resultsPanel.getByTitle('Run (F5 or Ctrl+Enter)', { exact: true }).click()
   await resultsPanel.getByTitle('Cancel running query or row load', { exact: true }).click()

@@ -10,6 +10,7 @@ import type { TransactionState } from '../schema-types.js'
 // validates input, maps outcomes to status codes, and serializes errors.
 
 interface QueryBody {
+  explain?: unknown
   sql?: string
   maxRows?: number
   tabKey?: string
@@ -47,11 +48,12 @@ function errorReply(reply: FastifyReply, error: BatchError, transaction?: Transa
 export async function queryRoutes(app: FastifyInstance) {
   app.post('/api/connections/:id/query', async (req, reply) => {
     const { id } = req.params as { id: string }
-    const { sql, maxRows, tabKey, transactionId } = (req.body ?? {}) as QueryBody
+    const { sql, maxRows, tabKey, transactionId, explain } = (req.body ?? {}) as QueryBody
+    if (explain !== undefined && explain !== 'explain' && explain !== 'analyze') return reply.code(400).send({ error: 'Invalid explain mode' })
     if (typeof sql !== 'string' || !sql.trim()) return reply.code(400).send({ error: 'Empty query' })
     const cap = parseMaxRows(maxRows)
     if (cap === null) return reply.code(400).send({ error: 'maxRows must be an integer from 1 to 10000' })
-    const outcome = await runBatch(id, tabKey ?? '', sql, cap, { transactionId: parseTransactionId(transactionId) })
+    const outcome = await runBatch(id, tabKey ?? '', sql, cap, { transactionId: parseTransactionId(transactionId), explain })
     const transaction = transactionState(sessionKey(id, tabKey ?? ''))
     if (outcome.kind === 'error') return errorReply(reply, outcome.error, transaction)
     return { results: outcome.results, durationMs: outcome.durationMs, ...transaction }

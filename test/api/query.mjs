@@ -66,6 +66,35 @@ const id = conn.body.id
 ok('connection id returned', typeof id === 'string' && id.length > 10, id)
 if (!id) { console.log('cannot continue'); process.exit(1) }
 
+console.log('\n== graphical explain execution ==')
+{
+  const query = (sql, extra = {}) => call('POST', `/api/connections/${id}/query`, { sql, tabKey: 'explain', ...extra })
+  await query('CREATE TABLE explain_fixture (value integer)')
+  const estimated = await query('INSERT INTO explain_fixture VALUES (1); -- trailing comment', { explain: 'explain' })
+  eq('estimated explain succeeds', estimated.status, 200)
+  const estimatedPlan = JSON.parse(estimated.body.results[0].rows[0][0])[0]
+  ok('estimated JSON includes a plan', typeof estimatedPlan.Plan['Node Type'] === 'string')
+  eq('estimate does not insert', (await query('SELECT count(*) FROM explain_fixture')).body.results[0].rows[0][0], '0')
+  const multi = await query('SELECT 1; INSERT INTO explain_fixture VALUES (99)', { explain: 'analyze' })
+  eq('multiple statements are rejected', multi.status, 400)
+  eq('invalid mode is rejected', (await query('SELECT 1', { explain: 'invalid' })).status, 400)
+  const analyzed = await query('INSERT INTO explain_fixture VALUES (2)', { explain: 'analyze' })
+  eq('analyze succeeds', analyzed.status, 200)
+  const actualPlan = JSON.parse(analyzed.body.results[0].rows[0][0])[0]
+  ok('analyze includes execution timing', typeof actualPlan['Execution Time'] === 'number')
+  eq('analyze executes exactly once', (await query('SELECT count(*) FROM explain_fixture')).body.results[0].rows[0][0], '1')
+  const begun = await query('BEGIN')
+  const transactionId = begun.body.transactionId
+  const inTransaction = await query('INSERT INTO explain_fixture VALUES (3)', { explain: 'analyze', transactionId })
+  eq('analyze retains the manual transaction', inTransaction.body.transactionId, transactionId)
+  const invalidInTransaction = await query('SELECT 1; SELECT 2', { explain: 'explain', transactionId })
+  eq('multiple statements in manual transaction are rejected', invalidInTransaction.status, 400)
+  eq('rejection retains the transaction', invalidInTransaction.body.transactionId, transactionId)
+  await query('ROLLBACK', { transactionId })
+  eq('manual rollback undoes analyzed insert', (await query('SELECT count(*) FROM explain_fixture')).body.results[0].rows[0][0], '1')
+  await query('DROP TABLE explain_fixture')
+}
+
 console.log('\n== GET /schema ==')
 const schema = await call('GET', `/api/connections/${id}/schema`)
 eq('schema status', schema.status, 200)

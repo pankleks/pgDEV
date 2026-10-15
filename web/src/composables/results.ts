@@ -2,15 +2,17 @@ import { createState } from '../lib/state.svelte'
 import { api, type ApiError } from '../api'
 import { confirmAction } from '../lib/desktop'
 import type { DataResult, FetchMoreResponse, QueryResponse, TransactionState } from '../types'
+import { parseExplainPlan, type ExplainPlan } from '../lib/explain'
 
 /** The slice of the API the results state machine drives; tests inject a fake. */
 export interface ResultsApi {
-  query(connectionId: string, sql: string, tabKey: string, transactionId: string | null): Promise<QueryResponse>
+  query(connectionId: string, sql: string, tabKey: string, transactionId: string | null, explain?: 'explain' | 'analyze'): Promise<QueryResponse>
   fetchMore(connectionId: string, tabKey: string): Promise<FetchMoreResponse>
   cancel(connectionId: string, tabKey: string): Promise<{ ok: boolean }>
 }
 
 export interface GridResult extends DataResult {
+  plan?: ExplainPlan
   key: string
   statementNumber: number
   /** Set when a file-stream export drained the remaining cursor: the grid
@@ -164,7 +166,7 @@ export function createResults(api: ResultsApi) {
     }
   }
 
-  async function run(tabKey: string, connectionId: string, sql: string) {
+  async function run(tabKey: string, connectionId: string, sql: string, explain?: 'explain' | 'analyze') {
     const r = ensure(tabKey)
     if (!sql.trim() || r.running || r.loadingMore) return
     const operation = ++r.operation
@@ -174,9 +176,9 @@ export function createResults(api: ResultsApi) {
     r.grids = []
     r.showMessages = false
     r.messages = [{ text: 'Running query…', level: 'info' }]
-    r.sentSql = sql
+    r.sentSql = explain ? null : sql
     try {
-      const res = await api.query(connectionId, sql, tabKey, r.transactionId)
+      const res = await api.query(connectionId, sql, tabKey, r.transactionId, explain)
       if (!isCurrent(tabKey, r, operation)) return
       updateTransaction(tabKey, res)
       const multi = res.results.length > 1
@@ -193,7 +195,8 @@ export function createResults(api: ResultsApi) {
             level: 'info',
           })
         } else {
-          grids.push({ ...item, key: `grid-${tabKey}-${idx}`, statementNumber: idx + 1 })
+          const plan = explain ? parseExplainPlan(item.rows[0]?.[0]) : undefined
+          grids.push({ ...item, plan, key: `grid-${tabKey}-${idx}`, statementNumber: idx + 1 })
           const truncated = item.truncated
             ? ` (showing first ${item.rows.length} — use Load more)`
             : item.limited
@@ -213,7 +216,7 @@ export function createResults(api: ResultsApi) {
       if (!isCurrent(tabKey, r, operation)) return
       const err = e as ApiError
       updateTransaction(tabKey, err)
-      const info = describeQueryError(err.message, err.code, r.cancelling, err.position)
+      const info = describeQueryError(err.message, err.code, r.cancelling, explain ? null : err.position)
       r.messages = [{ text: info.text, level: info.level, position: info.position }]
       r.selectedKey = null
       r.grids = []

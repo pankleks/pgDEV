@@ -10,6 +10,7 @@ import { pgErrorMessage } from './pgerror.js'
 import { plainSelectTable } from './selectshape.js'
 import { fetchRowEditInfo, editableGrid } from './catalog/rowedit.js'
 import { typeLength } from './typelength.js'
+import { explainSql } from './explain.js'
 import type { EditableGrid } from './schema-types.js'
 import {
   transactionControl,
@@ -455,6 +456,7 @@ async function runOnTransactionSession(
 
 /** Options for one SQL batch (see routes/query.ts and routes/ai.ts). */
 export interface BatchOptions {
+  explain?: 'explain' | 'analyze'
   /** Expected transaction session id; null explicitly requires none. */
   transactionId?: string | null
   /** False for one-shot batches (agent reads): every result is bounded and no
@@ -486,6 +488,10 @@ export async function runBatch(
   // instead of checking out a new one.
   const active = getSession(runKey)
   if (active?.kind === 'transaction') {
+    if (options.explain) {
+      try { sql = explainSql(sql, options.explain, standardConformingStrings(active.client)) }
+      catch (err) { return { kind: 'error', error: sqlError(err) } }
+    }
     if (!nextStatement(sql, 0, standardConformingStrings(active.client))) return { kind: 'error', error: { kind: 'empty' } }
     return runOnTransactionSession(connId, runKey, sql, cap)
   }
@@ -522,6 +528,7 @@ export async function runBatch(
   setRunning(runKey, client)
   try {
     await observeSqlState(client)
+    if (options.explain) sql = explainSql(sql, options.explain, standardConformingStrings(client))
     const statements = splitStatementsWithOffsets(sql, {
       standardConformingStrings: standardConformingStrings(client),
     }).map((part) => part.text)
@@ -544,7 +551,7 @@ export async function runBatch(
     // Earlier results are bounded and drained. Manual transactions keep the
     // transaction, not paging state. One-shot batches (agent reads) never page:
     // their rows are mirrored to a tab whose key cannot reach this session.
-    const useCursors = pageable && !autocommit && !manual && statements.every(canUseCursor)
+    const useCursors = !options.explain && pageable && !autocommit && !manual && statements.every(canUseCursor)
     const { mapped, openCursor, fields } = await executeStatements(client, sql, cap, useCursors, txn)
     let paging: PagingQuery | null = null
     if (openCursor) {

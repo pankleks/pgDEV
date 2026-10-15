@@ -164,7 +164,7 @@
     paramValuesText = ''
     triggerParamMap(text || undefined)
   }
-  function runActive() {
+  async function runActive(explain?: 'explain' | 'analyze') {
     if (!conn.state.id) { toast.show('Connect to a database first'); conn.state.dialog = true; return }
     const tab = tabs.state.tabs.find((tab) => tab.key === tabs.state.activeKey)
     if (!tab) { toast.show('No active tab'); return }
@@ -180,9 +180,16 @@
       return
     }
     const selected = getActiveSelection()
+    if (explain && !selected?.trim()) { toast.show('Select one SQL statement to explain'); return }
     const sql = selected?.trim() ? selected : tab.content
     if (!sql.trim()) { toast.show('Nothing to run'); return }
-    void results.run(tab.key, conn.state.id, sql)
+    const connectionId = conn.state.id
+    if (explain === 'analyze') {
+      const operation = existing?.operation
+      if (!await confirmAction('Explain Analyze executes the selected SQL. It may modify data or cause other side effects, even for SELECT. Continue?')) return
+      if (conn.state.id !== connectionId || tabs.state.activeKey !== tab.key || results.state.byTab[tab.key]?.operation !== operation) return
+    }
+    void results.run(tab.key, connectionId, sql, explain)
   }
 </script>
 
@@ -219,9 +226,9 @@
     <aside class="sidebar" style:display={sideCollapsed ? 'none' : undefined} style:width={`${sideW}px`}><ObjectBrowser /></aside>
     {#if !sideCollapsed}<div class="drag-v" onpointerdown={(event) => startDrag(event, 'side')}></div>{/if}
     <main class="pgdev-main">
-      <section class="editor-area"><EditorTabs onrun={runActive} /></section>
+      <section class="editor-area"><EditorTabs onrun={() => runActive()} /></section>
       <div class="drag-h" style:display={processesActive ? 'none' : undefined} onpointerdown={(event) => startDrag(event, 'results')}></div>
-      <section class="results-area" style:display={processesActive ? 'none' : undefined} style:height={`${resultsH}px`}><ResultsPanel onrun={runActive} /></section>
+      <section class="results-area" style:display={processesActive ? 'none' : undefined} style:height={`${resultsH}px`}><ResultsPanel onrun={() => runActive()} onexplain={(mode) => runActive(mode)} /></section>
     </main>
   </div>
   {#if conn.state.dialog}<ConnectDialog />{/if}
