@@ -35,7 +35,7 @@ export function parseExplainPlan(value: unknown): ExplainPlan {
   return plan as ExplainPlan
 }
 
-export type PlanGraphNode = Node<{ plan: PlanNode; share: number; own: number; metric: 'time' | 'cost' }, 'plan'>
+export type PlanGraphNode = Node<{ plan: PlanNode; share: number; own: number; metric: 'time' | 'cost'; heat: 'none' | 'normal' | 'warm' | 'hot' }, 'plan'>
 
 /** PostgreSQL lists parents first; edges point from child producers to consumers. */
 export function planGraph(plan: ExplainPlan): { nodes: PlanGraphNode[]; edges: Edge[] } {
@@ -51,12 +51,12 @@ export function planGraph(plan: ExplainPlan): { nodes: PlanGraphNode[]; edges: E
   while (pending.length) {
     const entry = pending.pop()!
     const id = String(nodes.length)
-    graph.setNode(id, { width: 230, height: 136 })
+    graph.setNode(id, { width: 230, height: 148 })
     // ponytail: child subtraction approximates own work; overlapping parallel/async nodes need profiler data for exact attribution.
     const own = Math.max(0, inclusive(entry.plan) - (entry.plan.Plans ?? []).reduce((sum, child) => sum + inclusive(child), 0))
     nodes.push({
       id, type: 'plan', position: { x: 0, y: 0 },
-      data: { plan: entry.plan, share: 0, own, metric },
+      data: { plan: entry.plan, share: 0, own, metric, heat: 'none' },
     })
     if (entry.parent !== undefined) {
       graph.setEdge(id, entry.parent)
@@ -70,10 +70,15 @@ export function planGraph(plan: ExplainPlan): { nodes: PlanGraphNode[]; edges: E
   }
   dagre.layout(graph)
   const total = nodes.reduce((sum, node) => sum + node.data.own, 0)
+  const ranked = nodes.map(node => node.data.own).filter(own => own > 0).sort((a, b) => b - a)
+  // Round up for small plans; ties at a cutoff receive the same color.
+  const hot = ranked[Math.ceil(ranked.length * 0.1) - 1] ?? Infinity
+  const warm = ranked[Math.ceil(ranked.length * 0.3) - 1] ?? Infinity
   for (const node of nodes) {
     const position = graph.node(node.id)
-    node.position = { x: position.x - 115, y: position.y - 68 }
+    node.position = { x: position.x - 115, y: position.y - 74 }
     node.data.share = total > 0 ? node.data.own / total : 0
+    node.data.heat = node.data.own === 0 ? 'none' : node.data.own >= hot ? 'hot' : node.data.own >= warm ? 'warm' : 'normal'
   }
   return { nodes, edges }
 }

@@ -59,6 +59,31 @@ test('own-time shares subtract children, account for loops and total 100%', () =
   assert.ok(nodes.every(node => node.data.metric === 'time'))
 })
 
+test('heat ranks nonzero nodes across the plan without changing bar shares', () => {
+  for (const metric of ['cost', 'time']) {
+    const value = own => metric === 'time'
+      ? { 'Actual Total Time': own, 'Actual Loops': 1 }
+      : { 'Total Cost': own }
+    const { nodes } = planGraph({ Plan: { 'Node Type': 'Append', ...value(55),
+      Plans: Array.from({ length: 10 }, (_, i) => ({ 'Node Type': 'Seq Scan', ...value(10 - i) })),
+    } })
+    assert.deepEqual(nodes.map(node => node.data.heat), ['none', 'hot', 'warm', 'warm', ...Array(7).fill('normal')])
+    assert.equal(nodes[1].data.share, 10 / 55, 'a node below the old 25% cutoff is still hot')
+    assert.ok(Math.abs(nodes.reduce((sum, node) => sum + node.data.share, 0) - 1) < 1e-12)
+  }
+})
+
+test('heat handles zero totals, small plans and ties consistently', () => {
+  assert.equal(planGraph({ Plan: { 'Node Type': 'Result', 'Total Cost': 0 } }).nodes[0].data.heat, 'none')
+  assert.equal(planGraph({ Plan: { 'Node Type': 'Result', 'Total Cost': 1 } }).nodes[0].data.heat, 'hot')
+  const { nodes } = planGraph({ Plan: { 'Node Type': 'Append', 'Total Cost': 21, Plans: [
+    { 'Node Type': 'Seq Scan', 'Total Cost': 10 },
+    { 'Node Type': 'Seq Scan', 'Total Cost': 10 },
+    { 'Node Type': 'Seq Scan', 'Total Cost': 1 },
+  ] } })
+  assert.deepEqual(nodes.map(node => node.data.heat), ['none', 'hot', 'hot', 'normal'])
+})
+
 test('overlapping timings are clamped and normalized; zero totals never divide by zero', () => {
   const { nodes } = planGraph({ Plan: { 'Node Type': 'Gather', 'Actual Total Time': 4, 'Actual Loops': 1,
     Plans: [{ 'Node Type': 'Parallel Scan', 'Actual Total Time': 3, 'Actual Loops': 2 }],

@@ -418,6 +418,9 @@ try {
   const plan = resultsPanel.locator('[data-component="execution-plan"]')
   await plan.locator('.svelte-flow__node').first().waitFor()
   assert.equal(await plan.locator('.svelte-flow__node').count(), 2)
+  assert.equal(await plan.locator('.node-icon svg').count(), 2)
+  assert.notEqual(await plan.locator('.node-icon').nth(0).innerHTML(), await plan.locator('.node-icon').nth(1).innerHTML(), 'sort and scan nodes have distinct icons')
+  assert.equal(await plan.getByRole('meter').first().evaluate(element => getComputedStyle(element).height), '10px')
   const positions = await plan.locator('.svelte-flow__node').evaluateAll((nodes) => nodes.map(node => ({
     label: node.textContent, x: node.getBoundingClientRect().x,
   })))

@@ -47,7 +47,7 @@
       {/if}
     </div>
     <div class="plan-legend" title="Own work subtracts child totals and clamps negatives to zero. Shares are normalized to 100% when measurable; parallel/async work and rounding make attribution approximate, not wall-clock percentages.">
-      Bars: {graph.nodes[0]?.data.metric === 'time' ? 'approximate own-time share (all loops)' : 'estimated own-cost share, not time'} · Sum: {graph.nodes.some(node => node.data.own > 0) ? '100%' : 'unavailable (zero totals)'} · Amber ≥25% · Node times/rows above are per-loop and include children
+      Bars: {graph.nodes[0]?.data.metric === 'time' ? 'approximate own-time share (all loops)' : 'estimated own-cost share, not time'} · Sum: {graph.nodes.some(node => node.data.own > 0) ? '100%' : 'unavailable (zero totals)'} · Nonzero nodes: red = heaviest 10%, orange = next 20%, blue = rest; gray = zero · Groups round up; ties share a color · Node times/rows above are per-loop and include children
     </div>
   {/if}
 </div>
