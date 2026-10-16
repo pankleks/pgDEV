@@ -70,7 +70,10 @@ Tables, plain views, sequences and functions open **editable**; materialized vie
 * Double-click a cell to inspect its raw value (pretty-printed for JSON/JSONB, with a character count) — the dialog's COPY button is the copy path, and a successful copy closes it.
 * Large results load in pages without holding transactions or locks between clicks. “Load more” reruns the SELECT and skips previously loaded rows; concurrent changes can cause skipped or duplicated rows. Use a stable `ORDER BY`. Each page may rerun expensive work; later pages are read-only and cannot repeat database writes from SELECT functions. Explicit `BEGIN` transactions remain open until you finish them.
 * Statement timeout (configurable, applies to new connections) plus explicit cancellation bound runaway queries.
-* Select one SQL statement and choose **Explain** for an estimated plan, or **Explain Analyze** for actual timings and buffer usage. Analyze requires confirmation: it executes the selected SQL and may modify data. The **Plan** view shows a left-to-right graph with zoom/fit controls, clickable node details, and copyable JSON. Bars show approximate own-time shares (all loops, child time subtracted), normalized to 100%; estimated plans use own-cost shares instead. Parallel work can overlap, so these are not exact wall-clock percentages. Raw node timings include children and are per-loop.
+* **Execution plans** — visual Explain / Explain Analyze. Analyze executes SQL and may modify data.
+
+  ![Execution plan](docs/images/manual/11-executon-plan.png)
+
 * Manual transactions can span runs with transaction-id pinning — a conflicting tab gets a 409 rather than joining the wrong transaction. Statements requiring autocommit (`VACUUM`, …) bypass the transaction path.
 * Run stays disabled while disconnected, while a query is in flight, or in the read-only `AI` log tab.
 
@@ -91,6 +94,10 @@ Right-click → **Edit…** covers ordinary and partitioned-parent tables only (
 Rename, retype (length/precision/scale), nullability, defaults, add/drop columns, table/column comments. **Generate DDL** emits only the changed `ALTER` clauses in apply-safe order (drops → renames → alters → adds → comments) for review. No-ops, locked/PK columns and stale fingerprints (409) are refused with an explanation.
 
 # 9. Helpers
+
+* **Processes** — inspect sessions, cancel queries, or terminate connections.
+
+  ![Processes](docs/images/manual/10-processes.png)
 
 * `Ctrl+Shift+F` formats the selection, or the whole tab when nothing is selected.
 * The sliders action builds a `PREPARE` / `EXECUTE` template from `$N` parameters; optional values ride along as a JSON array (e.g. `[1, "text", null]`).
