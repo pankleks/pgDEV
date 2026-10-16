@@ -60,6 +60,11 @@ export const api = {
     return send('POST', '/api/connections', config)
   },
 
+  discoverDatabases(config: ConnectionConfig): Promise<{ databases: string[] }> {
+    const { host, port, user, password, ssl } = config
+    return send('POST', '/api/connections/discover', { host, port, user, password, ssl })
+  },
+
   disconnect(id: string): Promise<void> {
     return send<unknown>('DELETE', `/api/connections/${id}`).then(() => undefined)
   },

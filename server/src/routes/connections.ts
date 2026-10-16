@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify'
-import { Pool } from 'pg'
+import { Client, Pool } from 'pg'
 import { randomUUID } from 'node:crypto'
 import { setPool, setCatalogPool, removePool } from '../pools.js'
 import { pgErrorMessage } from '../pgerror.js'
@@ -19,7 +19,52 @@ interface ConnectBody {
 
 const DEFAULT_STATEMENT_TIMEOUT_MS = 30000
 
+function connectionConfig(b: ConnectBody): Record<string, unknown> {
+  if (b.connectionString) return { connectionString: b.connectionString }
+  return {
+    host: b.host || 'localhost', port: b.port || 5432, database: b.database,
+    user: b.user, password: b.password,
+    // The parameter-form SSL flag is authoritative, including self-signed certificates.
+    ssl: b.ssl ? { rejectUnauthorized: false } : false,
+  }
+}
+
 export async function connectionRoutes(app: FastifyInstance) {
+  app.post('/api/connections/discover', {
+    schema: {
+      body: {
+        type: 'object', required: ['host', 'port', 'user'], additionalProperties: false,
+        properties: {
+          host: { type: 'string', minLength: 1, maxLength: 1024 },
+          port: { type: 'integer', minimum: 1, maximum: 65535 },
+          user: { type: 'string', minLength: 1, maxLength: 1024 },
+          password: { type: 'string', maxLength: 65536 },
+          ssl: { type: 'boolean' },
+        },
+      },
+    },
+  }, async (req, reply) => {
+    const client = new Client({
+      ...connectionConfig(req.body as ConnectBody), database: 'postgres',
+      application_name: 'pgDEV discovery', connectionTimeoutMillis: 10000, statement_timeout: 10000,
+    })
+    // A lost standalone connection must not become an unhandled error event.
+    client.on('error', () => {})
+    try {
+      await client.connect()
+      const result = await client.query<{ name: string }>(`
+        SELECT datname AS name FROM pg_database
+        WHERE NOT datistemplate AND datallowconn
+          AND has_database_privilege(oid, 'CONNECT')
+        ORDER BY datname`)
+      return { databases: result.rows.map((row) => row.name) }
+    } catch (err) {
+      return reply.code(400).send({ error: `Could not discover databases via "postgres": ${pgErrorMessage(err)}. You can still enter a database name manually.` })
+    } finally {
+      await client.end().catch(() => {})
+    }
+  })
+
   app.post('/api/connections', async (req, reply) => {
     const b = req.body as ConnectBody
     // Statement timeout arrives in seconds from the settings UI; absent means
@@ -32,20 +77,7 @@ export async function connectionRoutes(app: FastifyInstance) {
       }
       statementTimeoutMs = s * 1000
     }
-    const config: Record<string, unknown> = b.connectionString
-      ? { connectionString: b.connectionString }
-      : {
-          host: b.host || 'localhost',
-          port: b.port || 5432,
-          database: b.database,
-          user: b.user,
-          password: b.password,
-        }
-    if (!b.connectionString) {
-      // The parameter-form SSL flag is authoritative. Self-signed server
-      // certificates are allowed when SSL is enabled.
-      config.ssl = b.ssl ? { rejectUnauthorized: false } : false
-    }
+    const config = connectionConfig(b)
     config.max = 5
     config.statement_timeout = statementTimeoutMs
     // Tabs can hold a session client while paging large results; fail fast

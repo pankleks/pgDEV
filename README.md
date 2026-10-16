@@ -72,7 +72,7 @@ Tables, plain views, sequences and functions open **editable**; materialized vie
 * Statement timeout (configurable, applies to new connections) plus explicit cancellation bound runaway queries.
 * **Execution plans** — visual Explain / Explain Analyze. Analyze executes SQL and may modify data.
 
-  ![Execution plan](docs/images/manual/11-executon-plan.png)
+  ![Execution plan](docs/images/manual/11-execution-plan.png)
 
 * Manual transactions can span runs with transaction-id pinning — a conflicting tab gets a 409 rather than joining the wrong transaction. Statements requiring autocommit (`VACUUM`, …) bypass the transaction path.
 * Run stays disabled while disconnected, while a query is in flight, or in the read-only `AI` log tab.

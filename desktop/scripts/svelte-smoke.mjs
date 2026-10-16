@@ -62,7 +62,7 @@ try {
   await application.evaluate(({ ipcMain, dialog }, value) => {
     globalThis.__pgdevSvelteFixture = {
       requests: [], confirm: false, rejectUpdate: true, tableLoadError: false,
-      tableSubmitError: false, tableDdl: null,
+      tableSubmitError: false, tableDdl: null, discoveryError: false,
     }
     dialog.showMessageBox = async () => ({ response: globalThis.__pgdevSvelteFixture.confirm ? 1 : 0, checkboxChecked: false })
     ipcMain.removeHandler('pgdev:request')
@@ -72,6 +72,9 @@ try {
         if (body.database === 'failure') return { status: 400, body: { error: 'Fixture connection refused' } }
         return { status: 200, body: { id: `svelte-fixture-${globalThis.__pgdevSvelteFixture.requests.length}`, pgVersion: 'fixture' } }
       }
+      if (path === '/api/connections/discover') return globalThis.__pgdevSvelteFixture.discoveryError
+        ? { status: 400, body: { error: 'Fixture discovery failed. Enter a database name manually.' } }
+        : { status: 200, body: { databases: ['fixture', 'postgres'] } }
       if (path.endsWith('/schema')) return { status: 200, body: {
         tables: [{
           schema: 'public', name: 'fixture', oid: '42',
@@ -283,6 +286,28 @@ try {
   await connection.getByTitle('Hide password', { exact: true }).click()
   assert.equal(await password.getAttribute('type'), 'password')
   await connection.getByRole('checkbox', { name: /^SSL/ }).check()
+  await connection.getByRole('button', { name: 'Discover databases', exact: true }).click()
+  await connection.getByRole('status').filter({ hasText: 'Found 2 databases' }).waitFor()
+  const discoveredDatabases = connection.getByRole('group', { name: 'Discovered databases', exact: true })
+  assert.ok(await discoveredDatabases.isVisible())
+  assert.deepEqual(await discoveredDatabases.getByRole('button').allTextContents(), ['fixture', 'postgres'])
+  assert.equal(await connection.getByLabel('Database', { exact: true }).inputValue(), 'failure', 'discovery preserves the manually entered database')
+  await discoveredDatabases.getByRole('button', { name: 'fixture', exact: true }).click()
+  assert.equal(await connection.getByLabel('Database', { exact: true }).inputValue(), 'fixture')
+  assert.equal(await discoveredDatabases.getByRole('button', { name: 'fixture', exact: true }).getAttribute('aria-pressed'), 'true')
+  await connection.getByLabel('Database', { exact: true }).fill('custom-database')
+  assert.equal(await discoveredDatabases.getByRole('button').count(), 2, 'manual text must not filter the discovered database list')
+  const discoveryRequest = await application.evaluate(() => globalThis.__pgdevSvelteFixture.requests.find(request => request.path === '/api/connections/discover').body)
+  assert.deepEqual(discoveryRequest, { host: 'fixture-host', port: 5444, user: 'fixture-user', password: 'fixture-secret', ssl: true })
+  assert.equal(await application.evaluate(() => globalThis.__pgdevSvelteFixture.requests.filter(request => request.path === '/api/connections').length), 0)
+  await connection.getByLabel('Host', { exact: true }).fill('other-host')
+  await discoveredDatabases.waitFor({ state: 'detached' })
+  await application.evaluate(() => { globalThis.__pgdevSvelteFixture.discoveryError = true })
+  await connection.getByRole('button', { name: 'Discover databases', exact: true }).click()
+  await connection.getByRole('alert').filter({ hasText: 'Fixture discovery failed' }).waitFor()
+  await connection.getByLabel('Host', { exact: true }).fill('fixture-host')
+  await application.evaluate(() => { globalThis.__pgdevSvelteFixture.discoveryError = false })
+  await connection.getByLabel('Database', { exact: true }).fill('failure')
   await connection.getByRole('checkbox', { name: /^Remember on this device/ }).uncheck()
   await connection.getByRole('button', { name: 'Connect', exact: true }).click()
   await connection.getByText('Fixture connection refused', { exact: true }).waitFor()
@@ -312,6 +337,7 @@ try {
   const savedConnection = connection.locator('.saved-item')
   await savedConnection.focus()
   await page.keyboard.press('Enter')
+  assert.equal(await savedConnection.getAttribute('aria-pressed'), 'true', 'keyboard selection highlights the chosen connection')
   assert.equal(await connection.getByRole('tab', { name: 'Connection string', exact: true }).getAttribute('aria-selected'), 'true')
   assert.equal(await connection.getByLabel('URL', { exact: true }).inputValue(), 'postgres://fixture@localhost/fixture')
   await connection.getByRole('button', { name: 'Clear all', exact: true }).click()
@@ -675,6 +701,11 @@ try {
   await page.locator('.conn-badge').click()
   await connection.locator('.saved-seq').waitFor()
   assert.equal(await connection.locator('.saved-seq').innerText(), '#2', 'forgotten connection numbers must not be reused')
+  const currentConnection = connection.locator('.saved-item.current')
+  assert.equal(await currentConnection.getAttribute('aria-pressed'), 'false', 'being connected does not select the row')
+  assert.equal(await currentConnection.locator('.saved-icon').evaluate(element => getComputedStyle(element).color), 'rgb(137, 209, 133)', 'connected icon stays green')
+  await currentConnection.click()
+  assert.equal(await currentConnection.getAttribute('aria-pressed'), 'true', 'clicking selects the connection independently of connected status')
   await application.evaluate(() => { globalThis.__pgdevSvelteFixture.confirm = true })
   await connection.getByRole('button', { name: 'Clear all', exact: true }).click()
   await connection.locator('.saved-seq').waitFor({ state: 'detached' })

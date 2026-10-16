@@ -1674,13 +1674,13 @@ body.dragging-results {
           border-color: var(--accent);
         }
 
-        &.current {
+        &.selected {
           border-color: var(--accent);
           background: rgba(79, 156, 249, 0.09);
+        }
 
-          .saved-icon {
-            color: var(--ok);
-          }
+        &.current .saved-icon {
+          color: var(--ok);
         }
 
         /* Same footprint as the editor-tab close button (X at 14px, 0 4px
@@ -1760,7 +1760,7 @@ body.dragging-results {
         font-size: 12px;
         color: var(--text-dim);
 
-        > span:first-child {
+        > span:first-child, > label:first-child {
           font-weight: 600;
         }
       }
@@ -2572,4 +2572,3 @@ body.dragging-results {
     }
   }
 }
-

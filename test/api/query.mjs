@@ -66,6 +66,18 @@ const id = conn.body.id
 ok('connection id returned', typeof id === 'string' && id.length > 10, id)
 if (!id) { console.log('cannot continue'); process.exit(1) }
 
+console.log('\n== database discovery without changing the active connection ==')
+{
+  const discovery = await call('POST', '/api/connections/discover', {
+    host: base.host, port: base.port, user: base.user, password: base.password, ssl: false,
+  })
+  eq('discovery succeeds without a database name', discovery.status, 200)
+  ok('discovery includes the accessible scratch database', discovery.body.databases.includes(DB))
+  ok('template databases are excluded', !discovery.body.databases.includes('template0') && !discovery.body.databases.includes('template1'))
+  const current = await call('POST', `/api/connections/${id}/query`, { sql: 'SELECT current_database()', tabKey: 'discovery-check' })
+  eq('active connection is unchanged', current.body.results[0].rows[0][0], DB)
+}
+
 console.log('\n== graphical explain execution ==')
 {
   const query = (sql, extra = {}) => call('POST', `/api/connections/${id}/query`, { sql, tabKey: 'explain', ...extra })

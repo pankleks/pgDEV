@@ -1,5 +1,7 @@
 <script lang="ts">
-  import { CodeXml, Database, Eye, EyeOff, Lock, Plug, Power, Server, SlidersHorizontal, User, X } from '@lucide/svelte'
+  import { onDestroy } from 'svelte'
+  import { Check, CodeXml, Database, Eye, EyeOff, Lock, Plug, Power, Search, Server, SlidersHorizontal, User, X } from '@lucide/svelte'
+  import { api } from '../api'
   import { useConnection, type SavedConnection } from '../composables/connection'
   import { confirmAction } from '../lib/desktop'
   import { stateView } from '../lib/state.svelte'
@@ -11,10 +13,46 @@
   let mode = $state<'params' | 'url'>('params')
   let remember = $state(true)
   let showPassword = $state(false)
+  let selectedLabel = $state<string | null>(null)
   let url = $state('')
   const form = $state<ConnectionConfig>({
     host: 'localhost', port: 5432, database: '', user: 'postgres', password: '', ssl: false,
   })
+  let databases = $state<string[]>([])
+  let discovering = $state(false)
+  let discovered = $state(false)
+  let discoveryError = $state('')
+  let discoveryGeneration = 0
+  const canDiscover = $derived(!!form.host?.trim() && !!form.user?.trim() &&
+    Number.isInteger(form.port) && Number(form.port) >= 1 && Number(form.port) <= 65535)
+  $effect(() => {
+    void [mode, form.host, form.port, form.user, form.password, form.ssl]
+    discoveryGeneration++
+    databases = []
+    discovering = false
+    discovered = false
+    discoveryError = ''
+  })
+  onDestroy(() => { discoveryGeneration++ })
+
+  async function discover() {
+    if (!canDiscover || discovering || snapshot.current.connecting) return
+    const generation = ++discoveryGeneration
+    discovering = true
+    discovered = false
+    discoveryError = ''
+    databases = []
+    try {
+      const result = await api.discoverDatabases({ ...form })
+      if (generation !== discoveryGeneration) return
+      databases = result.databases
+      discovered = true
+    } catch (error) {
+      if (generation === discoveryGeneration) discoveryError = (error as Error).message
+    } finally {
+      if (generation === discoveryGeneration) discovering = false
+    }
+  }
 
   interface ConnectionRow {
     label: string
@@ -40,6 +78,7 @@
   })
 
   function pick(entry: SavedConnection) {
+    selectedLabel = entry.label
     conn.state.error = ''
     if (entry.connectionString) {
       mode = 'url'
@@ -70,6 +109,7 @@
 
   async function submit(event: SubmitEvent) {
     event.preventDefault()
+    if (discovering) return
     if (mode === 'url' && !url.trim()) {
       conn.state.error = 'Connection string is required'
       return
@@ -103,8 +143,8 @@
           </div>
           <div class="saved">
             {#each allConnections as entry (entry.label)}
-              <div class="saved-item" class:current={entry.active} role="button" tabindex={entry.saved ? 0 : -1}
-                aria-label={entry.label} onclick={() => { if (entry.saved) pick(entry.saved) }}
+              <div class="saved-item" class:current={entry.active} class:selected={entry.label === selectedLabel} role="button" tabindex={entry.saved ? 0 : -1}
+                aria-label={entry.label} aria-pressed={entry.label === selectedLabel} onclick={() => { if (entry.saved) pick(entry.saved) }}
                 onkeydown={(event) => pickWithKeyboard(event, entry.saved)}>
                 <Database class="saved-icon" size={17} />
                 {#if entry.seq !== null}<span class="saved-seq" title={`Connection #${entry.seq}`}>#{entry.seq}</span>{/if}
@@ -133,7 +173,28 @@
           <form class="fields" onsubmit={submit}>
             <label class="field-label"><span>Host</span><span class="field"><Server class="field-icon" size={14} /><input bind:value={form.host} /></span></label>
             <label class="field-label"><span>Port</span><span class="field"><input bind:value={form.port} type="number" /></span></label>
-            <label class="field-label"><span>Database</span><span class="field"><Database class="field-icon" size={14} /><input bind:value={form.database} required placeholder="postgres" /></span></label>
+            <div class="field-label">
+              <label for="connection-database">Database</label>
+              <span class="field"><Database class="field-icon" size={14} /><input id="connection-database" bind:value={form.database} required placeholder="postgres" />
+                <button type="button" class="btn-sm discover-btn" title="Discover accessible databases using postgres" disabled={!canDiscover || discovering || snapshot.current.connecting} onclick={discover}><Search size={13} />{discovering ? 'Discovering…' : 'Discover databases'}</button>
+              </span>
+              {#if databases.length}
+                <div class="database-picker" role="group" aria-label="Discovered databases">
+                  <div class="discovery-head"><span role="status">Found {databases.length} databases</span><span>Select a database</span></div>
+                  <div class="database-options">
+                    {#each databases as name}
+                      <button type="button" class="database-option" class:selected={form.database === name} aria-pressed={form.database === name} aria-label={name} title={name}
+                        onclick={() => { form.database = name }}>
+                        <Database size={14} /><span>{name}</span>{#if form.database === name}<Check size={14} />{/if}
+                      </button>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
+              {#if discovering}<small role="status">Connecting to postgres to discover databases…</small>{/if}
+              {#if discovered && !databases.length}<small role="status">No accessible databases found. You can enter a name manually.</small>{/if}
+              {#if discoveryError}<small class="error" role="alert">{discoveryError}</small>{/if}
+            </div>
             <label class="field-label"><span>User</span><span class="field"><User class="field-icon" size={14} /><input bind:value={form.user} /></span></label>
             <label class="field-label">
               <span>Password</span>
@@ -150,7 +211,7 @@
               <label class="check-item"><input bind:checked={form.ssl} type="checkbox" /><span><strong>SSL</strong><small>Use SSL to connect to the database</small></span></label>
               <label class="check-item"><input bind:checked={remember} type="checkbox" /><span><strong>Remember on this device</strong><small>Credentials use secure OS storage when available</small></span></label>
             </div>
-            <button class="primary connect-btn" type="submit" disabled={snapshot.current.connecting}><Plug size={15} />{snapshot.current.connecting ? 'Connecting…' : 'Connect'}</button>
+            <button class="primary connect-btn" type="submit" disabled={snapshot.current.connecting || discovering}><Plug size={15} />{snapshot.current.connecting ? 'Connecting…' : 'Connect'}</button>
           </form>
         {:else}
           <form class="fields" onsubmit={submit}>
@@ -166,3 +227,13 @@
     </div>
   </div>
 </div>
+
+<style>
+  .database-picker { margin-top: 3px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); overflow: hidden; }
+  .discovery-head { display: flex; justify-content: space-between; gap: 12px; padding: 8px 10px; background: var(--panel); border-bottom: 1px solid var(--border); font-size: 11px; color: var(--text-dim); }
+  .database-options { max-height: 168px; overflow-y: auto; padding: 4px; }
+  .database-option { width: 100%; justify-content: flex-start; gap: 8px; padding: 7px 8px; border: none; border-radius: 4px; background: transparent; font-size: 12px; text-align: left; }
+  .database-option span { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .database-option.selected { background: rgba(79, 156, 249, 0.13); color: var(--accent); }
+  .database-option:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+</style>
