@@ -18,15 +18,43 @@ const version = process.env.PGDEV_APP_VERSION ?? JSON.parse(readFileSync(new URL
 const url = (process.env.PGDEV_URL ?? 'http://localhost:3010').replace(/\/+$/, '')
 const token = process.env.PGDEV_TOKEN ?? ''
 
-function endpoint() {
-  if (!process.env.PGDEV_ENDPOINT_FILE) return url
+function desktopEndpoint() {
+  let record
   let address
-  try { address = new URL(JSON.parse(readFileSync(process.env.PGDEV_ENDPOINT_FILE, 'utf8')).url) }
+  try {
+    record = JSON.parse(readFileSync(process.env.PGDEV_ENDPOINT_FILE, 'utf8'))
+    address = new URL(record.url)
+  }
   catch { throw new Error('Cannot find the running pgDEV instance. Open the desktop application first.') }
   if (address.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(address.hostname)) {
     throw new Error('Invalid desktop MCP endpoint')
   }
-  return address.origin
+  return { url: address.origin, pid: record.pid }
+}
+
+const endpoint = () => process.env.PGDEV_ENDPOINT_FILE ? desktopEndpoint().url : url
+
+// MCP clients own stdin, so closing the desktop does not otherwise stop this
+// executable. Release it for Windows updates, including after a desktop crash.
+if (process.env.PGDEV_ENDPOINT_FILE) {
+  let ownerPid
+  const checkDesktop = () => {
+    try {
+      const { pid } = desktopEndpoint()
+      if (ownerPid !== undefined && pid !== ownerPid) throw new Error('Desktop instance changed')
+      if (Number.isSafeInteger(pid) && pid > 0) {
+        ownerPid = pid
+        process.kill(pid, 0)
+      }
+      return
+    } catch (error) {
+      if (error.code === 'EPERM') return // Alive, but owned by a different security context.
+    }
+    process.stderr.write('pgDEV stopped. Reopen pgDEV and reconnect the MCP client.\n')
+    process.exit(0)
+  }
+  checkDesktop()
+  setInterval(checkDesktop, 500).unref()
 }
 
 async function callTool(name, args) {

@@ -4,6 +4,9 @@ import { spawn } from 'node:child_process'
 import { createServer } from 'node:http'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { once } from 'node:events'
 
 // The MCP shim is behaviour, not internals: a stub pgDEV API records what the
 // shim forwards, and a JSON-RPC conversation over stdio pins the agent-visible
@@ -120,6 +123,42 @@ async function handshake(shim) {
   assert.match(init.result.instructions ?? '', /list_tabs/)
   shim.notify('notifications/initialized')
   return init
+}
+
+for (const scenario of ['endpoint removed', 'desktop replaced', 'desktop crashed']) {
+  test(`desktop MCP helper exits with stdin open when ${scenario}`, async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pgdev-mcp-lifecycle-'))
+    const file = join(directory, 'endpoint.json')
+    let owner
+    let shim
+    try {
+      let pid = process.pid
+      if (scenario === 'desktop crashed') {
+        owner = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
+        await once(owner, 'spawn')
+        pid = owner.pid
+      }
+      await writeFile(file, JSON.stringify({ url: 'http://127.0.0.1:3010', pid }))
+      shim = startShim({ PGDEV_ENDPOINT_FILE: file })
+      await handshake(shim)
+      const exited = once(shim.child, 'exit', { signal: AbortSignal.timeout(5000) })
+      if (scenario === 'endpoint removed') await rm(file)
+      else if (scenario === 'desktop replaced') await writeFile(file, JSON.stringify({ url: 'http://127.0.0.1:3011', pid: 0 }))
+      else {
+        const ownerExited = once(owner, 'exit')
+        owner.kill('SIGKILL')
+        await ownerExited
+      }
+      const [code, signal] = await exited
+      assert.equal(code, 0)
+      assert.equal(signal, null)
+      assert.equal(shim.child.stdin.writableEnded, false)
+    } finally {
+      shim?.stop()
+      owner?.kill()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
 }
 
 test('the shim lists the tools and forwards calls with the token', async () => {

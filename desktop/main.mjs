@@ -7,6 +7,7 @@ import { randomBytes } from 'node:crypto'
 import { createStorage } from './storage.mjs'
 import { createFiles } from './files.mjs'
 import { isAppUrl, validateRequest } from './security.mjs'
+import { stopBackend } from './shutdown.mjs'
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const DEV = !app.isPackaged && process.env.PGDEV_DESKTOP_DEV === '1'
@@ -46,6 +47,7 @@ async function runDesktop() {
   let window
   let closing = false
   let stopped = false
+  let stopTask
   let aiController
   let aiTask
   let closeTimer
@@ -90,7 +92,7 @@ async function runDesktop() {
     })
   } catch (error) { child.kill(); throw error }
   const endpointTemporary = `${endpointFile}.${randomBytes(8).toString('hex')}.tmp`
-  await writeFile(endpointTemporary, JSON.stringify({ url: backendUrl }), { mode: 0o600, flag: 'wx' })
+  await writeFile(endpointTemporary, JSON.stringify({ url: backendUrl, pid: process.pid }), { mode: 0o600, flag: 'wx' })
   await rename(endpointTemporary, endpointFile)
 
   const backendFetch = (path, options = {}) => fetch(`${backendUrl}${path}`, {
@@ -98,7 +100,7 @@ async function runDesktop() {
   })
 
   child.on('exit', () => {
-    if (stopped) return
+    if (stopped || stopTask) return
     void log('Database service exited unexpectedly. Queries will not be replayed.')
     window?.webContents.send('pgdev:backend-failed')
     if (!closing) void dialog.showMessageBox(window, {
@@ -147,7 +149,7 @@ async function runDesktop() {
   window.webContents.on('will-attach-webview', (event) => event.preventDefault())
   window.webContents.on('render-process-gone', () => {
     void log('Renderer exited unexpectedly. Last persisted session remains available.')
-    void stop().then(() => app.exit(1))
+    void stop().then(() => app.exit(1)).catch(() => { void log('Shutdown failed; waiting for forced termination.') })
   })
   app.on('second-instance', () => { if (window.isMinimized()) window.restore(); window.show(); window.focus() })
 
@@ -221,22 +223,20 @@ async function runDesktop() {
   handle('ai-start', subscribeAi)
   handle('ai-stop', async () => { aiController?.abort(); await aiTask; aiController = undefined })
 
-  async function stop() {
-    if (stopped) return
-    stopped = true
+  function stop() {
+    return stopTask ??= stopDesktop()
+  }
+
+  async function stopDesktop() {
     const hardStop = setTimeout(() => { child.kill(); app.exit(1) }, 10000)
     aiController?.abort()
     clearTimeout(closeTimer)
     await files.abortAll()
     await storage.flush()
-    await new Promise((resolveStopped) => {
-      const timeout = setTimeout(() => { child.kill(); resolveStopped() }, 6000)
-      child.once('exit', () => { clearTimeout(timeout); resolveStopped() })
-      if (!child.pid) { clearTimeout(timeout); resolveStopped() }
-      else child.postMessage({ type: 'shutdown' })
-    })
-    clearTimeout(hardStop)
+    await stopBackend(child)
     await rm(endpointFile, { force: true }).catch(() => undefined)
+    stopped = true
+    clearTimeout(hardStop)
   }
 
   handle('close-ready', async () => { if (!closing) return; await stop(); app.exit(0) })

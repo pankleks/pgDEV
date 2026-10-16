@@ -44,6 +44,7 @@ try {
   assert.equal(unauthorized.status, 401)
   // A real MCP client launches the standalone packaged stdio helper.
   helper = spawn(mcp.command[0], mcp.command.slice(1), { env: { ...env, ...mcp.environment }, stdio: ['pipe', 'pipe', 'pipe'] })
+  const helperExited = new Promise(resolve => helper.once('exit', (code) => resolve(code)))
   helper.stderr.on('data', () => {})
   const initialized = new Promise((resolve, reject) => {
     let pending = ''
@@ -62,7 +63,7 @@ try {
   })
   helper.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'desktop-smoke', version: '1' } } }) + '\n')
   assert.ok((await initialized).result.serverInfo)
-  helper.stdin.end()
+  // Keep the MCP client connected: closing its stdin would hide a helper leak.
 
   if (process.env.PGDEV_TEST_URL) {
     await page.getByRole('button', { name: 'Not connected', exact: true }).click()
@@ -89,6 +90,11 @@ try {
   const snapshot = JSON.parse(await readFile(join(directory, 'state/session.json'), 'utf8'))
   assert.ok(snapshot.value.tabs.some((tab) => tab.content.includes('persisted_desktop_session')))
   await assert.rejects(fetch(`${backendAddress}/api/version`), 'backend must exit with its window')
+  const helperTimeout = setTimeout(() => helper.kill('SIGKILL'), 5000)
+  try {
+    assert.equal(await helperExited, 0, 'MCP helper must exit with the desktop even while its client keeps stdin open')
+    assert.equal(helper.stdin.writableEnded, false)
+  } finally { clearTimeout(helperTimeout) }
   // Relaunch against the same native data and verify session/config continuity.
   application = await electron.launch({ executablePath, args, env, timeout: 30000 })
   application.process().stdout?.on('data', (chunk) => dialogs.push(chunk.toString()))
