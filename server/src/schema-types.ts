@@ -311,6 +311,10 @@ export interface AiResultGrid {
 /** What the active tab last produced on screen (`get_active_result`). */
 export interface AiActiveResult {
   tab: { key: string; title: string; readOnly: boolean }
+  /** Source of the displayed result, not the target of a subsequent MCP query. */
+  connectionId: string | null
+  profileId: string | null
+  connectionName: string | null
   /** False when nothing has been run in the tab yet. */
   ran: boolean
   /** A statement (or page load) is in flight right now. */

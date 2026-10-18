@@ -218,7 +218,7 @@
       if (!await confirmAction('Explain Analyze executes the selected SQL. It may modify data or cause other side effects, even for SELECT. Continue?')) return
       if (conn.state.id !== connectionId || tabs.state.activeKey !== tab.key || results.state.byTab[tab.key]?.operation !== operation) return
     }
-    void results.run(tab.key, connectionId, sql, explain)
+    void results.run(tab.key, connectionId, sql, explain, { profileId: conn.state.profileId, connectionName: conn.state.name })
   }
 </script>
 

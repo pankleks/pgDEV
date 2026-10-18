@@ -121,3 +121,5 @@ The AI dialog provides a copyable configuration pointing at the bundled **pgdev-
 Closing pgDEV also stops its MCP helpers so they do not block Windows updates. After reopening pgDEV, reconnect MCP in your client; the saved configuration remains valid.
 
 Read tools: `query`, `get_schema` (optional `schema`/`table` filters; relation lists truncate past 200 entries), `get_ddl` (`type`/`schema`/`name`, plus `oid`/`parent` to pin overloads and constraints), `get_active_result` (the active tab's grids capped like `query`, plus the last 100 Messages lines — so the agent sees the outcome, including errors, of scripts *you* ran; no database access happens here). Editor tools: `get_active_query`, `set_active_query` (`replace`/`append`/`insert`), `open_query_tab`, `list_tabs`, `activate_tab`, `close_tab`.
+
+`get_active_result` includes `connectionId`, `profileId` and `connectionName` for the result source (`null` when unknown). For multi-connection runs it reads only the selected connection group. This does **not** change where `query`, `get_schema` or `get_ddl` execute: they still use the main active connection, which may differ from the displayed result's source.

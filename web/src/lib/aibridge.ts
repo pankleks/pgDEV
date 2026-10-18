@@ -58,6 +58,9 @@ export interface AiTabView {
 
 /** The result state of one tab, as the reducer needs it to answer the agent. */
 export interface AiTabResultView {
+  connectionId: string | null
+  profileId: string | null
+  connectionName: string | null
   running: boolean
   transactionOpen: boolean
   /** Statement number the grid shows; null while Messages is shown. */
@@ -183,6 +186,9 @@ export async function applyBridgeAction(deps: AiBridgeDeps, action: BridgeAction
       })
       return {
         tab: { key: tab.key, title: tab.title, readOnly: tab.readOnly },
+        connectionId: state?.connectionId ?? null,
+        profileId: state?.profileId ?? null,
+        connectionName: state?.connectionName ?? null,
         ran: state !== null,
         running: state?.running ?? false,
         transactionOpen: state?.transactionOpen ?? false,

@@ -45,7 +45,11 @@ export function useAi() {
         releaseTab(key, conn.state.id)
         tabs.close(key)
       },
-      showGrid: (tabKey, grid) => results.showGrid(tabKey, grid),
+      showGrid: (tabKey, grid) => results.showGrid(tabKey, {
+        ...grid,
+        profileId: grid.connectionId === conn.state.id ? conn.state.profileId : null,
+        connectionName: grid.connectionId === conn.state.id ? conn.state.name : null,
+      }),
       insertAtCursor: (sql) => insertAtCursor(sql),
       activeResult: (tabKey) => {
         const group = multiResults.state.byTab[tabKey]
@@ -53,11 +57,16 @@ export function useAi() {
         const r = results.state.byTab[entry?.key ?? tabKey]
         if (!r && !group) return null
         const all = group ? group.entries.map((entry) => results.state.byTab[entry.key]) : [r]
+        const profileId = entry ? entry.profileId : r?.profileId ?? null
+        const connectionName = conn.saved().find((profile) => profile.id === profileId)?.name ?? entry?.name ?? r?.connectionName ?? null
         return {
+          connectionId: entry ? entry.connectionId : r?.connectionId ?? null,
+          profileId,
+          connectionName,
           running: all.some((r) => r?.running || r?.loadingMore) || !!group?.entries.some((entry) => entry.connecting),
           transactionOpen: all.some((r) => r?.transactionOpen),
           selected: r?.grid?.statementNumber ?? null,
-          messages: [...(entry ? [{ level: 'info' as const, text: `Connection: ${entry.name}` }] : []), ...(r?.messages ?? []).map((m) => ({ level: m.level, text: m.text }))],
+          messages: [...(entry ? [{ level: 'info' as const, text: `Connection: ${connectionName}` }] : []), ...(r?.messages ?? []).map((m) => ({ level: m.level, text: m.text }))],
           grids: (r?.grids ?? []).map((g) => ({
             statement: g.statementNumber,
             columns: g.columns,

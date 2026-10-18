@@ -362,6 +362,9 @@ export function createAiTools(deps: AiDeps): Record<string, AiTool> {
       ok: true,
       result: {
         tab: snapshot.tab,
+        connectionId: snapshot.connectionId ?? null,
+        profileId: snapshot.profileId ?? null,
+        connectionName: snapshot.connectionName ?? null,
         ran: snapshot.ran !== false,
         running: snapshot.running === true,
         transactionOpen: snapshot.transactionOpen === true,

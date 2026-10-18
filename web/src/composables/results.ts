@@ -58,6 +58,9 @@ export function describeQueryError(
 }
 
 export interface TabResult {
+  connectionId: string | null
+  profileId: string | null
+  connectionName: string | null
   operation: number
   running: boolean
   cancelling: boolean
@@ -90,6 +93,9 @@ export function createResults(api: ResultsApi) {
     let r = state.byTab[key]
     if (!r) {
       r = createState<TabResult>({
+        connectionId: null,
+        profileId: null,
+        connectionName: null,
         operation: 0,
         running: false,
         cancelling: false,
@@ -174,9 +180,15 @@ export function createResults(api: ResultsApi) {
     }
   }
 
-  async function run(tabKey: string, connectionId: string, sql: string, explain?: 'explain' | 'analyze') {
+  async function run(tabKey: string, connectionId: string, sql: string, explain?: 'explain' | 'analyze', source?: Pick<TabResult, 'profileId' | 'connectionName'>) {
     const r = ensure(tabKey)
     if (!sql.trim() || r.running || r.loadingMore) return
+    if (r.connectionId !== connectionId) {
+      r.profileId = null
+      r.connectionName = null
+    }
+    r.connectionId = connectionId
+    if (source) { r.profileId = source.profileId; r.connectionName = source.connectionName }
     const operation = ++r.operation
     r.running = true
     r.cancelling = false
@@ -396,6 +408,9 @@ export function createResults(api: ResultsApi) {
   function showGrid(
     tabKey: string,
     data: {
+      connectionId?: string
+      profileId?: string | null
+      connectionName?: string | null
       columns: string[]
       columnTypes: string[]
       rows: unknown[][]
@@ -409,6 +424,9 @@ export function createResults(api: ResultsApi) {
   ): boolean {
     const r = ensure(tabKey)
     if (r.running || r.loadingMore || r.cancelling || r.transactionOpen) return false
+    r.connectionId = data.connectionId ?? null
+    r.profileId = data.profileId ?? null
+    r.connectionName = data.connectionName ?? null
     r.operation++
     r.running = false
     r.cancelling = false

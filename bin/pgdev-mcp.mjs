@@ -186,8 +186,10 @@ server.registerTool(
     title: 'Read the active tab result',
     description:
       'What the active tab last produced on screen: every result set with its columns and rows (the ' +
-      'agent row limit applies) plus the Messages text, including errors. Read-only — it runs nothing ' +
-      'and does not touch the database.',
+      'agent row limit applies) plus the Messages text, including errors. For multi-connection runs, ' +
+      'returns the selected connection group. connectionId, profileId and connectionName identify the ' +
+      'result source (null when unknown), not the target of query/get_schema/get_ddl, which still use ' +
+      'the main active connection. Read-only — it runs nothing and does not touch the database.',
     inputSchema: {},
   },
   handler('get_active_result'),

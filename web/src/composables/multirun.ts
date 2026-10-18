@@ -59,7 +59,7 @@ export function createMultiResults(results: Results, api: MultiApi, warn: (messa
         }
         entry.connectionId = id
         entry.connecting = false
-        await results.run(entry.key, id, sql)
+        await results.run(entry.key, id, sql, undefined, { profileId: entry.profileId, connectionName: entry.name })
       } catch (error) {
         if (state.byTab[tabKey] === group) results.fail(entry.key, (error as Error).message)
       } finally {
