@@ -34,6 +34,9 @@ try {
   const version = await page.evaluate(() => window.pgdevDesktop.request('GET', '/api/version'))
   assert.equal(version.status, 200)
   assert.equal(version.body.version, JSON.parse(await readFile('package.json', 'utf8')).version)
+  const missingConnection = await page.evaluate(() => window.pgdevDesktop.request('DELETE', '/api/connections/transport-probe'))
+  assert.equal(missingConnection.status, 404, 'bodyless DELETE must reach the connection route, not fail JSON body parsing')
+  assert.equal(missingConnection.body.error, 'Unknown connection')
   await assert.rejects(page.evaluate(() => window.pgdevDesktop.request('GET', 'https://example.com/api/version')), /Invalid/)
   await assert.rejects(page.evaluate(() => window.pgdevDesktop.files.read({ name: 'outside', path: '/outside' })), /not granted/)
 

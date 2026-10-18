@@ -29,7 +29,7 @@ Parameters or a `postgres://…` connection string, with optional SSL. Connectio
 
 ![Connect dialog](docs/images/manual/02-connect-dialog.png)
 
-The badge shows the live connection as `user@host:port/database`.
+Give each saved profile a unique **Connection name** (case-insensitive; whitespace is trimmed). Leave it blank to use the generated connection label. Profiles may share the same connection details under different names. Select a profile and use **Save changes** to update it, or change its name and use **Save as new** to save a separate profile from the current fields. **New connection** only opens a fresh form. Saving does not connect or switch databases; **Connect** opens a session and also saves the profile when **Remember on this device** is checked. The badge shows the active profile's name. Connection numbers and `?connect=N` links are no longer supported; normal startup still reconnects to the last connection.
 
 ![Connected](docs/images/manual/03-connected-browser.png)
 
@@ -67,10 +67,11 @@ Tables, plain views, sequences and functions open **editable**; materialized vie
 ![Results](docs/images/manual/04-query-results.png)
 
 * Multi-statement batches run with per-statement result sets; typed column headers, `COPY`/`CSV` export, `N row(s)` footer. Failures land in **Messages**, never as a grid.
+* **RUN ▾ → Run on multiple connections** — select SQL in an unbound query tab, choose saved profiles in the checkbox dialog, then run. The last selection is remembered across restarts and profile renames. Results are grouped by profile, with independent messages, cancellation, paging and export; one failure does not stop the other targets. This uses separate sessions without switching the active connection. SQL may modify every selected database: execution is **not atomic across connections**. Close the grouped results to release those sessions (open transactions roll back).
 * Double-click a cell to inspect its raw value (pretty-printed for JSON/JSONB, with a character count) — the dialog's COPY button is the copy path, and a successful copy closes it.
 * Large results load in pages without holding transactions or locks between clicks. “Load more” reruns the SELECT and skips previously loaded rows; concurrent changes can cause skipped or duplicated rows. Use a stable `ORDER BY`. Each page may rerun expensive work; later pages are read-only and cannot repeat database writes from SELECT functions. Explicit `BEGIN` transactions remain open until you finish them.
 * Statement timeout (configurable, applies to new connections) plus explicit cancellation bound runaway queries.
-* **Execution plans** — visual Explain / Explain Analyze. Analyze executes SQL and may modify data.
+* **Execution plans** — **RUN ▾ → Explain / Explain Analyze**. Analyze executes SQL and may modify data. Clicking **RUN** directly keeps normal execution; F5 / Ctrl+Enter is unchanged.
 
   ![Execution plan](docs/images/manual/11-execution-plan.png)
 

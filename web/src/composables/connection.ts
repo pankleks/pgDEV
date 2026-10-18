@@ -2,7 +2,8 @@ import { createState } from '../lib/state.svelte'
 import { api } from '../api'
 import type { ConnectionConfig } from '../types'
 import { saveConnections, storageReady } from '../lib/storage'
-import { assignSeqs, maxSeq, parseConnectNumber } from '../lib/connectionref'
+import { configOf, duplicateName, migrateProfiles, profileName, type ProfileConfig, type SavedConnection } from '../lib/connectionprofile'
+export type { SavedConnection } from '../lib/connectionprofile'
 import { useSchema } from './schema'
 import { useSettings } from './settings'
 import { useToast } from './toast'
@@ -10,25 +11,21 @@ import { useToast } from './toast'
 const state = createState({
   id: null as string | null,
   label: '',
+  name: '',
+  profileId: null as string | null,
+  selectedIds: [] as string[],
   pgVersion: '',
   dialog: false,
   connecting: false,
+  saving: false,
   error: '',
 })
 
 const savedConnections = createState<SavedConnection[]>([])
-let lastConnection: ConnectionConfig | null = null
+let lastConnection: ProfileConfig | null = null
 let readyPromise: Promise<void> | null = null
 let locallyChanged = false
 let connectionAttempt = 0
-// High-water mark for connection numbers: a forgotten number is never reused.
-let seqHighWater = 0
-
-export interface SavedConnection extends ConnectionConfig {
-  label: string
-  /** Stable, never-reused number, addressable with `?connect=N`. */
-  seq: number
-}
 
 function labelOf(cfg: ConnectionConfig): string {
   if (cfg.connectionString) {
@@ -44,19 +41,6 @@ function labelOf(cfg: ConnectionConfig): string {
     }
   }
   return `${cfg.user ?? 'postgres'}@${cfg.host ?? 'localhost'}:${cfg.port ?? 5432}/${cfg.database ?? ''}`
-}
-
-/** A saved entry's connectable config, without the `label`/`seq` bookkeeping. */
-function configOf(connection: SavedConnection): ConnectionConfig {
-  if (connection.connectionString) return { connectionString: connection.connectionString }
-  return {
-    host: connection.host,
-    port: connection.port,
-    database: connection.database,
-    user: connection.user,
-    password: connection.password,
-    ssl: connection.ssl,
-  }
 }
 
 function isConnectionConfig(value: unknown): value is ConnectionConfig {
@@ -75,14 +59,12 @@ function isConnectionConfig(value: unknown): value is ConnectionConfig {
 
 function parseSavedConnections(value: unknown): SavedConnection[] {
   if (!Array.isArray(value)) return []
-  const entries = value.filter((entry): entry is ConnectionConfig & { label: string; seq?: unknown } => {
+  const entries = value.filter((entry): entry is ConnectionConfig & { label: string } => {
     if (!entry || typeof entry !== 'object') return false
     const saved = entry as Record<string, unknown>
     return typeof saved.label === 'string' && isConnectionConfig(entry)
   })
-  // Entries saved before numbering existed have no seq; fill those in while
-  // preserving any number already assigned.
-  return assignSeqs(entries)
+  return migrateProfiles(entries)
 }
 
 function ensureReady(): Promise<void> {
@@ -91,10 +73,17 @@ function ensureReady(): Promise<void> {
       .then(({ connections }) => {
         if (locallyChanged || !connections) return
         savedConnections.splice(0, savedConnections.length, ...parseSavedConnections(connections.saved))
-        lastConnection = isConnectionConfig(connections.last) ? { ...connections.last } : null
-        const stored = connections.nextSeq
-        const storedNext = typeof stored === 'number' && Number.isInteger(stored) && stored > 0 ? stored : 0
-        seqHighWater = Math.max(storedNext, maxSeq(savedConnections))
+        if (isConnectionConfig(connections.last)) {
+          const last = connections.last as ProfileConfig
+          const profile = savedConnections.find((entry) => last.id ? entry.id === last.id : entry.label === labelOf(last))
+          lastConnection = profile ? { ...profile } : { ...configOf(last), name: typeof last.name === 'string' ? last.name : undefined }
+        }
+        state.selectedIds = Array.isArray(connections.selectedIds)
+          ? connections.selectedIds.filter((id) => savedConnections.some((entry) => entry.id === id)) : []
+        // Persist stable IDs once, including when startup auto-connect is disabled.
+        if (JSON.stringify(connections.saved) !== JSON.stringify(savedConnections)) {
+          void saveConnections(savedConnections, lastConnection, state.selectedIds).catch(() => useToast().show('Connection profiles could not be migrated.'))
+        }
       })
       .catch(() => undefined)
   }
@@ -104,7 +93,8 @@ function ensureReady(): Promise<void> {
 function persist() {
   const saved = savedConnections.map((connection) => ({ ...connection }))
   const last = lastConnection ? { ...lastConnection } : null
-  void ensureReady().then(() => saveConnections(saved, last, seqHighWater)).catch(() => useToast().show('Connections could not be saved. Check the application data directory.'))
+  const selectedIds = [...state.selectedIds]
+  void ensureReady().then(() => saveConnections(saved, last, selectedIds)).catch(() => useToast().show('Connections could not be saved. Check the application data directory.'))
 }
 
 export function useConnection() {
@@ -113,54 +103,73 @@ export function useConnection() {
     return savedConnections
   }
 
-  function remember(cfg: ConnectionConfig) {
-    const label = labelOf(cfg)
-    const existing = savedConnections.find((c) => c.label === label)
-    if (!existing) seqHighWater += 1
-    const seq = existing ? existing.seq : seqHighWater
-    const list = savedConnections.filter((c) => c.label !== label)
-    savedConnections.splice(0, savedConnections.length, { ...cfg, label, seq }, ...list.slice(0, 9))
+  function nameOf(cfg: ProfileConfig): string {
+    const name = profileName(cfg.name, labelOf(cfg))
+    if (duplicateName(savedConnections, name, cfg.id)) throw new Error('Connection name already exists. Choose a unique name.')
+    return name
   }
 
-  function rememberLast(cfg: ConnectionConfig) {
+  function remember(cfg: ProfileConfig): SavedConnection {
+    const label = labelOf(cfg)
+    const profile = { ...configOf(cfg), label, name: nameOf(cfg), id: cfg.id ?? crypto.randomUUID() }
+    const list = savedConnections.filter((c) => c.id !== profile.id)
+    savedConnections.splice(0, savedConnections.length, profile, ...list)
+    return profile
+  }
+
+  function rememberLast(cfg: ProfileConfig) {
     lastConnection = { ...cfg }
   }
 
-  function lastConfig(): ConnectionConfig | null {
+  function lastConfig(): ProfileConfig | null {
     if (lastConnection) return { ...lastConnection }
     return savedConnections.length ? { ...savedConnections[0] } : null
   }
 
-  function forget(label: string) {
+  function forget(id: string) {
+    if (state.saving) return
     locallyChanged = true
     savedConnections.splice(
       0,
       savedConnections.length,
-      ...savedConnections.filter((connection) => connection.label !== label),
+      ...savedConnections.filter((connection) => connection.id !== id),
     )
-    if (lastConnection && labelOf(lastConnection) === label) lastConnection = null
+    if (lastConnection?.id === id) lastConnection = null
+    state.selectedIds = state.selectedIds.filter((selected) => selected !== id)
+    if (state.profileId === id) state.profileId = null
     persist()
   }
 
   function forgetAll() {
+    if (state.saving) return
     locallyChanged = true
     savedConnections.splice(0, savedConnections.length)
     lastConnection = null
+    state.selectedIds = []
+    state.profileId = null
     persist()
   }
 
-  async function connect(cfg: ConnectionConfig, save: boolean, preserveLast = false) {
-    if (state.connecting) return
+  function selectProfiles(ids: string[]) {
+    if (state.saving) return
+    locallyChanged = true
+    state.selectedIds = savedConnections.filter((entry) => ids.includes(entry.id)).map((entry) => entry.id)
+    persist()
+  }
+
+  async function connect(cfg: ProfileConfig, save: boolean, preserveLast = false) {
+    if (state.connecting || state.saving) return
     const attempt = ++connectionAttempt
     state.connecting = true
     state.error = ''
     await ensureReady()
     try {
+      const name = save ? nameOf(cfg) : profileName(cfg.name, labelOf(cfg))
       const prevId = state.id
       // The statement timeout is a settings-level value (not part of the
       // remembered config) applied when the pool opens: changing it in
       // Settings takes effect on the next connect.
-      const body: ConnectionConfig = { ...cfg, statementTimeout: useSettings().state.statementTimeout }
+      const body: ConnectionConfig = { ...configOf(cfg), statementTimeout: useSettings().state.statementTimeout }
       const { id, pgVersion } = await api.connect(body)
       if (attempt !== connectionAttempt) {
         await api.disconnect(id).catch(() => {})
@@ -184,7 +193,7 @@ export function useConnection() {
           return
         }
         try {
-          const { useResults } = await import('./results')
+          const { useResults, multiResults } = await import('./results')
           // Re-check after the await: a disconnect+reconnect during the
           // import must not drop the new connection's tab results or
           // overwrite state.id below (which would leak the newer pool).
@@ -194,7 +203,7 @@ export function useConnection() {
             return
           }
           const res = useResults()
-          for (const key of Object.keys(res.state.byTab)) res.drop(key)
+          for (const key of Object.keys(res.state.byTab)) if (!multiResults.owns(key)) res.drop(key)
         } catch {
           // ignore cleanup errors
         }
@@ -202,12 +211,15 @@ export function useConnection() {
       useSchema().reset()
       state.id = id
       state.label = labelOf(cfg)
+      state.name = name
+      state.profileId = cfg.id ?? null
       state.pgVersion = pgVersion ?? ''
       state.dialog = false
       if (save) {
         locallyChanged = true
-        remember(cfg)
-        rememberLast(cfg)
+        const profile = remember(cfg)
+        state.profileId = profile.id
+        rememberLast(profile)
         persist()
       } else if (!preserveLast) {
         locallyChanged = true
@@ -222,24 +234,52 @@ export function useConnection() {
     }
   }
 
+  async function saveProfile(cfg: ProfileConfig): Promise<SavedConnection | null> {
+    if (state.connecting || state.saving) return null
+    // ponytail: serialize profile mutations during a durable write; queue them if concurrent editing is needed.
+    state.saving = true
+    state.error = ''
+    try {
+      await ensureReady()
+      if (cfg.connectionString !== undefined) {
+        let valid = false
+        try { valid = ['postgres:', 'postgresql:'].includes(new URL(cfg.connectionString).protocol) } catch { /* invalid URI */ }
+        if (!valid) throw new Error('Enter a valid postgres:// or postgresql:// connection string.')
+      } else {
+        if (!cfg.database?.trim()) throw new Error('Database is required')
+        if (cfg.port !== undefined && (!Number.isInteger(cfg.port) || cfg.port < 1 || cfg.port > 65535)) throw new Error('Port must be between 1 and 65535')
+      }
+      const previous = savedConnections.map((profile) => ({ ...profile }))
+      const previousLast = lastConnection
+      const previousChanged = locallyChanged
+      const profile = remember(cfg)
+      locallyChanged = true
+      if (lastConnection?.id === profile.id) rememberLast(profile)
+      try {
+        await saveConnections(savedConnections, lastConnection, state.selectedIds)
+      } catch {
+        savedConnections.splice(0, savedConnections.length, ...previous)
+        lastConnection = previousLast
+        locallyChanged = previousChanged
+        throw new Error('Connection could not be saved. Check the application data directory and try again.')
+      }
+      if (state.profileId === profile.id) {
+        const original = previous.find((entry) => entry.id === profile.id)
+        if (original && JSON.stringify(configOf(original)) === JSON.stringify(configOf(profile))) state.name = profile.name
+        else state.profileId = null // Saved settings changed; the live database session did not.
+      }
+      return profile
+    } catch (error) {
+      state.error = (error as Error).message
+      return null
+    } finally {
+      state.saving = false
+    }
+  }
+
   async function autoConnect() {
     await ensureReady()
     if (state.id || state.connecting) return
-    const requested = typeof window === 'undefined' ? null : parseConnectNumber(window.location.search)
-    if (requested !== null) {
-      const target = savedConnections.find((connection) => connection.seq === requested)
-      if (target) {
-        // A deep link connects for this session only; it does not replace the
-        // remembered last connection used by a normal startup.
-        await connect(configOf(target), false, true)
-        if (!state.id) {
-          state.dialog = true
-          useToast().show(`Could not connect to #${requested}: ${state.error}`)
-        }
-        return
-      }
-      useToast().show(`No saved connection #${requested}`)
-    }
     const cfg = lastConfig()
     if (!cfg) return
     await connect(cfg, false, true)
@@ -250,6 +290,7 @@ export function useConnection() {
   }
 
   async function disconnect() {
+    if (state.saving) return
     const attempt = ++connectionAttempt
     state.connecting = false
     const id = state.id
@@ -262,11 +303,11 @@ export function useConnection() {
       // DELETE keeps the UI connected so a stale pool cannot linger behind a
       // phantom "not connected" badge.
       try {
-        const { useResults } = await import('./results')
+        const { useResults, multiResults } = await import('./results')
         const res = useResults()
         const runningKeys = Object.keys(res.state.byTab).filter((key) => {
           const r = res.state.byTab[key]
-          return (r.running || r.loadingMore) && !r.cancelling
+          return !multiResults.owns(key) && (r.running || r.loadingMore) && !r.cancelling
         })
         await Promise.all(runningKeys.map((key) => res.cancel(key, id).catch(() => undefined)))
       } catch {
@@ -283,9 +324,10 @@ export function useConnection() {
       }
       if (attempt !== connectionAttempt) return
       try {
-        const { useResults } = await import('./results')
+        const { useResults, multiResults } = await import('./results')
+        if (attempt !== connectionAttempt) return
         const res = useResults()
-        for (const key of Object.keys(res.state.byTab)) res.drop(key)
+        for (const key of Object.keys(res.state.byTab)) if (!multiResults.owns(key)) res.drop(key)
       } catch {
         // ignore cleanup errors
       }
@@ -293,9 +335,11 @@ export function useConnection() {
     if (attempt !== connectionAttempt) return
     state.id = null
     state.label = ''
+    state.name = ''
+    state.profileId = null
     state.pgVersion = ''
     useSchema().reset()
   }
 
-  return { state, connect, disconnect, autoConnect, saved, forget, forgetAll, ready: ensureReady() }
+  return { state, connect, disconnect, autoConnect, saved, forget, forgetAll, selectProfiles, saveProfile, ready: ensureReady() }
 }

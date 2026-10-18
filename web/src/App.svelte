@@ -7,9 +7,11 @@
   import ObjectBrowser from './components/ObjectBrowser.svelte'
   import EditorTabs from './components/EditorTabs.svelte'
   import ResultsPanel from './components/ResultsPanel.svelte'
+  import MultiRunDialog from './components/MultiRunDialog.svelte'
   import { useConnection } from './composables/connection'
   import { useTabs, type EditorTab } from './composables/tabs'
-  import { useResults } from './composables/results'
+  import { useResults, multiResults, confirmResultRelease } from './composables/results'
+  import type { SavedConnection } from './lib/connectionprofile'
   import { useSettings } from './composables/settings'
   import { useToast } from './composables/toast'
   import { useAi } from './composables/ai'
@@ -26,6 +28,27 @@
   const toast = useToast()
   const ai = useAi()
   let settingsOpen = $state(false)
+  let multiRun = $state<{ tabKey: string; sql: string } | null>(null)
+  async function openMultiRun() {
+    const tab = activeTab
+    const sql = getActiveSelection()
+    if (!tab || tab.kind !== 'query' || tab.readOnly || tab.connectionId) { toast.show('Use an unbound query tab to run on multiple connections'); return }
+    const existing = results.state.byTab[tab.key]
+    if (existing?.running || existing?.loadingMore || existing?.transactionOpen) { toast.show('Finish the current query or transaction before running on multiple connections'); return }
+    if (!sql?.trim()) { toast.show('Select SQL to run on multiple connections'); return }
+    await conn.ready
+    if (tabs.state.activeKey === tab.key) multiRun = { tabKey: tab.key, sql }
+  }
+  async function runMultiple(profiles: SavedConnection[]) {
+    const capture = multiRun
+    if (!capture) return
+    const existing = results.state.byTab[capture.tabKey]
+    if (existing?.running || existing?.loadingMore || existing?.transactionOpen) { toast.show('Finish the current query or transaction before running on multiple connections'); return }
+    if (!await confirmResultRelease('Replace connection results', [capture.tabKey])) return
+    if (multiRun !== capture || !tabs.state.tabs.some((tab) => tab.key === capture.tabKey)) return
+    multiRun = null
+    void multiResults.run(capture.tabKey, capture.sql, profiles, settings.state.statementTimeout)
+  }
   let paramBar = $state(false)
   let paramValuesText = $state('')
   let paramInput = $state<HTMLInputElement>()
@@ -119,7 +142,7 @@
       sizesReady = true
     })
     desktopSubscriptions.push(desktop().onBeforeClose(async () => {
-      const busy = Object.values(results.state.byTab).some((result) => result.running || result.loadingMore || result.transactionOpen)
+      const busy = Object.values(results.state.byTab).some((result) => result.running || result.loadingMore || result.transactionOpen) || Object.values(multiResults.state.byTab).some((group) => group.entries.some((entry) => entry.connecting))
       if (busy && !await confirmAction('Quit pgDEV? Running queries will stop and open transactions will roll back. Editor text will be kept in the session.')) throw new Error('Close canceled')
       flushSizes()
       await tabs.saveSession()
@@ -128,6 +151,7 @@
     }))
     desktopSubscriptions.push(desktop().onBackendFailure(() => {
       conn.state.id = null
+      for (const key of Object.keys(multiResults.state.byTab)) multiResults.release(key)
       for (const key of Object.keys(results.state.byTab)) results.drop(key)
       toast.show('Database service stopped. Save your work and restart pgDEV; open transactions have ended.')
     }))
@@ -184,6 +208,11 @@
     const sql = selected?.trim() ? selected : tab.content
     if (!sql.trim()) { toast.show('Nothing to run'); return }
     const connectionId = conn.state.id
+    if (multiResults.state.byTab[tab.key]) {
+      if (!await confirmResultRelease('Replace connection results', [tab.key])) return
+      if (conn.state.id !== connectionId || tabs.state.activeKey !== tab.key) return
+      multiResults.release(tab.key)
+    }
     if (explain === 'analyze') {
       const operation = existing?.operation
       if (!await confirmAction('Explain Analyze executes the selected SQL. It may modify data or cause other side effects, even for SELECT. Continue?')) return
@@ -200,7 +229,7 @@
     <button class="icon" title={sideCollapsed ? 'Expand navigation panel' : 'Collapse navigation panel'} onclick={toggleSide}>
       {#if sideCollapsed}<PanelLeftOpen size={15} />{:else}<PanelLeftClose size={15} />{/if}
     </button>
-    {#if conn.state.id}<button class="conn-badge" title="Connection details, disconnect, or switch" onclick={() => { conn.state.dialog = true }}>{conn.state.label}</button>
+    {#if conn.state.id}<button class="conn-badge" title="Connection details, disconnect, or switch" onclick={() => { conn.state.dialog = true }}>{conn.state.name}</button>
     {:else}<button class="conn-badge off" title="Open the connection dialog" onclick={() => { conn.state.dialog = true }}>Not connected</button>{/if}
     <span class="spacer"></span>
     <button class="icon" title="Processes" aria-label="Processes" disabled={!conn.state.id} onclick={() => { if (conn.state.id) tabs.openProcesses(conn.state.id) }}><Activity size={15} /></button>
@@ -228,10 +257,11 @@
     <main class="pgdev-main">
       <section class="editor-area"><EditorTabs onrun={() => runActive()} /></section>
       <div class="drag-h" style:display={processesActive ? 'none' : undefined} onpointerdown={(event) => startDrag(event, 'results')}></div>
-      <section class="results-area" style:display={processesActive ? 'none' : undefined} style:height={`${resultsH}px`}><ResultsPanel onrun={() => runActive()} onexplain={(mode) => runActive(mode)} /></section>
+      <section class="results-area" style:display={processesActive ? 'none' : undefined} style:height={`${resultsH}px`}><ResultsPanel onrun={() => runActive()} onexplain={(mode) => runActive(mode)} onmulti={openMultiRun} /></section>
     </main>
   </div>
   {#if conn.state.dialog}<ConnectDialog />{/if}
+  {#if multiRun}<MultiRunDialog sql={multiRun.sql} onrun={runMultiple} onclose={() => { multiRun = null }} />{/if}
   {#if settingsOpen}<SettingsDialog onclose={() => { settingsOpen = false }} />{/if}
   {#if toast.state.visible}<div class="toast">{toast.state.text}</div>{/if}
 </div>

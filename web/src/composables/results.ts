@@ -3,6 +3,8 @@ import { api, type ApiError } from '../api'
 import { confirmAction } from '../lib/desktop'
 import type { DataResult, FetchMoreResponse, QueryResponse, TransactionState } from '../types'
 import { parseExplainPlan, type ExplainPlan } from '../lib/explain'
+import { createMultiResults } from './multirun'
+import { useToast } from './toast'
 
 /** The slice of the API the results state machine drives; tests inject a fake. */
 export interface ResultsApi {
@@ -144,6 +146,12 @@ export function createResults(api: ResultsApi) {
     const r = state.byTab[key]
     if (r) r.operation++
     delete state.byTab[key]
+  }
+
+  function fail(key: string, message: string) {
+    const r = ensure(key)
+    r.messages = [{ text: message, level: 'error' }]
+    r.showMessages = true
   }
 
   /** Errors without server state (e.g. a network failure) must preserve our expectation. */
@@ -431,12 +439,13 @@ export function createResults(api: ResultsApi) {
     return true
   }
 
-  return { state, drop, selectGrid, run, cancel, loadMore, loadAll, exportAll, showGrid, updateTransaction }
+  return { state, drop, fail, selectGrid, run, cancel, loadMore, loadAll, exportAll, showGrid, updateTransaction }
 }
 
 export type Results = ReturnType<typeof createResults>
 
 const shared = createResults(api)
+export const multiResults = createMultiResults(shared, api, (message) => useToast().show(message))
 
 /** The application-wide results store. */
 export function useResults(): Results {
@@ -446,13 +455,15 @@ export function useResults(): Results {
 /** Warn before releasing database work, even when the editor text is clean.
  * Refuse stale approval if a new operation/transaction starts during the dialog. */
 export async function confirmResultRelease(action: string, tabKeys?: readonly string[]): Promise<boolean> {
-  const capture = () => (tabKeys ?? Object.keys(shared.state.byTab)).map((key) => {
+  const capture = () => [...new Set(tabKeys
+    ? tabKeys.flatMap((key) => [key, ...multiResults.keys(key)])
+    : [...Object.keys(shared.state.byTab), ...Object.values(multiResults.state.byTab).flatMap((group) => group.entries.map((entry) => entry.key))])].map((key) => {
     const r = shared.state.byTab[key]
     return {
       key,
       operation: r?.operation,
       transactionId: r?.transactionId,
-      busy: !!r && (r.running || r.loadingMore || r.transactionOpen),
+      busy: (!!r && (r.running || r.loadingMore || r.transactionOpen)) || Object.values(multiResults.state.byTab).some((group) => group.entries.some((entry) => entry.key === key && entry.connecting)),
     }
   })
   const before = capture()
@@ -466,6 +477,7 @@ export async function confirmResultRelease(action: string, tabKeys?: readonly st
  * backend session (rolling back an open transaction). The UI's tab closing
  * and the agent's close_tab must not drift apart, so both call this. */
 export function releaseTab(tabKey: string, connectionId: string | null): void {
+  multiResults.release(tabKey)
   shared.drop(tabKey)
   if (connectionId) void api.closeSession(connectionId, tabKey).catch(() => undefined)
 }

@@ -96,7 +96,7 @@ async function runDesktop() {
   await rename(endpointTemporary, endpointFile)
 
   const backendFetch = (path, options = {}) => fetch(`${backendUrl}${path}`, {
-    ...options, redirect: 'error', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    ...options, redirect: 'error', headers: { ...(options.body === undefined ? {} : { 'content-type': 'application/json' }), authorization: `Bearer ${token}` },
   })
 
   child.on('exit', () => {

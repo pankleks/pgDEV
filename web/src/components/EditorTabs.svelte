@@ -131,7 +131,7 @@
   {/if}
   {#each snapshot.current.tabs.filter((tab) => tab.kind === 'processes') as tab (tab.key)}
     <div class="processes-host" style:display={active?.key === tab.key ? 'flex' : 'none'}>
-      <ProcessesPanel connectionId={tab.connectionId!} label={conn.state.label} />
+      <ProcessesPanel connectionId={tab.connectionId!} label={conn.state.name} />
     </div>
   {/each}
   {#if !active}<div class="editor-empty"><p>No open tabs</p><button class="primary" onclick={() => tabs.newQuery()}>New query</button></div>{/if}

@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onDestroy, untrack } from 'svelte'
   import { SvelteMap } from 'svelte/reactivity'
-  import { Copy, Download, Pencil, Play, Square } from '@lucide/svelte'
-  import { useResults, type GridResult } from '../composables/results'
+  import { ChevronDown, Copy, Download, Pencil, Play, Square } from '@lucide/svelte'
+  import { useResults, multiResults, confirmResultRelease, type GridResult } from '../composables/results'
   import { useConnection } from '../composables/connection'
   import { useTabs } from '../composables/tabs'
   import { useToast } from '../composables/toast'
@@ -16,23 +16,43 @@
   import ExecutionPlan from './ExecutionPlan.svelte'
   import { editorSelection } from '../lib/formatbridge'
 
-  let { onrun, onexplain }: { onrun: () => void; onexplain: (mode: 'explain' | 'analyze') => void } = $props()
+  let { onrun, onexplain, onmulti }: { onrun: () => void; onexplain: (mode: 'explain' | 'analyze') => void; onmulti: () => void } = $props()
   const results = useResults()
   const conn = useConnection()
   const tabs = useTabs()
   const toast = useToast()
+  let runOptions = $state<HTMLDivElement>()
+  function runOption(action: () => void) {
+    runOptions?.hidePopover()
+    action()
+  }
+  function context() {
+    const group = multiResults.state.byTab[tabs.state.activeKey]
+    const entry = group?.entries.find((entry) => entry.key === group.selected)
+    return { key: entry?.key ?? tabs.state.activeKey, connectionId: entry ? entry.connectionId : conn.state.id, group, entry }
+  }
+  async function closeConnectionResults() {
+    const key = tabs.state.activeKey
+    if (await confirmResultRelease('Close connection results', [key])) multiResults.release(key)
+  }
   // Snapshot metadata, not every retained row. The results store owns the
   // cursor/transaction state; only the visible row window is copied for Svelte.
   function displayGrid(grid: GridResult) {
     return { ...grid, rowLength: grid.rows.length, exported: grid.exported ? { ...grid.exported } : undefined }
   }
   const snapshot = stateView(() => {
-    const result = results.state.byTab[tabs.state.activeKey]
+    const ctx = context()
+    const result = results.state.byTab[ctx.key]
     return {
-      activeKey: tabs.state.activeKey, connectionId: conn.state.id,
+      activeKey: ctx.key, connectionId: ctx.connectionId,
+      activeConnectionId: conn.state.id,
+      entries: ctx.group?.entries.map((entry) => ({ ...entry, name: conn.saved().find((profile) => profile.id === entry.profileId)?.name ?? entry.name,
+        running: results.state.byTab[entry.key]?.running, loadingMore: results.state.byTab[entry.key]?.loadingMore,
+        error: results.state.byTab[entry.key]?.messages.some((message) => message.level === 'error'),
+      })) ?? [],
       hasSelection: !!editorSelection.text.trim(),
       readOnly: tabs.state.tabs.find((tab) => tab.key === tabs.state.activeKey)?.readOnly,
-      tabKeys: tabs.state.tabs.map((tab) => tab.key),
+      tabKeys: tabs.state.tabs.flatMap((tab) => [tab.key, ...multiResults.keys(tab.key)]),
       gridKeys: Object.values(results.state.byTab).flatMap((result) => result.grids.map((grid) => grid.key)),
       result: result ? {
         ...result, grids: result.grids.map(displayGrid), grid: result.grid ? displayGrid(result.grid) : null,
@@ -46,7 +66,7 @@
   const gridColumns = $derived(activeGrid?.columns)
   const rowEditable = $derived(!!activeGrid?.editable && snapshot.current.readOnly !== true)
   function showMessagesView() {
-    const current = results.state.byTab[tabs.state.activeKey]
+    const current = results.state.byTab[context().key]
     if (current) current.showMessages = true
   }
   const ROW_H = 24
@@ -115,6 +135,7 @@
     const keys = snapshot.current.tabKeys
     untrack(() => {
       const live = new Set(keys)
+      for (const key of Object.keys(multiResults.state.byTab)) if (!live.has(key)) multiResults.release(key)
       for (const key of Object.keys(results.state.byTab)) if (!live.has(key)) results.drop(key)
     })
   })
@@ -146,10 +167,11 @@
     return true
   }
   function openRowEdit(index: number) {
-    const current = results.state.byTab[tabs.state.activeKey]
+    const ctx = context()
+    const current = results.state.byTab[ctx.key]
     const grid = current?.grid
-    if (!rowEditable || !grid?.editable || !conn.state.id || !grid.rows[index]) return
-    rowEdit = { grid, row: grid.rows[index], connectionId: conn.state.id, tabKey: tabs.state.activeKey, transactionId: current.transactionId ?? null }
+    if (!rowEditable || !grid?.editable || !ctx.connectionId || !grid.rows[index]) return
+    rowEdit = { grid, row: grid.rows[index], connectionId: ctx.connectionId, tabKey: ctx.key, transactionId: current.transactionId ?? null }
   }
   function onRowSaved(row: Record<string, unknown>) {
     if (!rowEdit) return
@@ -171,16 +193,19 @@
     toast.show(ok ? 'Value copied.' : 'Copy to clipboard failed')
   }
   function cancelRun() {
-    if (!conn.state.id || (!result?.running && !result?.loadingMore)) return
-    void results.cancel(tabs.state.activeKey, conn.state.id)
+    const ctx = context()
+    if (!ctx.connectionId || (!result?.running && !result?.loadingMore)) return
+    void results.cancel(ctx.key, ctx.connectionId)
     toast.show(result.loadingMore ? 'Canceling row load…' : 'Canceling query…')
   }
   function loadMoreRows() {
-    if (conn.state.id && result?.grid?.truncated) void results.loadMore(tabs.state.activeKey, conn.state.id)
+    const ctx = context()
+    if (ctx.connectionId && result?.grid?.truncated) void results.loadMore(ctx.key, ctx.connectionId)
   }
   function runControl(sql: 'COMMIT' | 'ROLLBACK') {
-    if (!conn.state.id || result?.running || result?.loadingMore) return
-    void results.run(tabs.state.activeKey, conn.state.id, sql)
+    const ctx = context()
+    if (!ctx.connectionId || result?.running || result?.loadingMore) return
+    void results.run(ctx.key, ctx.connectionId, sql)
   }
   async function copyResult() {
     if (!activeGrid) return
@@ -189,9 +214,8 @@
     toast.show(ok ? `Copied ${current.rows.length} row(s) to clipboard` : 'Copy to clipboard failed')
   }
   async function exportCsv() {
-    const connectionId = conn.state.id
+    const { key: tabKey, connectionId } = context()
     if (!connectionId) return
-    const tabKey = tabs.state.activeKey
     // Export the owning store's captured grid, never the display snapshot.
     const current = results.state.byTab[tabKey]?.grid
     if (!current) return
@@ -228,11 +252,23 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
 <div class="results" data-component="svelte-results-panel">
+  {#if snapshot.current.entries.length}
+    <div class="results-head" role="group" aria-label="Connection results">
+      <div class="subtabs">
+      {#each snapshot.current.entries as entry (entry.key)}
+        <button class="subtab" class:active={snapshot.current.activeKey === entry.key} aria-pressed={snapshot.current.activeKey === entry.key}
+          onclick={() => { const group = multiResults.state.byTab[tabs.state.activeKey]; if (group) group.selected = entry.key }}>{entry.name} · {entry.connecting ? 'Connecting…' : entry.running ? 'Running…' : entry.loadingMore ? 'Loading…' : entry.error ? 'Error' : 'Done'}</button>
+      {/each}
+      </div>
+      <span class="spacer"></span>
+      <button class="btn-sm" onclick={closeConnectionResults}>Close results</button>
+    </div>
+  {/if}
   <div class="results-head">
     <div class="subtabs">
       {#each result?.grids ?? [] as current, index (current.key)}
         <button class="subtab" class:active={!result?.showMessages && result?.grid?.key === current.key} aria-pressed={!result?.showMessages && result?.grid?.key === current.key}
-          title={`Statement ${current.statementNumber} · ${current.rows.length} loaded row(s)${current.limited ? ' · partial result' : ''}`} onclick={() => results.selectGrid(tabs.state.activeKey, current.key)}>{current.plan ? 'Plan' : `Result ${index + 1}`}</button>
+          title={`Statement ${current.statementNumber} · ${current.rows.length} loaded row(s)${current.limited ? ' · partial result' : ''}`} onclick={() => results.selectGrid(snapshot.current.activeKey, current.key)}>{current.plan ? 'Plan' : `Result ${index + 1}`}</button>
       {/each}
       <button class="subtab" class:active={!result || result.showMessages} onclick={showMessagesView}>Messages</button>
     </div>
@@ -246,12 +282,20 @@
       <button class="btn-sm" title="Copy loaded rows to clipboard (TSV)" disabled={result?.loadingMore} onclick={copyResult}><Copy size={13} /> COPY</button>
       <button class="btn-sm" title={activeGrid.limited ? 'Export only the retained rows to CSV (partial result)' : 'Export all rows to CSV'} disabled={result?.loadingMore} onclick={exportCsv}><Download size={13} /> {activeGrid.limited ? 'CSV (partial)' : 'CSV'}</button>
     {/if}
-    {#if result?.running || result?.loadingMore}
+    {#if snapshot.current.entries.find((entry) => entry.key === snapshot.current.activeKey)?.connecting}
+      <button class="danger" onclick={() => { const entry = context().entry; if (entry) void multiResults.cancel(entry) }}>Cancel connection</button>
+    {:else if result?.running || result?.loadingMore}
       <button class="danger" disabled={result.cancelling} title="Cancel running query or row load" onclick={cancelRun}><Square size={11} /> {result.cancelling ? 'Canceling…' : result.loadingMore ? 'Cancel load' : 'Cancel'}</button>
     {:else}
-      <button class="btn-sm" disabled={!snapshot.current.connectionId || !snapshot.current.hasSelection || snapshot.current.readOnly} title="Show estimated plan for the selected SQL (one statement)" onclick={() => onexplain('explain')}>Explain</button>
-      <button class="btn-sm" disabled={!snapshot.current.connectionId || !snapshot.current.hasSelection || snapshot.current.readOnly} title="Execute the selected SQL and show actual timings (requires confirmation)" onclick={() => onexplain('analyze')}>Explain Analyze</button>
-      <button class="primary run-btn" disabled={!snapshot.current.connectionId || result?.loadingMore || snapshot.current.readOnly} title="Run (F5 or Ctrl+Enter)" onclick={onrun}><Play size={13} /> Run</button>
+      <div class="run-split">
+        <button class="primary run-btn" disabled={!snapshot.current.activeConnectionId || snapshot.current.readOnly} title={snapshot.current.entries.length ? 'Run on the active connection (F5 or Ctrl+Enter)' : 'Run (F5 or Ctrl+Enter)'} onclick={onrun}><Play size={13} /> RUN</button>
+        <button class="primary run-toggle" disabled={snapshot.current.readOnly} popovertarget="run-options" aria-label="Run options" title="Other run types"><ChevronDown size={13} /></button>
+      </div>
+      <div bind:this={runOptions} id="run-options" class="run-options" popover="auto" role="group" aria-label="Run types">
+        <button disabled={!snapshot.current.activeConnectionId || !snapshot.current.hasSelection || snapshot.current.readOnly} title="Show estimated plan on the active connection for the selected SQL (one statement)" onclick={() => runOption(() => onexplain('explain'))}>Explain</button>
+        <button disabled={!snapshot.current.activeConnectionId || !snapshot.current.hasSelection || snapshot.current.readOnly} title="Execute the selected SQL on the active connection and show actual timings (requires confirmation)" onclick={() => runOption(() => onexplain('analyze'))}>Explain Analyze</button>
+        <button disabled={!snapshot.current.hasSelection || snapshot.current.readOnly} onclick={() => runOption(onmulti)}>Run on multiple connections</button>
+      </div>
     {/if}
   </div>
   {#if !result || result.showMessages || !result.grid}
@@ -304,3 +348,25 @@
   {#if cellValue}<ValueDialog target={cellValue} onclose={() => { cellValue = null }} />{/if}
   {#if rowEdit}<RowEditDialog target={rowEdit} onsaved={onRowSaved} onclose={() => { rowEdit = null }} />{/if}
 </div>
+
+<style>
+  .run-split { display: flex; flex-shrink: 0; }
+  .run-split .run-btn { border-radius: 4px 0 0 4px; }
+  .run-split .run-toggle { anchor-name: --run-options; border-radius: 0 4px 4px 0; border-left: 1px solid #ffffff40; padding-inline: 5px; }
+  .run-options {
+    position-anchor: --run-options;
+    inset: auto;
+    top: anchor(bottom);
+    right: anchor(right);
+    margin: 4px 0 0;
+    padding: 4px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--panel);
+    color: var(--text);
+    box-shadow: 0 4px 16px #0006;
+  }
+  .run-options:popover-open { display: grid; gap: 2px; }
+  .run-options button { justify-content: flex-start; border: none; background: transparent; white-space: nowrap; }
+  .run-options button:hover:not(:disabled) { background: var(--panel-2); }
+</style>
