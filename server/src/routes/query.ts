@@ -6,7 +6,7 @@ import { parseTransactionId, sessionKey, transactionState } from '../sessions.js
 import type { TransactionState } from '../schema-types.js'
 
 // HTTP adapter for query execution. All client ownership, transaction
-// handling, cursor sessions, and cleanup live in queryexec.ts; this module
+// handling, transaction sessions, and cleanup live in queryexec.ts; this module
 // validates input, maps outcomes to status codes, and serializes errors.
 
 interface QueryBody {

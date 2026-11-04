@@ -8,7 +8,7 @@ const {
   setSession, beginSession, finishSession, teardownSession, closeSessionsForClient,
 } = sessions
 
-// Per-tab cursor/transaction state: the pinning, 409-conflict and reaper
+// Per-tab transaction state: the pinning, 409-conflict and reaper
 // arming rules decide whether a batch runs, waits or is refused.
 
 let seq = 0
@@ -52,13 +52,12 @@ test('parseTransactionId passes through absence and validates presence', () => {
 test('assertTransaction skips legacy callers and conflicts on change', async () => {
   const k = key()
   const { client } = tracked()
-  setSession(k, 'conn-1', client, null, null, 'transaction')
+  setSession(k, 'conn-1', client)
   const id = transactionState(k).transactionId
   assertTransaction(k, undefined)
   assertTransaction(k, id)
-  // A cursor-only session has no transaction id: expecting one conflicts.
+  // A tab without that transaction (it ended, or never existed) conflicts.
   const kc = key()
-  setSession(kc, 'conn-1', client, 'cur', null, 'cursor')
   let err
   try {
     assertTransaction(kc, id)
@@ -69,44 +68,39 @@ test('assertTransaction skips legacy callers and conflicts on change', async () 
   assert.equal(err?.statusCode, 409)
   assert.equal(err?.code, 'TRANSACTION_CHANGED')
   await teardownSession(k, 'rollback')
-  await teardownSession(kc, 'rollback')
 })
 
 test('transactionState reflects only open user transactions', async () => {
   assert.deepEqual(transactionState('conn-1|missing'), { transactionId: null, transactionOpen: false })
   const { client } = tracked()
-  const kc = key()
-  setSession(kc, 'conn-1', client, 'cur', null, 'cursor')
-  assert.deepEqual(transactionState(kc), { transactionId: null, transactionOpen: false })
   const kt = key()
-  setSession(kt, 'conn-1', client, null, null, 'transaction')
+  setSession(kt, 'conn-1', client)
   const st = transactionState(kt)
   assert.equal(st.transactionOpen, true)
   assert.ok(st.transactionId)
-  await teardownSession(kc, 'rollback')
+  // A close requested while a batch runs already reports the transaction gone.
+  beginSession(kt)
   await teardownSession(kt, 'rollback')
+  assert.deepEqual(transactionState(kt), { transactionId: null, transactionOpen: false })
+  await finishSession(kt, getSession(kt), 'keep')
 })
 
-test('the reaper is armed whenever a transaction may be left open', async () => {
+test('the reaper is armed while a transaction sits idle, not while a batch runs', async () => {
   const { client } = tracked()
-  const kCursor = key()
-  setSession(kCursor, 'conn-1', client, 'cur', null, 'cursor')
-  assert.ok(getSession(kCursor).timer, 'cursor session arms the reaper')
-  const kTxn = key()
-  setSession(kTxn, 'conn-1', client, null, null, 'transaction')
-  assert.ok(getSession(kTxn).timer, 'user transaction arms the reaper')
-  const kIdle = key()
-  setSession(kIdle, 'conn-1', client, null, null, 'cursor')
-  assert.equal(getSession(kIdle).timer, null, 'nothing pending arms nothing')
-  await teardownSession(kCursor, 'rollback')
-  await teardownSession(kTxn, 'rollback')
-  await teardownSession(kIdle, 'rollback')
+  const k = key()
+  setSession(k, 'conn-1', client)
+  assert.ok(getSession(k).timer, 'an idle user transaction arms the reaper')
+  const s = beginSession(k)
+  assert.equal(getSession(k).timer, null, 'a running batch disarms it')
+  await finishSession(k, s, 'keep')
+  assert.ok(getSession(k).timer, 'keeping the transaction re-arms it')
+  await teardownSession(k, 'rollback')
 })
 
 test('beginSession guards the busy flag and disarms the timer', async () => {
   const { client } = tracked()
   const k = key()
-  setSession(k, 'conn-1', client, 'cur', null, 'cursor')
+  setSession(k, 'conn-1', client)
   const s = beginSession(k)
   assert.ok(s)
   assert.equal(beginSession(k), undefined, 'a busy session cannot be entered twice')
@@ -118,7 +112,7 @@ test('beginSession guards the busy flag and disarms the timer', async () => {
 test('teardown of a busy session defers to the running batch', async () => {
   const { client, wasReleased } = tracked()
   const k = key()
-  setSession(k, 'conn-1', client, 'cur', null, 'cursor')
+  setSession(k, 'conn-1', client)
   const s = beginSession(k)
   await teardownSession(k, 'rollback')
   assert.equal(wasReleased(), false, 'the running batch still owns the client')
@@ -131,7 +125,7 @@ test('teardown of a busy session defers to the running batch', async () => {
 test('finishSession commits and releases an idle session', async () => {
   const { client, wasReleased } = tracked()
   const k = key()
-  setSession(k, 'conn-1', client, null, null, 'transaction')
+  setSession(k, 'conn-1', client)
   const s = beginSession(k)
   await finishSession(k, s, 'commit')
   assert.deepEqual(client.queries, ['COMMIT', 'DISCARD ALL'])
@@ -144,8 +138,8 @@ test('closeSessionsForClient drops sessions pinned to a dead client', async () =
   const other = stubClient()
   const k1 = key()
   const k2 = key()
-  setSession(k1, 'conn-1', client, 'cur', null, 'cursor')
-  setSession(k2, 'conn-1', other, 'cur', null, 'cursor')
+  setSession(k1, 'conn-1', client)
+  setSession(k2, 'conn-1', other)
   await closeSessionsForClient(client)
   assert.equal(getSession(k1), undefined)
   assert.ok(getSession(k2), 'sessions on other clients survive')

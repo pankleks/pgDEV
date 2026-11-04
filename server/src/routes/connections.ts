@@ -107,7 +107,7 @@ export async function connectionRoutes(app: FastifyInstance) {
       }
       client.release()
       // Catalog/DDL queries get their own small pool so a handful of paged
-      // cursor sessions (which pin main-pool clients) cannot starve them.
+      // open transaction tabs (which pin main-pool clients) cannot starve them.
       catalogPool = new Pool({ ...config, max: 4 })
       catalogPool.on('error', (err) => {
         console.error(`pg catalog pool error: ${pgErrorMessage(err, 'Database connection error')}`)

@@ -504,7 +504,7 @@ export async function runBatch(
   // A user-opened transaction keeps its client pinned for the tab; continue it
   // instead of checking out a new one.
   const active = getSession(runKey)
-  if (active?.kind === 'transaction') {
+  if (active) {
     if (options.explain) {
       try { sql = explainSql(sql, options.explain, standardConformingStrings(active.client)) }
       catch (err) { return { kind: 'error', error: sqlError(err) } }
@@ -512,9 +512,6 @@ export async function runBatch(
     if (!nextStatement(sql, 0, standardConformingStrings(active.client))) return { kind: 'error', error: { kind: 'empty' } }
     return runOnTransactionSession(connId, runKey, sql, cap)
   }
-
-  // Clean up any prior non-transaction session.
-  await teardownSession(runKey, 'rollback')
 
   const start = performance.now()
   let client: PoolClient
@@ -594,7 +591,7 @@ export async function runBatch(
       // A forgotten transaction must not pin this client forever: bound its
       // idle life server-side as a backstop to the session reaper.
       await client.query(`SET LOCAL idle_in_transaction_session_timeout = '5min'`)
-      setSession(runKey, connId, client, null, null, 'transaction')
+      setSession(runKey, connId, client)
       sessionKept = true
     } else {
       if (txn.inTxn) {

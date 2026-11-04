@@ -345,30 +345,6 @@ export function useTabs() {
     }
   }
 
-  function closeAll() {
-    fileHandles.clear()
-    state.tabs = []
-    state.activeKey = ''
-  }
-
-  function closeOthers(key: string) {
-    const keep = state.tabs.find((t) => t.key === key)
-    if (!keep) return
-    for (const tab of state.tabs) {
-      if (tab.key !== key) fileHandles.delete(tab.key)
-    }
-    state.tabs = [keep]
-    state.activeKey = key
-  }
-
-  function closeRight(key: string) {
-    const index = state.tabs.findIndex((t) => t.key === key)
-    if (index === -1) return
-    for (const tab of state.tabs.slice(index + 1)) fileHandles.delete(tab.key)
-    state.tabs = state.tabs.slice(0, index + 1)
-    if (!state.tabs.some((t) => t.key === state.activeKey)) state.activeKey = key
-  }
-
   /**
    * Move a tab to an insertion position in the current order (0 = front,
    * `state.tabs.length` = end). Dropping in place is a no-op; the active tab is
@@ -502,9 +478,6 @@ export function useTabs() {
     openSqlTab,
     showAiLog,
     close,
-    closeAll,
-    closeOthers,
-    closeRight,
     moveTabToIndex,
     updateContent,
     markSaved,

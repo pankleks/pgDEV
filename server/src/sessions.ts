@@ -4,29 +4,18 @@ import { cancelClientQuery } from './pgcancel.js'
 import { releaseClean } from './pools.js'
 import type { TransactionState } from './schema-types.js'
 
-// Per-tab sessions: a dedicated pooled client holding an open transaction
-// with a server-side cursor, so large result sets can be paged with
-// FETCH instead of materialized in Node memory. Sessions are always
-// short-lived: closed on completion, error, cancel, disconnect, or idle
-// timeout (plus an idle_in_transaction_session_timeout backstop in PG).
+// Per-tab sessions: a user-opened transaction (BEGIN without COMMIT) pins its
+// pooled client to the tab until the user ends it, the tab closes, the
+// connection drops or the idle reaper rolls it back (plus an
+// idle_in_transaction_session_timeout backstop in PG). Paging never holds a
+// session: it replays the query (see fetchNextPage in queryexec.ts).
 
 export const SESSION_IDLE_MS = 5 * 60 * 1000
-
-/** A cursor session is an open transaction holding a server-side cursor; a
- * transaction session is a user-opened transaction with no cursor. Both pin
- * their client until the cursor is consumed, the user ends the transaction,
- * or the idle reaper rolls them back. */
-export type SessionKind = 'cursor' | 'transaction'
 
 interface Session {
   connId: string
   client: PoolClient
-  kind: SessionKind
-  transactionId: string | null
-  /** Open cursor awaiting FETCH, or null when nothing is pending. */
-  cursor: string | null
-  /** One lookahead row already consumed from the cursor. */
-  pendingRow: unknown[] | null
+  transactionId: string
   timer: NodeJS.Timeout | null
   busy: boolean
   closeRequested: boolean
@@ -44,7 +33,7 @@ export function getSession(key: string): Session | undefined {
 
 export function transactionState(key: string): TransactionState {
   const s = sessions.get(key)
-  const transactionId = s?.kind === 'transaction' && !s.closeRequested ? s.transactionId : null
+  const transactionId = s && !s.closeRequested ? s.transactionId : null
   return { transactionId, transactionOpen: transactionId !== null }
 }
 
@@ -74,23 +63,13 @@ function armReaper(key: string, s: Session): void {
   s.timer = t
 }
 
-export function setSession(
-  key: string,
-  connId: string,
-  client: PoolClient,
-  cursor: string | null,
-  pendingRow: unknown[] | null = null,
-  kind: SessionKind = 'cursor',
-): void {
+/** Pin `client` to the tab as its open user transaction and arm the reaper. */
+export function setSession(key: string, connId: string, client: PoolClient): void {
   const prev = sessions.get(key)
   if (prev?.timer) clearTimeout(prev.timer)
-  const s: Session = {
-    connId, client, kind, cursor, pendingRow, timer: null, busy: false, closeRequested: false,
-    transactionId: kind === 'transaction' ? randomUUID() : null,
-  }
+  const s: Session = { connId, client, transactionId: randomUUID(), timer: null, busy: false, closeRequested: false }
   sessions.set(key, s)
-  // Arm the reaper whenever a transaction may be left open.
-  if (cursor || kind === 'transaction') armReaper(key, s)
+  armReaper(key, s)
 }
 
 export function beginSession(key: string): Session | undefined {
@@ -135,7 +114,7 @@ export async function finishSession(
   if (sessions.get(key) !== s) return
   if (mode === 'keep' && !s.closeRequested) {
     s.busy = false
-    if (s.cursor || s.kind === 'transaction') armReaper(key, s)
+    armReaper(key, s)
     return
   }
   await releaseSession(key, s, s.closeRequested || mode === 'keep' ? 'rollback' : mode)

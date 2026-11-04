@@ -4,7 +4,10 @@ import { sourceLoader } from '../lib/load.mjs'
 
 const load = sourceLoader()
 const { resolveQueryScope } = await load('web/monaco/sqlscope.ts')
-const { resolveQualifier } = await load('web/monaco/sqlrefs.ts')
+const { catalogFor, resolveRelation } = await load('web/lib/catalog.ts')
+
+const catalogOf = (tables) =>
+  catalogFor({ tables, views: [], types: [], sequences: [], functions: [], builtins: [] })
 
 function scope(marked) {
   const offset = marked.indexOf('|')
@@ -92,7 +95,7 @@ test('derived relations shadow catalog tables even before output inference exist
   const result = scope('SELECT d.| FROM (SELECT * FROM events e) d')
   assert.equal(result.hasRelations, true)
   assert.deepEqual([...result.aliases], [['d', ref('')]])
-  assert.equal(resolveQualifier([{ schema: 'public', name: 'd' }], ['d'], result.aliases), undefined)
+  assert.equal(resolveRelation(catalogOf([{ schema: 'public', name: 'd', columns: [] }]), [], ['d'], result.aliases), undefined)
   assert.equal(scope('SELECT | FROM (SELECT 1)').hasRelations, true)
 })
 
@@ -139,7 +142,7 @@ test('DML targets are visible in SET, ON CONFLICT and RETURNING', () => {
 function columnsAt(marked, qualifier) {
   const offset = marked.indexOf('|')
   const scope = resolveQueryScope(marked.replace('|', ''), offset)
-  const relation = resolveQualifier([...scope.relations], [qualifier], scope.aliases)
+  const relation = resolveRelation(catalogOf([]), scope.relations, [qualifier], scope.aliases)
   return relation ? relation.columns.map((c) => c.name) : null
 }
 
@@ -178,7 +181,7 @@ test('a CTE shadows a catalog table of the same name', () => {
   const offset = marked.indexOf('|')
   const scope = resolveQueryScope(marked.replace('|', ''), offset)
   const catalog = [{ schema: 'public', name: 'events', columns: [{ name: 'id', type: 'int' }] }]
-  const relation = resolveQualifier([...catalog, ...scope.relations], ['e'], scope.aliases)
+  const relation = resolveRelation(catalogOf(catalog), scope.relations, ['e'], scope.aliases)
   assert.deepEqual(relation.columns.map((c) => c.name), ['x'])
 })
 

@@ -107,8 +107,8 @@ export async function rowUpdateRoutes(app: FastifyInstance) {
     const runKey = sessionKey(id, request.tabKey)
     assertTransaction(runKey, request.transactionId)
     const active = getSession(runKey)
-    const sess = active?.kind === 'transaction' ? beginSession(runKey) : undefined
-    if (active?.kind === 'transaction' && !sess) {
+    const sess = active ? beginSession(runKey) : undefined
+    if (active && !sess) {
       return reply.code(409).send({ error: 'A query is already running for this tab', ...transactionState(runKey) })
     }
 

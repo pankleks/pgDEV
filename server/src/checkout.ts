@@ -3,7 +3,7 @@ import { closeSessionsForClient } from './sessions.js'
 import { pgErrorMessage } from './pgerror.js'
 
 // The pool 'error' handler in routes/connections.ts only covers *idle*
-// clients. A cursor session keeps its client checked out for up to the idle
+// clients. A transaction session keeps its client checked out for up to the idle
 // timeout, and that same timeout (`idle_in_transaction_session_timeout`) can
 // terminate the backend while the client is checked out. node-postgres then
 // emits 'error' on the checked-out Client, which has no listener, and an

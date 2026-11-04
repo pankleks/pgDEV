@@ -2,9 +2,9 @@ import { Pool, type PoolClient } from 'pg'
 
 const pools = new Map<string, Pool>()
 
-// A small second pool per connection for catalog/DDL queries. Cursor sessions
-// pin clients in the main pool for up to the idle timeout, so without this the
-// object browser could wait out the 10s checkout timeout behind paged tabs.
+// A small second pool per connection for catalog/DDL queries. Open transaction
+// tabs pin clients in the main pool for up to the idle timeout, so without this
+// the object browser could wait out the 10s checkout timeout behind them.
 const catalogPools = new Map<string, Pool>()
 
 const runningQueries = new Map<string, PoolClient>()

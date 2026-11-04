@@ -22,7 +22,7 @@ test('Processes is a singleton, connection-bound, non-persisted utility tab', ()
   tabs.openProcesses('conn-2')
   assert.equal(tabs.state.tabs.filter((tab) => tab.kind === 'processes').length, 1)
   assert.equal(tabs.state.tabs.find((tab) => tab.kind === 'processes').connectionId, 'conn-2')
-  tabs.closeAll()
+  for (const tab of [...tabs.state.tabs]) tabs.close(tab.key)
 })
 
 function addTestPin(tab) {

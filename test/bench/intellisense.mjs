@@ -11,7 +11,6 @@ const load = sourceLoader()
 const { catalogFor, findCatalogRelation, resolveRelation } = await load('web/lib/catalog.ts')
 const { findFunctions } = await load('web/lib/sqlobjects.ts')
 const { resolveQueryScope } = await load('web/monaco/sqlscope.ts')
-const { findRelation } = await load('web/monaco/sqlrefs.ts')
 const { allLexemes } = await load('web/lib/sqlcache.ts')
 const { scanSqlLexemes } = await load('server/sqllex.ts')
 
@@ -109,9 +108,6 @@ console.log('')
 perOp('findFunctions (grouped by name)', 200000, () => findFunctions(data, [], 'fn_25_40'))
 perOp('findCatalogRelation (indexed)', 200000, () =>
   findCatalogRelation(catalogFor(data), { schema: 's25', name: 't_25_10' }),
-)
-perOp('sqlrefs findRelation (linear baseline)', 5000, () =>
-  findRelation(catalogFor(data).relations, { schema: 's25', name: 't_25_10' }),
 )
 perOp('resolveRelation via alias (indexed)', 200000, () =>
   resolveRelation(catalogFor(data), [], ['t'], aliases),

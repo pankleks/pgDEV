@@ -3,8 +3,18 @@ import assert from 'node:assert/strict'
 import { sourceLoader } from '../lib/load.mjs'
 
 const load = sourceLoader()
-const { unquoteIdent, normIdent, quoteIdent, escapeSnippet, splitChain, matchDotChain, parseAliases, findRelation, resolveQualifier, findSchema } =
+const { unquoteIdent, normIdent, quoteIdent, escapeSnippet, splitChain, matchDotChain, findSchema } =
   await load('web/monaco/sqlrefs.ts')
+const { resolveQueryScope } = await load('web/monaco/sqlscope.ts')
+const { catalogFor, findCatalogRelation, resolveRelation } = await load('web/lib/catalog.ts')
+
+// Reference resolution runs through the production catalog (lib/catalog.ts);
+// these cases pin its alias, schema and quoting rules.
+const parseAliases = (sql) => resolveQueryScope(sql, sql.length).aliases
+const catalogOf = (relations) =>
+  catalogFor({ tables: relations, views: [], types: [], sequences: [], functions: [], builtins: [] })
+const findRelation = (list, ref) => findCatalogRelation(catalogOf(list), ref)
+const resolveQualifier = (list, parts, aliases) => resolveRelation(catalogOf(list), [], parts, aliases)
 
 test('unquoteIdent strips surrounding quotes and unescapes doubled ones', () => {
   assert.equal(unquoteIdent('abc'), 'abc')

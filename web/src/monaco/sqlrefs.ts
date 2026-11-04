@@ -3,7 +3,6 @@
 // unit-tested in plain Node.
 
 import type { ColumnInfo } from '../types'
-import { resolveQueryScope } from './sqlscope'
 
 export interface RelRef {
   schema: string
@@ -38,37 +37,6 @@ export function normIdent(id: string): string {
   return trimmed.startsWith('"') && trimmed.endsWith('"')
     ? unquoteIdent(trimmed)
     : trimmed.toLowerCase()
-}
-
-/** Resolve normalized references against the exact names from pg_catalog. */
-export function findRelation<T extends { schema: string; name: string }>(
-  relations: T[],
-  ref: RelRef,
-): T | undefined {
-  if (ref.schema) return relations.find((r) => r.schema === ref.schema && r.name === ref.name)
-  const matches = relations.filter((r) => r.name === ref.name)
-  // Completion metadata does not contain search_path. Prefer public, then a
-  // unique match; never guess among several non-public schemas.
-  return matches.find((r) => r.schema === 'public') ?? (matches.length === 1 ? matches[0] : undefined)
-}
-
-export function resolveQualifier<T extends { schema: string; name: string }>(
-  relations: T[],
-  parts: string[],
-  aliases: Map<string, RelRef>,
-): T | undefined {
-  if (!parts.length) return undefined
-  const name = normIdent(parts[parts.length - 1])
-  if (parts.length > 1) {
-    return findRelation(relations, { schema: normIdent(parts[parts.length - 2]), name })
-  }
-  // A known alias owns its qualifier even when its target is missing. Falling
-  // back to a same-named table would offer columns from an unrelated relation.
-  const ref = aliases.get(name)
-  if (ref) return findRelation(relations, ref)
-  // Once a query declares sources, a bare table outside that namespace is not
-  // a usable qualifier. Keep catalog discovery for a statement with no FROM.
-  return aliases.size ? undefined : findRelation(relations, { schema: '', name })
 }
 
 // PostgreSQL reserved words (Appendix C, category "reserved"). A name that is
@@ -127,9 +95,4 @@ export function matchDotChain(lineBefore: string): string | null {
       lineBefore,
     )
   return m ? m[1] : null
-}
-
-/** Relation bindings at the cursor; defaults to the end for standalone callers. */
-export function parseAliases(sql: string, offset = sql.length): Map<string, RelRef> {
-  return resolveQueryScope(sql, offset).aliases
 }
