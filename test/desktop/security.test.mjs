@@ -51,3 +51,29 @@ test('web-mode origin guard also covers percent-encoded API paths', async (t) =>
   const r = await app.inject({ url: '/%61pi/ai/config', headers: { origin: 'http://evil.example' } })
   assert.equal(r.statusCode, 403)
 })
+
+test('the MCP identity route proves the endpoint secret without the desktop token', async (t) => {
+  const load = sourceLoader()
+  const { createApp } = await load('server/app.ts')
+  const { identityProof } = await load('server/routes/ai.ts')
+  const { mkdtemp, rm } = await import('node:fs/promises')
+  const { join } = await import('node:path')
+  const { tmpdir } = await import('node:os')
+  const directory = await mkdtemp(join(tmpdir(), 'pgdev-identity-'))
+  const secret = 'b'.repeat(64)
+  const app = await createApp({ serveStatic: false, desktopToken: 'desktop-secret', aiTokenFile: join(directory, 'mcp-token'), mcpEndpointSecret: secret })
+  const plain = await createApp({ serveStatic: false, desktopToken: 'desktop-secret', aiTokenFile: join(directory, 'mcp-token') })
+  t.after(async () => { await app.close(); await plain.close(); await rm(directory, { recursive: true, force: true }) })
+  const challenge = 'c'.repeat(64)
+  const ok = await app.inject({ method: 'POST', url: '/api/ai/identity', payload: { challenge } })
+  assert.equal(ok.statusCode, 200)
+  assert.equal(ok.json().proof, identityProof(secret, challenge))
+  assert.doesNotMatch(ok.body, new RegExp(secret))
+  for (const bad of ['short', 'z'.repeat(64), 42]) {
+    assert.equal((await app.inject({ method: 'POST', url: '/api/ai/identity', payload: { challenge: bad } })).statusCode, 400)
+  }
+  // Exempting the identity route must not open anything else.
+  assert.equal((await app.inject({ url: '/api/ai/config' })).statusCode, 401)
+  // Without an endpoint secret (web mode) the route does not exist.
+  assert.equal((await plain.inject({ method: 'POST', url: '/api/ai/identity', payload: { challenge } })).statusCode, 404)
+})

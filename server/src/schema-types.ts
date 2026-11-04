@@ -15,6 +15,9 @@ export interface ConnectionConfig {
   /** Statement timeout in seconds applied to every query on the pool
    * (PostgreSQL `statement_timeout`). Server default: 30. */
   statementTimeout?: number
+  /** Role the AI agent's read-only queries run as (SET LOCAL ROLE), so
+   * PostgreSQL privileges limit what they can reach. Empty: the login role. */
+  agentRole?: string
 }
 
 export interface ColumnInfo {

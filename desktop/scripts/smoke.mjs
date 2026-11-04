@@ -46,6 +46,7 @@ try {
   helper = spawn(mcp.command[0], mcp.command.slice(1), { env: { ...env, ...mcp.environment }, stdio: ['pipe', 'pipe', 'pipe'] })
   const helperExited = new Promise(resolve => helper.once('exit', (code) => resolve(code)))
   helper.stderr.on('data', () => {})
+  const responses = new Map()
   const initialized = new Promise((resolve, reject) => {
     let pending = ''
     const timeout = setTimeout(() => reject(new Error('Packaged MCP initialize timed out')), 20000)
@@ -55,7 +56,11 @@ try {
         const end = pending.indexOf('\n')
         if (end === -1) break
         const line = pending.slice(0, end); pending = pending.slice(end + 1)
-        try { const message = JSON.parse(line); if (message.id === 1) { clearTimeout(timeout); resolve(message) } } catch {}
+        try {
+          const message = JSON.parse(line)
+          if (message.id === 1) { clearTimeout(timeout); resolve(message) }
+          responses.get(message.id)?.(message)
+        } catch {}
       }
     })
     helper.on('error', (error) => { clearTimeout(timeout); reject(error) })
@@ -63,6 +68,17 @@ try {
   })
   helper.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'desktop-smoke', version: '1' } } }) + '\n')
   assert.ok((await initialized).result.serverInfo)
+  // A tool call goes through the helper's identity challenge against the
+  // live backend before the token is sent; a failure there reads as
+  // "Cannot find the running pgDEV" (or a token rejection).
+  helper.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n')
+  const called = new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('Packaged MCP tool call timed out')), 20000)
+    responses.set(2, (message) => { clearTimeout(timeout); resolve(message) })
+  })
+  helper.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'list_tabs', arguments: {} } }) + '\n')
+  const toolText = (await called).result?.content?.[0]?.text ?? ''
+  assert.doesNotMatch(toolText, /Cannot find the running pgDEV|rejected the token|another version/, toolText)
   // Keep the MCP client connected: closing its stdin would hide a helper leak.
 
   if (process.env.PGDEV_TEST_URL) {

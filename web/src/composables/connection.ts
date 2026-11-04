@@ -48,8 +48,10 @@ function labelOf(cfg: ConnectionConfig): string {
 
 /** A saved entry's connectable config, without the `label`/`seq` bookkeeping. */
 function configOf(connection: SavedConnection): ConnectionConfig {
-  if (connection.connectionString) return { connectionString: connection.connectionString }
+  const agentRole = connection.agentRole ? { agentRole: connection.agentRole } : {}
+  if (connection.connectionString) return { connectionString: connection.connectionString, ...agentRole }
   return {
+    ...agentRole,
     host: connection.host,
     port: connection.port,
     database: connection.database,
@@ -69,7 +71,8 @@ function isConnectionConfig(value: unknown): value is ConnectionConfig {
     (cfg.database === undefined || typeof cfg.database === 'string') &&
     (cfg.user === undefined || typeof cfg.user === 'string') &&
     (cfg.password === undefined || typeof cfg.password === 'string') &&
-    (cfg.ssl === undefined || typeof cfg.ssl === 'boolean')
+    (cfg.ssl === undefined || typeof cfg.ssl === 'boolean') &&
+    (cfg.agentRole === undefined || typeof cfg.agentRole === 'string')
   )
 }
 

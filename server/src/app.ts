@@ -34,6 +34,8 @@ export interface AppOptions {
   desktopToken?: string
   mcpCommand?: string[]
   mcpEndpointFile?: string
+  /** Desktop only: proves this server's identity to the MCP helper. */
+  mcpEndpointSecret?: string
 }
 
 export function isLoopback(host: string): boolean {
@@ -103,7 +105,8 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
     if (!route?.startsWith('/api/')) return
     // The MCP shim is not a browser: it authenticates with the bearer token
     // instead of an Origin, so the token check in the route is the guard.
-    if (route === '/api/ai/tool/:name') return
+    // The identity proof is how the shim decides whether to send its token.
+    if (route === '/api/ai/tool/:name' || route === '/api/ai/identity') return
     if (options.desktopToken) {
       const given = Buffer.from(String(req.headers.authorization ?? ''))
       const expected = Buffer.from(`Bearer ${options.desktopToken}`)
@@ -141,7 +144,10 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
   await app.register(queryRoutes)
   await app.register(tableEditRoutes)
   await app.register(rowUpdateRoutes)
-  await app.register(aiRoutes, { token: aiToken, mcpCommand: options.mcpCommand, mcpEndpointFile: options.mcpEndpointFile })
+  await app.register(aiRoutes, {
+    token: aiToken, mcpCommand: options.mcpCommand,
+    mcpEndpointFile: options.mcpEndpointFile, mcpEndpointSecret: options.mcpEndpointSecret,
+  })
 
   const webDist = fileURLToPath(new URL('../../web/dist', import.meta.url))
   if (options.serveStatic !== false && existsSync(webDist)) {

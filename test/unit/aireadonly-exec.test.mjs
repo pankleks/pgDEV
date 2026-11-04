@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { runReadOnlyBatch } from '../../server/dist/queryexec.js'
-import { setPool, removePool } from '../../server/dist/pools.js'
+import { setPool, removePool, setAgentRole } from '../../server/dist/pools.js'
 
 // The agent's executor must not depend on the classifier's split: a statement
 // the server treats as COMMIT ends the batch, every statement goes over the
@@ -91,4 +91,31 @@ test('statements are re-classified as executed, not only by the up-front gate', 
   assert.equal(outcome.kind, 'error')
   assert.match(outcome.error.message, /read-only/)
   assert.ok(!executed.some((e) => e.text.startsWith('DELETE')))
+})
+
+test('a configured agent role is taken inside the read-only transaction, before any agent SQL', async () => {
+  const fake = fakePool()
+  setPool('ro-role', fake.pool)
+  setAgentRole('ro-role', 'agent_reader')
+  try {
+    const outcome = await runReadOnlyBatch('ro-role', 'ai', 'SELECT 1', 10)
+    assert.equal(outcome.kind, 'ok')
+    const texts = fake.executed.map((e) => e.text)
+    const begin = texts.indexOf('BEGIN READ ONLY')
+    const role = fake.executed.findIndex((e) => e.text === "SELECT set_config('role', $1, true)")
+    assert.ok(begin >= 0 && role === begin + 1, JSON.stringify(texts))
+    assert.deepEqual(fake.executed[role].values, ['agent_reader'])
+    assert.ok(role < texts.indexOf('SELECT 1'))
+  } finally {
+    removePool('ro-role')
+  }
+  // Removing the connection forgets its role.
+  const again = fakePool()
+  setPool('ro-role', again.pool)
+  try {
+    await runReadOnlyBatch('ro-role', 'ai', 'SELECT 1', 10)
+    assert.ok(!again.executed.some((e) => e.text.includes("set_config('role'")))
+  } finally {
+    removePool('ro-role')
+  }
 })

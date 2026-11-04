@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply } from 'fastify'
-import { timingSafeEqual } from 'node:crypto'
+import { createHmac, timingSafeEqual } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { connectionIds, getCatalogPool } from '../pools.js'
 import { fetchSchemaData } from '../catalog/metadata.js'
@@ -26,6 +26,12 @@ export interface AiRouteOptions {
   token: string
   mcpCommand?: string[]
   mcpEndpointFile?: string
+  mcpEndpointSecret?: string
+}
+
+/** HMAC the MCP helper expects for its challenge (see bin/pgdev-mcp.mjs). */
+export function identityProof(secret: string, challenge: string): string {
+  return createHmac('sha256', secret).update(`pgdev-mcp-identity:${challenge}`).digest('hex')
 }
 
 function bearerMatches(header: unknown, token: string): boolean {
@@ -52,6 +58,19 @@ export async function aiRoutes(app: FastifyInstance, options: AiRouteOptions) {
     bridge,
     limits,
   })
+
+  // Unauthenticated by design: answers a random challenge with an HMAC keyed
+  // by the per-launch endpoint secret, revealing nothing else. Desktop only.
+  if (options.mcpEndpointSecret) {
+    const secret = options.mcpEndpointSecret
+    app.post('/api/ai/identity', async (req, reply) => {
+      const challenge = (req.body as { challenge?: unknown } | null)?.challenge
+      if (typeof challenge !== 'string' || !/^[0-9a-f]{64}$/.test(challenge)) {
+        return reply.code(400).send({ error: 'Invalid challenge' })
+      }
+      return { proof: identityProof(secret, challenge) }
+    })
+  }
 
   app.post('/api/ai/tool/:name', async (req, reply) => {
     if (!bearerMatches(req.headers.authorization, options.token)) {

@@ -57,11 +57,17 @@ async function runDesktop() {
 
   const token = randomBytes(32).toString('hex')
   const endpointFile = join(directory, 'mcp-endpoint.json')
+  // Per-launch secret shared only through the 0600 endpoint file and the
+  // backend's environment: the MCP helper challenges the server with it
+  // before sending its token, so a process that later takes over a stale
+  // endpoint's port (after a crash) cannot collect the token.
+  const endpointSecret = randomBytes(32).toString('hex')
   const child = utilityProcess.fork(join(ROOT, 'desktop/generated/backend.mjs'), [], {
     env: utilityEnvironment({
       PGDEV_DESKTOP_TOKEN: token,
       PGDEV_TOKEN_FILE: join(directory, 'mcp-token'),
       PGDEV_MCP_ENDPOINT_FILE: endpointFile,
+      PGDEV_MCP_ENDPOINT_SECRET: endpointSecret,
       PGDEV_MCP_COMMAND: JSON.stringify([join(app.isPackaged ? process.resourcesPath : join(ROOT, 'desktop/generated'), ...(app.isPackaged ? ['helpers'] : []), `pgdev-mcp${process.platform === 'win32' ? '.exe' : ''}`)]),
     }),
     stdio: 'pipe', serviceName: 'pgDEV Database Service',
@@ -91,7 +97,7 @@ async function runDesktop() {
     })
   } catch (error) { child.kill(); throw error }
   const endpointTemporary = `${endpointFile}.${randomBytes(8).toString('hex')}.tmp`
-  await writeFile(endpointTemporary, JSON.stringify({ url: backendUrl, pid: process.pid }), { mode: 0o600, flag: 'wx' })
+  await writeFile(endpointTemporary, JSON.stringify({ url: backendUrl, pid: process.pid, secret: endpointSecret }), { mode: 0o600, flag: 'wx' })
   await rename(endpointTemporary, endpointFile)
 
   const backendFetch = (path, options = {}) => fetch(`${backendUrl}${path}`, {

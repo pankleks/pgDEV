@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { Client, Pool } from 'pg'
 import { randomUUID } from 'node:crypto'
-import { setPool, setCatalogPool, removePool } from '../pools.js'
+import { setPool, setCatalogPool, removePool, setAgentRole } from '../pools.js'
 import { pgErrorMessage } from '../pgerror.js'
 import { closeSessionsForConnection, closeSessionsForClient } from '../sessions.js'
 import { cancelConnection } from '../queryexec.js'
@@ -15,6 +15,7 @@ interface ConnectBody {
   password?: string
   ssl?: boolean
   statementTimeout?: number
+  agentRole?: string
 }
 
 const DEFAULT_STATEMENT_TIMEOUT_MS = 30000
@@ -77,6 +78,11 @@ export async function connectionRoutes(app: FastifyInstance) {
       }
       statementTimeoutMs = s * 1000
     }
+    // PostgreSQL role names are at most 63 bytes (NAMEDATALEN - 1).
+    if (b.agentRole !== undefined && (typeof b.agentRole !== 'string' || Buffer.byteLength(b.agentRole) > 63)) {
+      return reply.code(400).send({ error: 'agentRole must be a role name of at most 63 bytes' })
+    }
+    const agentRole = b.agentRole?.trim() || undefined
     const config = connectionConfig(b)
     config.max = 5
     config.statement_timeout = statementTimeoutMs
@@ -105,6 +111,20 @@ export async function connectionRoutes(app: FastifyInstance) {
       } catch {
         // ignore — version display is optional
       }
+      if (agentRole) {
+        // Check the role now, so a typo surfaces in the connect dialog rather
+        // than as a failure of every agent query later.
+        try {
+          await client.query('BEGIN READ ONLY')
+          await client.query("SELECT set_config('role', $1, true)", [agentRole])
+          await client.query('ROLLBACK')
+        } catch (err) {
+          // Destroy rather than pool a client in an unknown state; pool.end()
+          // below would otherwise wait for it forever.
+          client.release(true)
+          throw new Error(`Agent role: ${pgErrorMessage(err)}`)
+        }
+      }
       client.release()
       // Catalog/DDL queries get their own small pool so a handful of paged
       // open transaction tabs (which pin main-pool clients) cannot starve them.
@@ -115,6 +135,7 @@ export async function connectionRoutes(app: FastifyInstance) {
       const id = randomUUID()
       setPool(id, pool)
       setCatalogPool(id, catalogPool)
+      setAgentRole(id, agentRole)
       return { id, pgVersion }
     } catch (err) {
       await catalogPool?.end().catch(() => {})

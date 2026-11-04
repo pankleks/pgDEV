@@ -10,6 +10,7 @@
 //   PGDEV_URL=http://localhost:3010
 //   PGDEV_TOKEN=<from the AI dialog>
 import { readFileSync } from 'node:fs'
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
@@ -29,10 +30,44 @@ function desktopEndpoint() {
   if (address.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(address.hostname)) {
     throw new Error('Invalid desktop MCP endpoint')
   }
-  return { url: address.origin, pid: record.pid }
+  if (typeof record.secret !== 'string' || !/^[0-9a-f]{64}$/.test(record.secret)) {
+    throw new Error('The pgDEV endpoint is from another version. Restart pgDEV and reconnect the MCP client.')
+  }
+  return { url: address.origin, pid: record.pid, secret: record.secret }
 }
 
-const endpoint = () => process.env.PGDEV_ENDPOINT_FILE ? desktopEndpoint().url : url
+/**
+ * Before the token leaves this process, the server must prove it knows the
+ * per-launch secret from the endpoint file. A leftover file after a crash
+ * points at a port anything local may now hold; that process cannot answer.
+ */
+async function verifyDesktop({ url: address, secret }) {
+  const challenge = randomBytes(32).toString('hex')
+  let proof
+  try {
+    const res = await fetch(`${address}/api/ai/identity`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ challenge }),
+      redirect: 'error',
+    })
+    proof = res.ok ? (await res.json())?.proof : undefined
+  } catch {
+    proof = undefined
+  }
+  const expected = Buffer.from(createHmac('sha256', secret).update(`pgdev-mcp-identity:${challenge}`).digest('hex'))
+  const given = Buffer.from(typeof proof === 'string' ? proof : '')
+  if (given.length !== expected.length || !timingSafeEqual(given, expected)) {
+    throw new Error('Cannot find the running pgDEV instance. Open the desktop application first.')
+  }
+}
+
+async function endpoint() {
+  if (!process.env.PGDEV_ENDPOINT_FILE) return url
+  const desktop = desktopEndpoint()
+  await verifyDesktop(desktop)
+  return desktop.url
+}
 
 // MCP clients own stdin, so closing the desktop does not otherwise stop this
 // executable. Release it for Windows updates, including after a desktop crash.
@@ -58,7 +93,7 @@ if (process.env.PGDEV_ENDPOINT_FILE) {
 }
 
 async function callTool(name, args) {
-  const address = endpoint()
+  const address = await endpoint()
   let res
   try {
     res = await fetch(`${address}/api/ai/tool/${name}`, {
@@ -68,6 +103,7 @@ async function callTool(name, args) {
         ...(token ? { authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify(args ?? {}),
+      redirect: 'error',
     })
   } catch (err) {
     throw new Error(`Cannot reach pgDEV at ${address} — is it running? (${err.message})`)

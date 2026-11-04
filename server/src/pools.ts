@@ -9,6 +9,18 @@ const catalogPools = new Map<string, Pool>()
 
 const runningQueries = new Map<string, PoolClient>()
 
+/** Per-connection role for agent queries (see ConnectionConfig.agentRole). */
+const agentRoles = new Map<string, string>()
+
+export function setAgentRole(id: string, role: string | undefined): void {
+  if (role) agentRoles.set(id, role)
+  else agentRoles.delete(id)
+}
+
+export function getAgentRole(id: string): string | undefined {
+  return agentRoles.get(id)
+}
+
 export function setRunning(key: string, client: PoolClient): void {
   runningQueries.set(key, client)
 }
@@ -90,6 +102,7 @@ export async function removePool(id: string): Promise<boolean> {
   const pool = pools.get(id)
   if (!pool) return false
   pools.delete(id)
+  agentRoles.delete(id)
   const catalogPool = catalogPools.get(id)
   catalogPools.delete(id)
   await Promise.all([pool.end(), catalogPool?.end().catch(() => undefined)])

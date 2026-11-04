@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy } from 'svelte'
-  import { Check, CodeXml, Database, Eye, EyeOff, Lock, Plug, Power, Search, Server, SlidersHorizontal, User, X } from '@lucide/svelte'
+  import { Bot, Check, CodeXml, Database, Eye, EyeOff, Lock, Plug, Power, Search, Server, SlidersHorizontal, User, X } from '@lucide/svelte'
   import { api } from '../api'
   import { useConnection, type SavedConnection } from '../composables/connection'
   import { confirmAction } from '../lib/desktop'
@@ -15,6 +15,8 @@
   let showPassword = $state(false)
   let selectedLabel = $state<string | null>(null)
   let url = $state('')
+  /** Applies in both modes, so it lives outside the parameter form. */
+  let agentRole = $state('')
   const form = $state<ConnectionConfig>({
     host: 'localhost', port: 5432, database: '', user: 'postgres', password: '', ssl: false,
   })
@@ -80,6 +82,7 @@
   function pick(entry: SavedConnection) {
     selectedLabel = entry.label
     conn.state.error = ''
+    agentRole = entry.agentRole ?? ''
     if (entry.connectionString) {
       mode = 'url'
       url = entry.connectionString
@@ -114,9 +117,10 @@
       conn.state.error = 'Connection string is required'
       return
     }
+    const role = agentRole.trim() ? { agentRole: agentRole.trim() } : {}
     const config: ConnectionConfig = mode === 'url'
-      ? { connectionString: url.trim() }
-      : { ...form, port: Number(form.port) || 5432 }
+      ? { connectionString: url.trim(), ...role }
+      : { ...form, port: Number(form.port) || 5432, ...role }
     await conn.connect(config, remember)
   }
 
@@ -207,6 +211,10 @@
                 </button>
               </span>
             </label>
+            <label class="field-label" title="Optional. The AI agent's read-only queries run as this role (SET LOCAL ROLE), so its privileges limit what the agent can read or call. The login must be a member of it.">
+              <span>Agent role</span>
+              <span class="field"><Bot class="field-icon" size={14} /><input bind:value={agentRole} autocomplete="off" placeholder="Optional: run AI agent queries as this role" /></span>
+            </label>
             <div class="checks">
               <label class="check-item"><input bind:checked={form.ssl} type="checkbox" /><span><strong>SSL</strong><small>Use SSL to connect to the database</small></span></label>
               <label class="check-item"><input bind:checked={remember} type="checkbox" /><span><strong>Remember on this device</strong><small>Credentials use secure OS storage when available</small></span></label>
@@ -216,6 +224,10 @@
         {:else}
           <form class="fields" onsubmit={submit}>
             <label class="field-label"><span>URL</span><span class="field"><input bind:value={url} placeholder="postgres://user:pass@host:5432/db" /></span></label>
+            <label class="field-label" title="Optional. The AI agent's read-only queries run as this role (SET LOCAL ROLE), so its privileges limit what the agent can read or call. The login must be a member of it.">
+              <span>Agent role</span>
+              <span class="field"><Bot class="field-icon" size={14} /><input bind:value={agentRole} autocomplete="off" placeholder="Optional: run AI agent queries as this role" /></span>
+            </label>
             <div class="checks">
               <label class="check-item"><input bind:checked={remember} type="checkbox" /><span><strong>Remember on this device</strong><small>Credentials use secure OS storage when available</small></span></label>
             </div>

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { once } from 'node:events'
+import { createHmac, randomBytes } from 'node:crypto'
 
 // The MCP shim is behaviour, not internals: a stub pgDEV API records what the
 // shim forwards, and a JSON-RPC conversation over stdio pins the agent-visible
@@ -16,7 +17,11 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO = join(HERE, '..', '..')
 const SHIM = join(REPO, 'bin', 'pgdev-mcp.mjs')
 
-async function stubApi() {
+const SECRET = 'a'.repeat(64)
+
+/** `identitySecret` makes the stub a genuine pgDEV that can answer the
+ * shim's identity challenge; without it the stub is an impostor. */
+async function stubApi({ identitySecret } = {}) {
   const requests = []
   let status = 200
   let closed = false
@@ -31,6 +36,11 @@ async function stubApi() {
         parsed = {}
       }
       requests.push({ url: req.url, auth: req.headers.authorization, body: parsed })
+      if (identitySecret && req.url === '/api/ai/identity') {
+        const proof = createHmac('sha256', identitySecret).update(`pgdev-mcp-identity:${parsed.challenge}`).digest('hex')
+        res.writeHead(200, { 'content-type': 'application/json' })
+        return res.end(JSON.stringify({ proof }))
+      }
       res.writeHead(status, { 'content-type': 'application/json' })
       res.end(
         JSON.stringify(
@@ -138,12 +148,12 @@ for (const scenario of ['endpoint removed', 'desktop replaced', 'desktop crashed
         await once(owner, 'spawn')
         pid = owner.pid
       }
-      await writeFile(file, JSON.stringify({ url: 'http://127.0.0.1:3010', pid }))
+      await writeFile(file, JSON.stringify({ url: 'http://127.0.0.1:3010', pid, secret: SECRET }))
       shim = startShim({ PGDEV_ENDPOINT_FILE: file })
       await handshake(shim)
       const exited = once(shim.child, 'exit', { signal: AbortSignal.timeout(5000) })
       if (scenario === 'endpoint removed') await rm(file)
-      else if (scenario === 'desktop replaced') await writeFile(file, JSON.stringify({ url: 'http://127.0.0.1:3011', pid: 0 }))
+      else if (scenario === 'desktop replaced') await writeFile(file, JSON.stringify({ url: 'http://127.0.0.1:3011', pid: 0, secret: SECRET }))
       else {
         const ownerExited = once(owner, 'exit')
         owner.kill('SIGKILL')
@@ -241,3 +251,35 @@ test('invalid arguments and unknown tools are protocol errors', async () => {
     await api.close()
   }
 })
+
+for (const genuine of [true, false]) {
+  test(`a desktop endpoint ${genuine ? 'that proves its identity receives the token' : 'held by an impostor never sees the token'}`, async () => {
+    // After a crash the endpoint file outlives the desktop, and another local
+    // process may bind its port. The shim challenges before sending the token.
+    const secret = randomBytes(32).toString('hex')
+    const api = await stubApi(genuine ? { identitySecret: secret } : {})
+    const directory = await mkdtemp(join(tmpdir(), 'pgdev-mcp-identity-'))
+    const file = join(directory, 'endpoint.json')
+    await writeFile(file, JSON.stringify({ url: api.url, pid: process.pid, secret }))
+    const shim = startShim({ PGDEV_ENDPOINT_FILE: file, PGDEV_TOKEN: 'secret-token' })
+    try {
+      await handshake(shim)
+      const call = await shim.rpc('tools/call', { name: 'get_schema', arguments: {} })
+      const withToken = api.requests.filter((r) => r.auth)
+      if (genuine) {
+        assert.equal(call.result.isError, undefined, JSON.stringify(call.result))
+        assert.deepEqual(withToken.map((r) => r.url), ['/api/ai/tool/get_schema'])
+        assert.equal(withToken[0].auth, 'Bearer secret-token')
+      } else {
+        assert.equal(call.result.isError, true)
+        assert.match(call.result.content[0].text, /Cannot find the running pgDEV/)
+        assert.deepEqual(withToken, [], 'the token never left the shim')
+        assert.deepEqual(api.requests.map((r) => r.url), ['/api/ai/identity'])
+      }
+    } finally {
+      shim.stop()
+      await api.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+}

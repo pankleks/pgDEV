@@ -79,3 +79,43 @@ test('non-ASCII spaces do not open a dollar quote that hides later statements', 
     assert.equal(isReadOnlySql(sql).ok, false, JSON.stringify(space))
   }
 })
+
+test('calls with effects outside the read-only transaction are refused', () => {
+  for (const sql of [
+    'SELECT pg_terminate_backend(123)',
+    'select PG_CANCEL_BACKEND(pid) from pg_stat_activity',
+    'SELECT pg_catalog.pg_reload_conf()',
+    "SELECT pg_read_file('/etc/passwd')",
+    "SELECT * FROM pg_ls_dir('.')",
+    'SELECT * FROM pg_ls_waldir()',
+    "SELECT dblink_exec('dbname=x', 'DELETE FROM t')",
+    "SELECT * FROM dblink('dbname=x', 'SELECT 1') AS t(a int)",
+    "SELECT set_config('role', 'postgres', true)",
+    'SELECT pg_stat_reset()',
+    "SELECT pg_create_logical_replication_slot('s', 'pgoutput')",
+    "SELECT lo_export(1, '/tmp/x')",
+    'SELECT pg_terminate_backend /* c */ (1)',
+    'EXPLAIN ANALYZE SELECT pg_terminate_backend(1)',
+    'SELECT 1; SELECT pg_cancel_backend(1)',
+    'SELECT "pg_terminate_backend"(1)',
+  ]) {
+    const result = isReadOnlySql(sql)
+    assert.equal(result.ok, false, sql)
+    assert.match(result.reason, /outside the agent's read-only transaction/, sql)
+  }
+})
+
+test('the same names as data, columns or other functions are fine', () => {
+  for (const sql of [
+    "SELECT 'pg_terminate_backend(1)' AS note",
+    'SELECT $$set_config(x)$$',
+    'SELECT pg_terminate_backend FROM audit_log',
+    'SELECT current_setting(\'role\')',
+    'SELECT pg_sleep(0)',
+    'SELECT "PG_TERMINATE_BACKEND"(1)', // a different, case-sensitive name
+    'SELECT my_dblink_report()',
+    '-- pg_terminate_backend(1)\nSELECT 1',
+  ]) {
+    assert.deepEqual(isReadOnlySql(sql), { ok: true }, sql)
+  }
+})

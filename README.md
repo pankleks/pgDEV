@@ -115,7 +115,15 @@ Settings, pinned file references and tab sessions use versioned JSON snapshots i
 
 pgDEV exposes an MCP server.
 
-The AI dialog provides a copyable configuration pointing at the bundled **pgdev-mcp** executable. The helper needs no system Node installation and authenticates to the running app with a separate persistent token. It discovers the current loopback port through a native endpoint file, so the configuration survives app restarts. Keep the token private.
+The AI dialog provides a copyable configuration pointing at the bundled **pgdev-mcp** executable. The helper needs no system Node installation and authenticates to the running app with a separate persistent token. It discovers the current loopback port through a native endpoint file, so the configuration survives app restarts. Before sending the token, the helper checks that the server really is this pgDEV launch, so a stale endpoint left by a crash cannot hand the token to another local process. Keep the token private.
+
+What the agent's `query` can do:
+
+* It runs one statement at a time in a read-only transaction that is always rolled back, so it cannot change data or schema.
+* Calls with effects outside that transaction are refused: signalling or terminating sessions, reading or writing server files, `dblink`, resetting statistics, replication management and `set_config`.
+* This refusal only catches direct calls. An existing function can still reach them, so the reliable limit is the role's privileges.
+* Set **Agent role** in the connect dialog to make agent queries run as a lower-privilege role (`SET LOCAL ROLE`; the login must be a member). Alternatively, connect with a low-privilege login.
+* `get_schema` and `get_ddl` read the catalog with the connection's own login.
 
 Closing pgDEV also stops its MCP helpers so they do not block Windows updates. After reopening pgDEV, reconnect MCP in your client; the saved configuration remains valid.
 

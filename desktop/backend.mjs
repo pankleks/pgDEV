@@ -35,6 +35,7 @@ try {
     desktopToken: process.env.PGDEV_DESKTOP_TOKEN,
     mcpCommand: JSON.parse(process.env.PGDEV_MCP_COMMAND),
     mcpEndpointFile: process.env.PGDEV_MCP_ENDPOINT_FILE,
+    mcpEndpointSecret: process.env.PGDEV_MCP_ENDPOINT_SECRET,
   })
   const url = await app.listen({ port: 0, host: '127.0.0.1' })
   parent.postMessage({ type: 'ready', url })

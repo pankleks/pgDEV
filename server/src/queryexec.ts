@@ -1,5 +1,5 @@
 import type { PoolClient } from 'pg'
-import { getPool, setRunning, getRunning, deleteRunning, runningKeysForConnection, releaseClean } from './pools.js'
+import { getPool, getAgentRole, setRunning, getRunning, deleteRunning, runningKeysForConnection, releaseClean } from './pools.js'
 import { rawTextTypes } from './pgtypes.js'
 import { cancelClientQuery } from './pgcancel.js'
 import { guardCheckedOutClient } from './checkout.js'
@@ -753,6 +753,11 @@ export async function runReadOnlyBatch(
   try {
     await observeSqlState(client)
     await client.query('BEGIN READ ONLY')
+    // A configured agent role limits the batch to that role's privileges for
+    // this transaction only; the agent cannot call set_config to leave it
+    // (readonly.ts blocks it), and ROLLBACK + DISCARD ALL undo it afterwards.
+    const role = getAgentRole(connId)
+    if (role) await client.query("SELECT set_config('role', $1, true)", [role])
     const pages: DataPage[] = []
     let offset = 0
     while (true) {
