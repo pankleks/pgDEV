@@ -3,7 +3,7 @@ import { api } from '../api'
 import { insertAtCursor } from '../lib/formatbridge'
 import { AI_TAB_TITLE, applyBridgeAction, type AiBridgeDeps, type BridgeAction } from '../lib/aibridge'
 import { useConnection } from './connection'
-import { releaseTab, useResults } from './results'
+import { releaseTab, useResults, multiResults } from './results'
 import { useSettings } from './settings'
 import { useTabs } from './tabs'
 import { desktop } from '../lib/desktop'
@@ -20,7 +20,7 @@ export function useAi() {
     const conn = useConnection()
     return {
       connectionId: () => conn.state.id ?? null,
-      connectionLabel: () => conn.state.label ?? '',
+      connectionLabel: () => conn.state.name ?? '',
       tabs: () =>
         tabs.state.tabs.map((t) => ({
           key: t.key,
@@ -45,17 +45,29 @@ export function useAi() {
         releaseTab(key, conn.state.id)
         tabs.close(key)
       },
-      showGrid: (tabKey, grid) => results.showGrid(tabKey, grid),
+      showGrid: (tabKey, grid) => results.showGrid(tabKey, {
+        ...grid,
+        profileId: grid.connectionId === conn.state.id ? conn.state.profileId : null,
+        connectionName: grid.connectionId === conn.state.id ? conn.state.name : null,
+      }),
       insertAtCursor: (sql) => insertAtCursor(sql),
       activeResult: (tabKey) => {
-        const r = results.state.byTab[tabKey]
-        if (!r) return null
+        const group = multiResults.state.byTab[tabKey]
+        const entry = group?.entries.find((entry) => entry.key === group.selected)
+        const r = results.state.byTab[entry?.key ?? tabKey]
+        if (!r && !group) return null
+        const all = group ? group.entries.map((entry) => results.state.byTab[entry.key]) : [r]
+        const profileId = entry ? entry.profileId : r?.profileId ?? null
+        const connectionName = conn.saved().find((profile) => profile.id === profileId)?.name ?? entry?.name ?? r?.connectionName ?? null
         return {
-          running: r.running || r.loadingMore,
-          transactionOpen: r.transactionOpen,
-          selected: r.grid?.statementNumber ?? null,
-          messages: r.messages.map((m) => ({ level: m.level, text: m.text })),
-          grids: r.grids.map((g) => ({
+          connectionId: entry ? entry.connectionId : r?.connectionId ?? null,
+          profileId,
+          connectionName,
+          running: all.some((r) => r?.running || r?.loadingMore) || !!group?.entries.some((entry) => entry.connecting),
+          transactionOpen: all.some((r) => r?.transactionOpen),
+          selected: r?.grid?.statementNumber ?? null,
+          messages: [...(entry ? [{ level: 'info' as const, text: `Connection: ${connectionName}` }] : []), ...(r?.messages ?? []).map((m) => ({ level: m.level, text: m.text }))],
+          grids: (r?.grids ?? []).map((g) => ({
             statement: g.statementNumber,
             columns: g.columns,
             columnTypes: g.columnTypes,

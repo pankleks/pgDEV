@@ -1,12 +1,14 @@
 <script lang="ts">
   import { dialogFocus } from '../lib/dialogfocus'
   import { onDestroy } from 'svelte'
-  import { Bot, Check, CodeXml, Database, Eye, EyeOff, Lock, Plug, Power, Search, Server, SlidersHorizontal, User, X } from '@lucide/svelte'
+  import { Bot, Check, CodeXml, Copy, Database, Eye, EyeOff, Lock, Plug, Plus, Power, Save, Search, Server, SlidersHorizontal, User, X } from '@lucide/svelte'
   import { api } from '../api'
   import { useConnection, type SavedConnection } from '../composables/connection'
   import { confirmAction } from '../lib/desktop'
   import { stateView } from '../lib/state.svelte'
   import type { ConnectionConfig } from '../types'
+  import type { ProfileConfig } from '../lib/connectionprofile'
+  import { useToast } from '../composables/toast'
 
   const conn = useConnection()
   const saved = conn.saved()
@@ -15,12 +17,14 @@
   let remember = $state(true)
   let showPassword = $state(false)
   let selectedLabel = $state<string | null>(null)
+  let name = $state('')
   let url = $state('')
   /** Applies in both modes, so it lives outside the parameter form. */
   let agentRole = $state('')
-  const form = $state<ConnectionConfig>({
+  const defaults: ConnectionConfig = {
     host: 'localhost', port: 5432, database: '', user: 'postgres', password: '', ssl: false,
-  })
+  }
+  const form = $state<ConnectionConfig>({ ...defaults })
   let databases = $state<string[]>([])
   let discovering = $state(false)
   let discovered = $state(false)
@@ -58,30 +62,32 @@
   }
 
   interface ConnectionRow {
+    id: string
     label: string
     sub: string
     saved: SavedConnection | null
     active: boolean
-    seq: number | null
   }
 
   const hasLeftColumn = $derived(snapshot.current.id !== null || snapshot.current.saved.length > 0)
   const allConnections = $derived.by(() => {
     const items: ConnectionRow[] = snapshot.current.saved.map((entry) => ({
-      label: entry.label,
+      id: entry.id,
+      label: entry.name,
       sub: entry.connectionString ? 'connection string' : `${entry.host}:${entry.port} • ${entry.database}`,
       saved: entry,
-      active: entry.label === snapshot.current.label,
-      seq: entry.seq,
+      active: entry.id === snapshot.current.profileId,
     }))
     if (snapshot.current.id && !items.some((item) => item.active)) {
-      items.unshift({ label: snapshot.current.label, sub: '', saved: null, active: true, seq: null })
+      items.unshift({ id: 'active', label: snapshot.current.name, sub: '', saved: null, active: true })
     }
     return items
   })
 
   function pick(entry: SavedConnection) {
-    selectedLabel = entry.label
+    if (snapshot.current.saving) return
+    selectedLabel = entry.id
+    name = entry.name
     conn.state.error = ''
     agentRole = entry.agentRole ?? ''
     if (entry.connectionString) {
@@ -98,32 +104,75 @@
     }
   }
 
+  function newConnection() {
+    selectedLabel = null
+    name = ''
+    url = ''
+    agentRole = ''
+    mode = 'params'
+    remember = true
+    showPassword = false
+    Object.assign(form, defaults)
+    conn.state.error = ''
+    discoveryGeneration++
+    databases = []
+    discovering = false
+    discovered = false
+    discoveryError = ''
+  }
+
   async function clearAll() {
     if (!saved.length) return
-    if (await confirmAction('Forget all saved connections?')) conn.forgetAll()
+    if (await confirmAction('Forget all saved connections?')) { conn.forgetAll(); selectedLabel = null; name = '' }
   }
 
   async function submit(event: SubmitEvent) {
     event.preventDefault()
-    if (discovering) return
+    if (discovering || snapshot.current.saving) return
     if (mode === 'url' && !url.trim()) {
       conn.state.error = 'Connection string is required'
       return
     }
+    await conn.connect(currentConfig(), remember)
+  }
+
+  function currentConfig(): ProfileConfig {
     const role = agentRole.trim() ? { agentRole: agentRole.trim() } : {}
     const config: ConnectionConfig = mode === 'url'
       ? { connectionString: url.trim(), ...role }
-      : { ...form, port: Number(form.port) || 5432, ...role }
-    await conn.connect(config, remember)
+      : { ...form, port: Number(form.port), ...role }
+    return { ...config, name, id: selectedLabel ?? undefined }
   }
 
-  function close() { conn.state.dialog = false }
+  async function save(asNew: boolean, event: MouseEvent) {
+    if (discovering || snapshot.current.connecting || snapshot.current.saving) return
+    if (!(event.currentTarget as HTMLButtonElement).form?.reportValidity()) return
+    const config = currentConfig()
+    if (asNew) delete config.id
+    const profile = await conn.saveProfile(config)
+    if (!profile) return
+    selectedLabel = profile.id
+    name = profile.name
+    remember = true
+    useToast().show(`Connection "${profile.name}" saved.`)
+  }
+
+  function close() { if (!snapshot.current.saving) conn.state.dialog = false }
 </script>
+
+{#snippet connectionActions()}
+  <div class="connection-save-actions">
+    <button type="button" disabled={snapshot.current.connecting || snapshot.current.saving || discovering} onclick={(event) => save(false, event)}><Save size={14} />{snapshot.current.saving ? 'Saving…' : selectedLabel ? 'Save changes' : 'Save connection'}</button>
+    {#if selectedLabel}<button type="button" disabled={snapshot.current.connecting || snapshot.current.saving || discovering} onclick={(event) => save(true, event)}><Copy size={14} /> Save as new</button>{/if}
+  </div>
+  <small class="save-hint">Saving a profile does not connect or switch databases.</small>
+  <button class="primary connect-btn" type="submit" disabled={snapshot.current.connecting || snapshot.current.saving || discovering}><Plug size={15} />{snapshot.current.connecting ? 'Connecting…' : 'Connect'}</button>
+{/snippet}
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 <div class="modal-backdrop" onclick={(event) => { if (event.target === event.currentTarget) close() }}>
   <div class="modal connect-modal" role="dialog" aria-modal="true" aria-label="Connect to PostgreSQL" tabindex="-1" use:dialogFocus={close}>
-    <button class="icon connect-close" title="Close" onclick={close}><X size={16} /></button>
+    <button class="icon connect-close" title="Close" disabled={snapshot.current.saving} onclick={close}><X size={16} /></button>
     <div class="connect-head">
       <div class="connect-logo"><Database size={30} /></div>
       <div>
@@ -136,27 +185,26 @@
         <div class="connect-panel">
           <div class="recent-head">
             <h3 class="panel-title">Connections</h3>
-            {#if snapshot.current.saved.length}<button class="link" onclick={clearAll}>Clear all</button>{/if}
+            {#if snapshot.current.saved.length}<button class="link" disabled={snapshot.current.saving} onclick={clearAll}>Clear all</button>{/if}
           </div>
           <div class="saved">
-            {#each allConnections as entry (entry.label)}
+            {#each allConnections as entry (entry.id)}
               <!-- The row is a container; selecting is its own button, so the
                    Disconnect/Forget buttons are siblings, never nested in one. -->
               <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-              <div class="saved-item" class:current={entry.active} class:selected={entry.label === selectedLabel}
+              <div class="saved-item" class:current={entry.active} class:selected={entry.id === selectedLabel}
                 onclick={() => { if (entry.saved) pick(entry.saved) }}>
                 <button type="button" class="saved-pick" disabled={!entry.saved} aria-label={entry.label}
-                  aria-pressed={entry.label === selectedLabel} onclick={(event) => { event.stopPropagation(); if (entry.saved) pick(entry.saved) }}>
+                  aria-pressed={entry.id === selectedLabel} onclick={(event) => { event.stopPropagation(); if (entry.saved) pick(entry.saved) }}>
                   <Database class="saved-icon" size={17} />
-                  {#if entry.seq !== null}<span class="saved-seq" title={`Connection #${entry.seq}`}>#{entry.seq}</span>{/if}
                   <span class="saved-text"><strong>{entry.label}</strong>{#if entry.sub}<small>{entry.sub}</small>{/if}</span>
                 </button>
                 {#if entry.active}
-                  <button class="row-action disconnect" title="Disconnect" disabled={snapshot.current.connecting}
+                  <button class="row-action disconnect" title="Disconnect" disabled={snapshot.current.connecting || snapshot.current.saving}
                     onclick={(event) => { event.stopPropagation(); void conn.disconnect() }}><Power size={14} /></button>
                 {:else if entry.saved}
-                  <button class="row-action" title="Forget"
-                    onclick={(event) => { event.stopPropagation(); conn.forget(entry.label) }}><X size={14} /></button>
+                  <button class="row-action" title="Forget" disabled={snapshot.current.saving}
+                    onclick={(event) => { event.stopPropagation(); conn.forget(entry.id); if (selectedLabel === entry.id) selectedLabel = null }}><X size={14} /></button>
                 {/if}
               </div>
             {/each}
@@ -164,7 +212,10 @@
         </div>
       {/if}
       <div class="connect-panel">
-        <h3 class="panel-title">New connection</h3>
+        <div class="recent-head">
+          <h3 class="panel-title">{selectedLabel ? 'Edit connection' : 'New connection'}</h3>
+          {#if selectedLabel}<button class="link" title="Clear the form to enter a new connection" disabled={snapshot.current.connecting || snapshot.current.saving || discovering} onclick={newConnection}><Plus size={13} /> New connection</button>{/if}
+        </div>
         <div class="seg" role="tablist" aria-label="Connection format">
           <button type="button" class="seg-btn" class:active={mode === 'params'} role="tab"
             aria-selected={mode === 'params'} onclick={() => { mode = 'params' }}><SlidersHorizontal size={14} /> Parameters</button>
@@ -172,9 +223,10 @@
             aria-selected={mode === 'url'} onclick={() => { mode = 'url' }}><CodeXml size={14} /> Connection string</button>
         </div>
         {#if mode === 'params'}
-          <form class="fields" onsubmit={submit}>
+          <form class="fields" inert={snapshot.current.saving} onsubmit={submit}>
+            <label class="field-label"><span>Connection name</span><span class="field"><input bind:value={name} placeholder="Optional unique name" /></span></label>
             <label class="field-label"><span>Host</span><span class="field"><Server class="field-icon" size={14} /><input bind:value={form.host} /></span></label>
-            <label class="field-label"><span>Port</span><span class="field"><input bind:value={form.port} type="number" /></span></label>
+            <label class="field-label"><span>Port</span><span class="field"><input bind:value={form.port} type="number" min="1" max="65535" required /></span></label>
             <div class="field-label">
               <label for="connection-database">Database</label>
               <span class="field"><Database class="field-icon" size={14} /><input id="connection-database" bind:value={form.database} required placeholder="postgres" />
@@ -217,10 +269,11 @@
               <label class="check-item"><input bind:checked={form.ssl} type="checkbox" /><span><strong>SSL</strong><small>Use SSL to connect to the database</small></span></label>
               <label class="check-item"><input bind:checked={remember} type="checkbox" /><span><strong>Remember on this device</strong><small>Credentials use secure OS storage when available</small></span></label>
             </div>
-            <button class="primary connect-btn" type="submit" disabled={snapshot.current.connecting || discovering}><Plug size={15} />{snapshot.current.connecting ? 'Connecting…' : 'Connect'}</button>
+            {@render connectionActions()}
           </form>
         {:else}
-          <form class="fields" onsubmit={submit}>
+          <form class="fields" inert={snapshot.current.saving} onsubmit={submit}>
+            <label class="field-label"><span>Connection name</span><span class="field"><input bind:value={name} placeholder="Optional unique name" /></span></label>
             <label class="field-label"><span>URL</span><span class="field"><input bind:value={url} placeholder="postgres://user:pass@host:5432/db" /></span></label>
             <label class="field-label" title="Optional. The AI agent's read-only queries run as this role (SET LOCAL ROLE), so its privileges limit what the agent can read or call. The login must be a member of it.">
               <span>Agent role</span>
@@ -229,7 +282,7 @@
             <div class="checks">
               <label class="check-item"><input bind:checked={remember} type="checkbox" /><span><strong>Remember on this device</strong><small>Credentials use secure OS storage when available</small></span></label>
             </div>
-            <button class="primary connect-btn" type="submit" disabled={snapshot.current.connecting}><Plug size={15} />{snapshot.current.connecting ? 'Connecting…' : 'Connect'}</button>
+            {@render connectionActions()}
           </form>
         {/if}
         {#if snapshot.current.error}<div class="error">{snapshot.current.error}</div>{/if}
@@ -239,6 +292,9 @@
 </div>
 
 <style>
+  .connection-save-actions { display: flex; gap: 8px; margin-top: 6px; }
+  .connection-save-actions button { flex: 1; }
+  .save-hint { color: var(--text-dim); font-size: 11px; }
   .database-picker { margin-top: 3px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); overflow: hidden; }
   .discovery-head { display: flex; justify-content: space-between; gap: 12px; padding: 8px 10px; background: var(--panel); border-bottom: 1px solid var(--border); font-size: 11px; color: var(--text-dim); }
   .database-options { max-height: 168px; overflow-y: auto; padding: 4px; }

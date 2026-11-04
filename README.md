@@ -29,7 +29,7 @@ Parameters or a `postgres://…` connection string, with optional SSL. Connectio
 
 ![Connect dialog](docs/images/manual/02-connect-dialog.png)
 
-The badge shows the live connection as `user@host:port/database`.
+Give each saved profile a unique **Connection name** (case-insensitive; whitespace is trimmed). Leave it blank to use the generated connection label. Profiles may share the same connection details under different names. Select a profile and use **Save changes** to update it, or change its name and use **Save as new** to save a separate profile from the current fields. **New connection** only opens a fresh form. Saving does not connect or switch databases; **Connect** opens a session and also saves the profile when **Remember on this device** is checked. The badge shows the active profile's name. Connection numbers and `?connect=N` links are no longer supported; normal startup still reconnects to the last connection.
 
 ![Connected](docs/images/manual/03-connected-browser.png)
 
@@ -67,10 +67,11 @@ Tables, plain views, sequences and functions open **editable**; materialized vie
 ![Results](docs/images/manual/04-query-results.png)
 
 * Multi-statement batches run with per-statement result sets; typed column headers, `COPY`/`CSV` export, `N row(s)` footer. Failures land in **Messages**, never as a grid.
+* **RUN ▾ → Run on multiple connections** — select SQL in an unbound query tab, choose saved profiles in the checkbox dialog, then run. The last selection is remembered across restarts and profile renames. Results are grouped by profile, with independent messages, cancellation, paging and export; one failure does not stop the other targets. This uses separate sessions without switching the active connection. SQL may modify every selected database: execution is **not atomic across connections**. Close the grouped results to release those sessions (open transactions roll back).
 * Double-click a cell to inspect its raw value (pretty-printed for JSON/JSONB, with a character count) — the dialog's COPY button is the copy path, and a successful copy closes it.
 * Large results load in pages without holding transactions or locks between clicks. “Load more” reruns the SELECT and skips previously loaded rows; concurrent changes can cause skipped or duplicated rows. Use a stable `ORDER BY`. Each page may rerun expensive work; later pages are read-only and cannot repeat database writes from SELECT functions. Explicit `BEGIN` transactions remain open until you finish them.
 * Statement timeout (configurable, applies to new connections) plus explicit cancellation bound runaway queries.
-* **Execution plans** — visual Explain / Explain Analyze. Analyze executes the SQL to measure it and then rolls its changes back; inside your own open transaction they stay until you COMMIT or ROLLBACK. Effects outside the transaction (sequence values, external calls) are not undone.
+* **Execution plans** — **RUN ▾ → Explain / Explain Analyze**. Analyze executes the SQL to measure it and then rolls its changes back; inside your own open transaction they stay until you COMMIT or ROLLBACK. Effects outside the transaction (sequence values, external calls) are not undone. Clicking **RUN** directly keeps normal execution; F5 / Ctrl+Enter is unchanged.
 
   ![Execution plan](docs/images/manual/11-execution-plan.png)
 
@@ -128,3 +129,5 @@ What the agent's `query` can do:
 Closing pgDEV also stops its MCP helpers so they do not block Windows updates. After reopening pgDEV, reconnect MCP in your client; the saved configuration remains valid.
 
 Read tools: `query`, `get_schema` (optional `schema`/`table` filters; relation lists truncate past 200 entries), `get_ddl` (`type`/`schema`/`name`, plus `oid`/`parent` to pin overloads and constraints), `get_active_result` (the active tab's grids capped like `query`, plus the last 100 Messages lines — so the agent sees the outcome, including errors, of scripts *you* ran; no database access happens here). Editor tools: `get_active_query`, `set_active_query` (`replace`/`append`/`insert`), `open_query_tab`, `list_tabs`, `activate_tab`, `close_tab`.
+
+`get_active_result` includes `connectionId`, `profileId` and `connectionName` for the result source (`null` when unknown). For multi-connection runs it reads only the selected connection group. This does **not** change where `query`, `get_schema` or `get_ddl` execute: they still use the main active connection, which may differ from the displayed result's source.

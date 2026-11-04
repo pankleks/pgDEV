@@ -15,7 +15,7 @@ export interface StoredPinnedFile {
 export interface StoredConnections {
   saved: unknown
   last: unknown
-  nextSeq?: number
+  selectedIds?: string[]
 }
 
 export interface StoredAppState {
@@ -46,8 +46,8 @@ function write(kind: 'settings' | 'connections' | 'pinnedFiles' | 'session', val
 }
 
 export const saveSettings = (value: unknown): Promise<void> => write('settings', value)
-export const saveConnections = (saved: unknown, last: unknown, nextSeq: number): Promise<void> =>
-  write('connections', { saved, last, nextSeq })
+export const saveConnections = (saved: unknown, last: unknown, selectedIds: string[]): Promise<void> =>
+  write('connections', { saved, last, selectedIds })
 export async function savePinnedFiles(pins: StoredPinnedFile[]): Promise<boolean> {
   await write('pinnedFiles', pins)
   return true
