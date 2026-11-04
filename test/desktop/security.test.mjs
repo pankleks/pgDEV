@@ -77,3 +77,35 @@ test('the MCP identity route proves the endpoint secret without the desktop toke
   // Without an endpoint secret (web mode) the route does not exist.
   assert.equal((await plain.inject({ method: 'POST', url: '/api/ai/identity', payload: { challenge } })).statusCode, 404)
 })
+
+test('requests naming a non-loopback host are refused (DNS rebinding)', async (t) => {
+  const load = sourceLoader()
+  const { createApp } = await load('server/app.ts')
+  const { mkdtemp, rm } = await import('node:fs/promises')
+  const { join } = await import('node:path')
+  const { tmpdir } = await import('node:os')
+  const directory = await mkdtemp(join(tmpdir(), 'pgdev-host-'))
+  const web = await createApp({ serveStatic: false, aiTokenFile: join(directory, 'mcp-token') })
+  const desktop = await createApp({ serveStatic: false, desktopToken: 'desktop-secret', aiTokenFile: join(directory, 'mcp-token'), mcpEndpointSecret: 'd'.repeat(64) })
+  t.after(async () => { await web.close(); await desktop.close(); await rm(directory, { recursive: true, force: true }) })
+
+  // A rebinding page is "same-origin" with itself: Origin and Host agree.
+  const rebound = { host: 'evil.example:3010', origin: 'http://evil.example:3010' }
+  const before = await web.inject({ url: '/api/ai/config', headers: rebound })
+  assert.equal(before.statusCode, 403)
+  assert.doesNotMatch(before.body, /token/)
+  for (const host of ['evil.example', '192.168.1.10:3010', 'localhost.evil.example', '127.0.0.1.nip.io']) {
+    for (const app of [web, desktop]) {
+      for (const [method, url] of [['GET', '/api/version'], ['POST', '/api/ai/tool/list_tabs'], ['POST', '/api/ai/identity'], ['GET', '/index.html']]) {
+        const r = await app.inject({ method, url, headers: { host, authorization: 'Bearer desktop-secret' }, payload: method === 'POST' ? {} : undefined })
+        assert.equal(r.statusCode, 403, `${host} ${method} ${url}`)
+      }
+    }
+  }
+  // Every loopback spelling still works.
+  for (const host of ['localhost', 'localhost:3010', '127.0.0.1:3010', '[::1]:3010', 'app.localhost:5173']) {
+    const r = await web.inject({ url: '/api/version', headers: { host, origin: `http://${host}` } })
+    assert.equal(r.statusCode, 200, host)
+  }
+  assert.equal((await desktop.inject({ url: '/api/version', headers: { host: '127.0.0.1:41234', authorization: 'Bearer desktop-secret' } })).statusCode, 200)
+})

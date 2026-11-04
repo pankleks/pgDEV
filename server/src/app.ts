@@ -98,6 +98,14 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
   })
 
   app.addHook('onRequest', async (req, reply) => {
+    // DNS rebinding: a web page can point its own domain at 127.0.0.1 and then
+    // talk to this server "same-origin" (Origin and Host both read
+    // evil.example). The server only listens on loopback, so every legitimate
+    // request names a loopback host; anything else is refused before any
+    // route, token or origin logic runs.
+    if (!isLoopback(requestUrl(req)?.hostname ?? '')) {
+      return reply.code(403).send({ error: 'Forbidden host' })
+    }
     // Decide on the matched route pattern, never the raw URL: the router
     // percent-decodes the path, so "/%61pi/..." reaches the /api/ routes while
     // the raw string does not start with "/api/".
