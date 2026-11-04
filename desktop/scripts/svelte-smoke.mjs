@@ -667,6 +667,8 @@ try {
   await sequencesSection.locator('.tree > .node .caret').click()
   await sequencesSection.locator('.child').filter({ hasText: 'owned by fixture.id' }).waitFor()
   await search.fill('payload param')
+  // The search applies after a short typing pause; wait for it to settle.
+  await page.waitForFunction(() => document.querySelectorAll('.browser section.group').length === 1)
   assert.equal(await browser.locator('section.group').count(), 1)
   await functionsSection.locator('.child .obj-name').filter({ hasText: /^payload$/ }).waitFor()
   await browser.getByTitle('Clear search', { exact: true }).click()

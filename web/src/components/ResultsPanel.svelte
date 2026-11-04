@@ -6,7 +6,7 @@
   import { useConnection } from '../composables/connection'
   import { useTabs } from '../composables/tabs'
   import { useToast } from '../composables/toast'
-  import { copyGrid, copyText, csvHeader, csvRows, formatCellForDisplay } from '../lib/gridio'
+  import { copyGrid, copyText, csvHeader, csvRows, formatCellPreview } from '../lib/gridio'
   import { createOutput } from '../lib/files'
   import { stateView } from '../lib/state.svelte'
   import type { CellValueTarget } from '../lib/valueTarget'
@@ -284,7 +284,7 @@
                 <div class="grid-cell" class:nul={cell === null || cell === undefined} style:width={`${colWidth(column)}px`} title={isJsonColumn(column) ? 'Double-click to open value' : 'Double-click to copy'} ondblclick={() => openCell(cell, column)}>
                   {#if cell === null || cell === undefined}<span class="null-badge">null</span>
                   {:else if grid.g.columnTypes[column] === 'boolean'}<span class={`bool-badge ${cell === true || cell === 'true' ? 'true' : 'false'}`}>{cell === true || cell === 'true' ? 'true' : 'false'}</span>
-                  {:else}{formatCellForDisplay(cell)}{/if}
+                  {:else}{formatCellPreview(cell)}{/if}
                 </div>
               {/each}
             </div>

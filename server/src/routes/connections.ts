@@ -84,7 +84,10 @@ export async function connectionRoutes(app: FastifyInstance) {
     }
     const agentRole = b.agentRole?.trim() || undefined
     const config = connectionConfig(b)
-    config.max = 5
+    // Each tab with an open transaction pins one client until COMMIT/ROLLBACK;
+    // room for several such tabs plus ordinary runs, paging and agent reads.
+    // Catalog reads use their own small pool (below).
+    config.max = 10
     config.statement_timeout = statementTimeoutMs
     // Tabs can hold a session client while paging large results; fail fast
     // instead of hanging forever when every pool slot is checked out.

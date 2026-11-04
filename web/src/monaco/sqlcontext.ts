@@ -5,7 +5,7 @@
 // names like "My Col" resolve. Lexing is shared through sqlcache.ts, so the
 // token list is built once per document version.
 
-import { allLexemes, allTokens, type SqlToken } from '../lib/sqlcache'
+import { allLexemes, allTokens, firstAtOrAfter, type SqlToken } from '../lib/sqlcache'
 import { dollarBody } from '../../../server/src/sqllex'
 
 export interface IdentifierAt {
@@ -34,10 +34,14 @@ function rawOf(text: string, token: SqlToken): string {
 /** The identifier containing `offset`, with its dotted chain, or null. */
 export function identifierAt(text: string, offset: number): IdentifierAt | null {
   const tokens = tokenize(text)
+  // Tokens never overlap: only the last one starting at or before `offset`,
+  // or the one just before it when it ends exactly at `offset`, can match;
+  // the earlier of the two wins, as a left-to-right scan would pick it.
+  const last = firstAtOrAfter(tokens, offset + 1) - 1
   let index = -1
-  for (let k = 0; k < tokens.length; k++) {
-    const token = tokens[k] as SqlToken
-    if (token.kind === 'ident' && token.start <= offset && offset <= token.end) {
+  for (const k of [last - 1, last]) {
+    const token = tokens[k]
+    if (token?.kind === 'ident' && token.start <= offset && offset <= token.end) {
       index = k
       break
     }
@@ -80,13 +84,9 @@ export function identifierAt(text: string, offset: number): IdentifierAt | null 
 
 /** The dollar-quoted token whose interior contains `offset`, or null. */
 function dollarTokenAt(text: string, offset: number): { raw: string; start: number } | null {
-  for (const lex of allLexemes(text)) {
-    if (lex.start >= offset) break
-    if (lex.kind === 'dollar' && lex.start < offset && offset < lex.end) {
-      return { raw: lex.raw, start: lex.start }
-    }
-  }
-  return null
+  const lexemes = allLexemes(text)
+  const lex = lexemes[firstAtOrAfter(lexemes, offset) - 1]
+  return lex?.kind === 'dollar' && offset < lex.end ? { raw: lex.raw, start: lex.start } : null
 }
 
 /**
@@ -110,19 +110,14 @@ export function identifierRangeAt(text: string, offset: number): { start: number
       return range ? { start: range.start + shift, end: range.end + shift } : null
     }
   }
-  for (const token of tokenize(text)) {
-    if (token.kind === 'ident' && token.start < offset && offset <= token.end) {
-      return { start: token.start, end: token.end }
-    }
-  }
-  return null
+  const tokens = tokenize(text)
+  const token = tokens[firstAtOrAfter(tokens, offset) - 1]
+  return token?.kind === 'ident' && offset <= token.end ? { start: token.start, end: token.end } : null
 }
 
 /** True when the first token at or after `offset` is `(`. */
 export function callSite(text: string, offset: number): boolean {
-  for (const token of tokenize(text)) {
-    if (token.start < offset) continue
-    return token.kind === 'punct' && token.name === '('
-  }
-  return false
+  const tokens = tokenize(text)
+  const token = tokens[firstAtOrAfter(tokens, offset)]
+  return token?.kind === 'punct' && token.name === '('
 }

@@ -3,7 +3,8 @@
 // parentheses are normal editor input. CTEs and derived tables become
 // synthetic relations whose output columns are inferred from their SELECT
 // list, so `d.` can offer columns the catalog does not know about.
-import { dollarBody, scanSqlLexemes, type SqlLexeme } from '../../../server/src/sqllex'
+import { dollarBody, type SqlLexeme } from '../../../server/src/sqllex'
+import { allLexemes } from '../lib/sqlcache'
 import type { ColumnInfo } from '../types'
 import type { RelRef } from './sqlrefs'
 
@@ -92,15 +93,25 @@ function syntheticFrom(label: string, group: Group, columns: ColumnInfo[]): { re
 
 /** Keep the complete statement around the cursor, including its later FROM. */
 function statement(text: string, offset: number): SqlLexeme[] {
-  let tokens: SqlLexeme[] = []
-  scanSqlLexemes(text, (lex) => {
-    if (lex.kind === 'punct' && lex.raw === ';') {
-      if (lex.start >= offset) return false
-      tokens = []
-    } else if (lex.kind !== 'whitespace' && lex.kind !== 'lineComment' && lex.kind !== 'blockComment') {
-      tokens.push(lex)
+  // From the shared cache: the document is lexed once per edit, not once per
+  // provider call.
+  const lexemes = allLexemes(text)
+  let start = 0
+  let end = lexemes.length
+  for (let i = 0; i < lexemes.length; i++) {
+    const lex = lexemes[i]!
+    if (lex.kind !== 'punct' || lex.raw !== ';') continue
+    if (lex.start >= offset) {
+      end = i
+      break
     }
-  })
+    start = i + 1
+  }
+  const tokens: SqlLexeme[] = []
+  for (let i = start; i < end; i++) {
+    const lex = lexemes[i]!
+    if (lex.kind !== 'whitespace' && lex.kind !== 'lineComment' && lex.kind !== 'blockComment') tokens.push(lex)
+  }
   return tokens
 }
 

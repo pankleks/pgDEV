@@ -3,7 +3,7 @@
 // from the CREATE FUNCTION/PROCEDURE header and the names declared in the
 // body's DECLARE block. Pure (uses the shared lexer) so it is unit-testable.
 
-import { allLexemes, allTokens, type SqlToken } from '../lib/sqlcache'
+import { allLexemes, allTokens, firstAtOrAfter, type SqlToken } from '../lib/sqlcache'
 import { dollarBody } from '../../../server/src/sqllex'
 import { parseFunctionArgs, type ArgMode, type FunctionArg } from '../lib/functionargs'
 
@@ -62,25 +62,33 @@ function opensRoutineBody(statement: string): boolean {
  * body runs to EOF, so the cursor at EOF is still inside it.
  */
 export function enclosingRoutineBody(text: string, offset: number): RoutineBody | null {
-  let found: RoutineBody | null = null
-  for (const lex of allLexemes(text)) {
-    if (lex.start >= offset) break
-    if (lex.kind !== 'dollar') continue
-    const { start: tagLen, end: bodyEnd, closed } = dollarBody(lex.raw)
-    // A closed body excludes its end; an unclosed one reaches EOF.
-    if (!(lex.start < offset && offset < (closed ? lex.end : lex.end + 1))) continue
-    const before = text.slice(0, lex.start)
-    if (!opensRoutineBody(lastStatement(before))) continue
-    found = {
-      before,
-      inner: lex.raw.slice(tagLen, bodyEnd),
-      innerStart: lex.start + tagLen,
-      open: lex.start,
-      close: lex.end,
+  // Lexemes never overlap, so only the last one starting before `offset` can
+  // contain it.
+  const lexemes = allLexemes(text)
+  const index = firstAtOrAfter(lexemes, offset) - 1
+  const lex = lexemes[index]
+  if (lex?.kind !== 'dollar') return null
+  const { start: tagLen, end: bodyEnd, closed } = dollarBody(lex.raw)
+  // A closed body excludes its end; an unclosed one reaches EOF.
+  if (!(offset < (closed ? lex.end : lex.end + 1))) return null
+  // The statement owning the body starts after the last `;` before it; the
+  // document's own lexemes say where, without lexing the prefix again.
+  let statementStart = 0
+  for (let k = index - 1; k >= 0; k--) {
+    const previous = lexemes[k]!
+    if (previous.kind === 'punct' && previous.raw === ';') {
+      statementStart = previous.end
+      break
     }
-    break
   }
-  return found
+  if (!opensRoutineBody(text.slice(statementStart, lex.start))) return null
+  return {
+    before: text.slice(0, lex.start),
+    inner: lex.raw.slice(tagLen, bodyEnd),
+    innerStart: lex.start + tagLen,
+    open: lex.start,
+    close: lex.end,
+  }
 }
 
 /**

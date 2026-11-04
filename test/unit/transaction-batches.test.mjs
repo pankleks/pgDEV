@@ -464,3 +464,25 @@ test('a query inside a user transaction produces only the displayed rows', async
     assert.deepEqual(fake.executed.filter((text) => !text.startsWith('SELECT oid')), ['UPDATE t SET x = 2'])
   })
 })
+
+test('a pool checkout timeout explains which tabs pin the connections', async () => {
+  const fake = fakePool()
+  let exhausted = false
+  const connect = fake.pool.connect
+  fake.pool.options = { max: 10 }
+  fake.pool.connect = async () => {
+    if (exhausted) throw new Error('timeout exceeded when trying to connect')
+    return connect()
+  }
+  await withApp('busy-pool-test', fake, async (inject, app) => {
+    const opened = await inject('BEGIN; UPDATE t SET x = 1')
+    assert.equal(opened.json().transactionOpen, true)
+    exhausted = true
+    const other = await app.inject({
+      method: 'POST', url: '/api/connections/busy-pool-test/query',
+      headers: { origin: 'http://localhost' }, payload: { sql: 'SELECT 1', tabKey: 'other' },
+    })
+    assert.notEqual(other.statusCode, 200)
+    assert.match(other.json().error, /All 10 database connections are busy; 1 tab holds an open transaction \(COMMIT or ROLLBACK to free them\)/)
+  })
+})

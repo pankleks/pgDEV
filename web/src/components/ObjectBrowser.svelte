@@ -16,7 +16,7 @@
   import { api } from '../api'
   import type { TableInfo } from '../types'
   import { groupTables, type TableEntry } from '../lib/tablegroups'
-  import { groupNamedObjects } from '../lib/objectgroups'
+  import { entriesWithin, groupNamedObjects } from '../lib/objectgroups'
   import {
     autoExpandFunction, autoExpandRelation, columnsMatch, matchesTerms, nameMatches,
     paramRows, paramsMatch, parseSearch, scopedHighlight, searchTerms, type SearchType,
@@ -64,7 +64,19 @@
   let contextMenu = $state.raw<BrowserContextMenu | null>(null)
   let pinnedContextMenu = $state.raw<PinnedContextMenu | null>(null)
   let tableEditTarget = $state<TableEditTarget | null>(null)
+  // What the user types; `filter` follows it after a short pause, so a fast
+  // typist does not re-filter (and re-render) every list on each key.
+  let filterInput = $state('')
   let filter = $state('')
+  $effect(() => {
+    const value = filterInput
+    if (!value.trim()) {
+      filter = value
+      return
+    }
+    const timer = setTimeout(() => { filter = value }, 150)
+    return () => clearTimeout(timer)
+  })
   const parsed = $derived(parseSearch(filter))
   const queryTerms = $derived(searchTerms(parsed.term))
   const searchType = $derived(parsed.type)
@@ -115,6 +127,27 @@
   const functionEntries = $derived(groupNamedObjects(filteredFunctions, snapshot.current.groupObjects, 'function'))
   const typeEntries = $derived(groupNamedObjects(filteredTypes, snapshot.current.groupObjects, 'type'))
   const sequenceEntries = $derived(groupNamedObjects(filteredSequences, snapshot.current.groupObjects, 'sequence'))
+
+  // Rendering budget: each section shows entries until about PAGE rows (a
+  // group header is one row, plus its objects while open), then a "Show more"
+  // row adds another page. Keeps a schema with thousands of objects, or a
+  // broad search, from building the whole tree in the DOM at once.
+  const PAGE = 300
+  const shown = $state({ tables: PAGE, views: PAGE, functions: PAGE, types: PAGE, sequences: PAGE })
+  $effect(() => {
+    void filter
+    untrack(() => { for (const key of Object.keys(shown) as (keyof typeof shown)[]) shown[key] = PAGE })
+  })
+  const tableCount = $derived(entriesWithin(tableEntries,
+    (e) => e.kind === 'group' ? 1 + (tableGroupOpen(e) ? e.tables.length : 0) : 1, shown.tables))
+  const viewCount = $derived(entriesWithin(viewEntries,
+    (e) => e.kind === 'group' ? 1 + (objectGroupOpen(e, expandedViewGroups) ? e.objects.length : 0) : 1, shown.views))
+  const functionCount = $derived(entriesWithin(functionEntries,
+    (e) => e.kind === 'group' ? 1 + (objectGroupOpen(e, expandedFunctionGroups) ? e.objects.length : 0) : 1, shown.functions))
+  const typeCount = $derived(entriesWithin(typeEntries,
+    (e) => e.kind === 'group' ? 1 + (objectGroupOpen(e, expandedTypeGroups) ? e.objects.length : 0) : 1, shown.types))
+  const sequenceCount = $derived(entriesWithin(sequenceEntries,
+    (e) => e.kind === 'group' ? 1 + (objectGroupOpen(e, expandedSequenceGroups) ? e.objects.length : 0) : 1, shown.sequences))
 
   function browserNode(type: BrowserNodeType, key: string, collapseKeys = [key], groupState?: Set<string>): BrowserNode {
     return { type, key, collapseKeys, groupState }
@@ -333,8 +366,8 @@
       <div class="browser-empty">Not connected.<br />Click the connection badge in the top bar.</div>
     {:else}
       <div class="browser-search">
-        <input bind:value={filter} placeholder='Search… "employee labor" any, "employee+labor" all, "id col"' />
-        {#if filter}<button class="icon" title="Clear search" onclick={() => { filter = '' }}><X size={14} /></button>{/if}
+        <input bind:value={filterInput} placeholder='Search… "employee labor" any, "employee+labor" all, "id col"' />
+        {#if filterInput}<button class="icon" title="Clear search" onclick={() => { filterInput = '' }}><X size={14} /></button>{/if}
         <button class="icon" disabled={!snapshot.current.id || snapshot.current.loading} title="Refresh schema" onclick={refresh}>
           {#if snapshot.current.loading}<LoaderCircle size={14} class="spin" />{:else}<RotateCw size={14} />{/if}
         </button>
@@ -347,7 +380,7 @@
             Tables <span class="count">{isFiltering ? `${filteredTables.length}/${tables.length}` : tables.length}</span>
           </h3>
           {#if open.tables || isFiltering}
-            {#each tableEntries as entry (entry.key)}
+            {#each tableEntries.slice(0, tableCount) as entry (entry.key)}
               {#if entry.kind === 'group'}
                 <div class="node object-group-node" title={`${displayName(entry.schema, entry.name)} · ${entry.tables.length} tables`}
                   onclick={() => { if (!isFiltering) toggleObjectGroup(entry.key, expandedTableGroups) }}
@@ -415,6 +448,7 @@
                 </div>
               {/if}
             {/each}
+            {#if tableCount < tableEntries.length}<button class="show-more" onclick={() => { shown.tables += PAGE }}>Show more · {tableEntries.length - tableCount} more {tableEntries.length - tableCount === 1 ? 'entry' : 'entries'}</button>{/if}
             {#if !filteredTables.length}<div class="empty">No tables</div>{/if}
           {/if}
         </section>
@@ -425,7 +459,7 @@
             {#if open.views || isFiltering}<ChevronDown class="arrow" size={11} />{:else}<ChevronRight class="arrow" size={11} />{/if} Views <span class="count">{isFiltering ? `${filteredViews.length}/${views.length}` : views.length}</span>
           </h3>
           {#if open.views || isFiltering}
-            {#each viewEntries as entry (entry.key)}
+            {#each viewEntries.slice(0, viewCount) as entry (entry.key)}
               {#if entry.kind === 'group'}
                 <div class="node object-group-node" title={`${displayName(entry.schema, entry.name)} · ${entry.objects.length} views`} onclick={() => { if (!isFiltering) toggleObjectGroup(entry.key, expandedViewGroups) }} oncontextmenu={(event) => openNodeMenu(event, browserNode('view-group', entry.key, entry.objects.map((v) => `v-${v.oid}`), expandedViewGroups), false)}>
                   <span class="caret" class:open={objectGroupOpen(entry, expandedViewGroups)}>{#if !isFiltering}<ChevronRight size={12} />{/if}</span><span class="obj-icon">{#if objectGroupOpen(entry, expandedViewGroups)}<FolderOpen size={14} />{:else}<Folder size={14} />{/if}</span>
@@ -450,6 +484,7 @@
                 </div>
               {/if}
             {/each}
+            {#if viewCount < viewEntries.length}<button class="show-more" onclick={() => { shown.views += PAGE }}>Show more · {viewEntries.length - viewCount} more {viewEntries.length - viewCount === 1 ? 'entry' : 'entries'}</button>{/if}
             {#if !filteredViews.length}<div class="empty">No views</div>{/if}
           {/if}
         </section>
@@ -460,7 +495,7 @@
             {#if open.types || isFiltering}<ChevronDown class="arrow" size={11} />{:else}<ChevronRight class="arrow" size={11} />{/if} Types <span class="count">{isFiltering ? `${filteredTypes.length}/${types.length}` : types.length}</span>
           </h3>
           {#if open.types || isFiltering}
-            {#each typeEntries as entry (entry.key)}
+            {#each typeEntries.slice(0, typeCount) as entry (entry.key)}
               {#if entry.kind === 'group'}
                 <div class="node object-group-node" title={`${displayName(entry.schema, entry.name)} · ${entry.objects.length} types`} onclick={() => { if (!isFiltering) toggleObjectGroup(entry.key, expandedTypeGroups) }} oncontextmenu={(event) => openNodeMenu(event, browserNode('type-group', entry.key, entry.objects.map((t) => `ty-${t.oid}`), expandedTypeGroups), false)}>
                   <span class="caret" class:open={objectGroupOpen(entry, expandedTypeGroups)}>{#if !isFiltering}<ChevronRight size={12} />{/if}</span><span class="obj-icon">{#if objectGroupOpen(entry, expandedTypeGroups)}<FolderOpen size={14} />{:else}<Folder size={14} />{/if}</span>
@@ -481,6 +516,7 @@
                 </div>
               {/if}
             {/each}
+            {#if typeCount < typeEntries.length}<button class="show-more" onclick={() => { shown.types += PAGE }}>Show more · {typeEntries.length - typeCount} more {typeEntries.length - typeCount === 1 ? 'entry' : 'entries'}</button>{/if}
             {#if !filteredTypes.length}<div class="empty">No types</div>{/if}
           {/if}
         </section>
@@ -491,7 +527,7 @@
             {#if open.functions || isFiltering}<ChevronDown class="arrow" size={11} />{:else}<ChevronRight class="arrow" size={11} />{/if} Functions <span class="count">{isFiltering ? `${filteredFunctions.length}/${functions.length}` : functions.length}</span>
           </h3>
           {#if open.functions || isFiltering}
-            {#each functionEntries as entry (entry.key)}
+            {#each functionEntries.slice(0, functionCount) as entry (entry.key)}
               {#if entry.kind === 'group'}
                 <div class="node object-group-node" title={`${displayName(entry.schema, entry.name)} · ${entry.objects.length} functions`} onclick={() => { if (!isFiltering) toggleObjectGroup(entry.key, expandedFunctionGroups) }} oncontextmenu={(event) => openNodeMenu(event, browserNode('function-group', entry.key, entry.objects.map((f) => `f-${f.oid}`), expandedFunctionGroups), false)}>
                   <span class="caret" class:open={objectGroupOpen(entry, expandedFunctionGroups)}>{#if !isFiltering}<ChevronRight size={12} />{/if}</span><span class="obj-icon">{#if objectGroupOpen(entry, expandedFunctionGroups)}<FolderOpen size={14} />{:else}<Folder size={14} />{/if}</span>
@@ -519,6 +555,7 @@
                 </div>
               {/if}
             {/each}
+            {#if functionCount < functionEntries.length}<button class="show-more" onclick={() => { shown.functions += PAGE }}>Show more · {functionEntries.length - functionCount} more {functionEntries.length - functionCount === 1 ? 'entry' : 'entries'}</button>{/if}
             {#if !filteredFunctions.length}<div class="empty">No functions</div>{/if}
           {/if}
         </section>
@@ -529,7 +566,7 @@
             {#if open.sequences || isFiltering}<ChevronDown class="arrow" size={11} />{:else}<ChevronRight class="arrow" size={11} />{/if} Sequences <span class="count">{isFiltering ? `${filteredSequences.length}/${sequences.length}` : sequences.length}</span>
           </h3>
           {#if open.sequences || isFiltering}
-            {#each sequenceEntries as entry (entry.key)}
+            {#each sequenceEntries.slice(0, sequenceCount) as entry (entry.key)}
               {#if entry.kind === 'group'}
                 <div class="node object-group-node" title={`${displayName(entry.schema, entry.name)} · ${entry.objects.length} sequences`} onclick={() => { if (!isFiltering) toggleObjectGroup(entry.key, expandedSequenceGroups) }} oncontextmenu={(event) => openNodeMenu(event, browserNode('sequence-group', entry.key, entry.objects.map((s) => `s-${s.oid}`), expandedSequenceGroups), false)}>
                   <span class="caret" class:open={objectGroupOpen(entry, expandedSequenceGroups)}>{#if !isFiltering}<ChevronRight size={12} />{/if}</span><span class="obj-icon">{#if objectGroupOpen(entry, expandedSequenceGroups)}<FolderOpen size={14} />{:else}<Folder size={14} />{/if}</span>
@@ -550,6 +587,7 @@
                 </div>
               {/if}
             {/each}
+            {#if sequenceCount < sequenceEntries.length}<button class="show-more" onclick={() => { shown.sequences += PAGE }}>Show more · {sequenceEntries.length - sequenceCount} more {sequenceEntries.length - sequenceCount === 1 ? 'entry' : 'entries'}</button>{/if}
             {#if !filteredSequences.length}<div class="empty">No sequences</div>{/if}
           {/if}
         </section>

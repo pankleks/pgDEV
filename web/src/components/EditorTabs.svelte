@@ -11,16 +11,24 @@
   let { onrun }: { onrun: () => void } = $props()
   const tabs = useTabs()
   const conn = useConnection()
+  // Strip metadata only: no tab text is copied, and the dirty check (which
+  // reads the text) is the only per-keystroke work, cheap for unchanged tabs.
   const snapshot = stateView(() => ({
-    tabs: tabs.state.tabs.map((tab) => ({ ...tab, displayTitle: tabs.displayTitle(tab), pinned: tabs.isPinned(tab.key) })),
+    tabs: tabs.state.tabs.map((tab) => ({
+      key: tab.key, kind: tab.kind, source: tab.source, connectionId: tab.connectionId,
+      agentOpened: tab.agentOpened, aiMirror: tab.aiMirror, pinnedId: tab.pinnedId,
+      displayTitle: tabs.displayTitle(tab), pinned: tabs.isPinned(tab.key),
+    })),
     activeKey: tabs.state.activeKey, connectionId: conn.state.id,
   }))
   const active = $derived(snapshot.current.tabs.find((tab) => tab.key === snapshot.current.activeKey) ?? null)
   let lastSqlKey = $state('')
   $effect(() => { if (active && active.kind !== 'processes') lastSqlKey = active.key })
-  const sqlTab = $derived(active?.kind !== 'processes' ? active :
-    snapshot.current.tabs.find((tab) => tab.key === lastSqlKey && tab.kind !== 'processes') ??
-    snapshot.current.tabs.find((tab) => tab.kind !== 'processes'))
+  const sqlKey = $derived(active?.kind !== 'processes' ? active?.key :
+    (snapshot.current.tabs.find((tab) => tab.key === lastSqlKey && tab.kind !== 'processes') ??
+    snapshot.current.tabs.find((tab) => tab.kind !== 'processes'))?.key)
+  // The editor gets the store's own tab, so typing never hands it a new object.
+  const sqlTab = $derived(sqlKey ? tabs.state.tabs.find((tab) => tab.key === sqlKey) ?? null : null)
   let menu = $state<{ x: number; y: number; tabKey: string } | null>(null)
   let dragKey = $state<string | null>(null)
   let dropIndex = $state<number | null>(null)

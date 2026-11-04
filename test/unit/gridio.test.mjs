@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { sourceLoader } from '../lib/load.mjs'
 
 const load = sourceLoader()
-const { csvEscape, csvHeader, csvRows, cellToText, formatCellForDisplay, toDelimited } = await load('web/lib/gridio.ts')
+const { csvEscape, csvHeader, csvRows, cellToText, formatCellForDisplay, formatCellPreview, CELL_PREVIEW_CHARS, toDelimited } = await load('web/lib/gridio.ts')
 
 test('csvEscape neutralises spreadsheet formula starters', () => {
   // A database value must not execute when the export is opened.
@@ -86,4 +86,18 @@ test('TSV copy neutralises spreadsheet formula starters like the CSV path', () =
   assert.equal(toDelimited(['v'], [['@SUM(A1)']], '\t'), 'v\n\'@SUM(A1)')
   assert.equal(toDelimited(['v'], [['\t=x']], '\t'), 'v\n\' =x')
   assert.equal(toDelimited(['v'], [['hello']], '\t'), 'v\nhello')
+})
+
+test('grid cells render a bounded preview of long values', () => {
+  assert.equal(formatCellPreview('short'), 'short')
+  assert.equal(formatCellPreview(null), 'NULL')
+  const long = 'x'.repeat(5_000_000)
+  const preview = formatCellPreview(long)
+  assert.equal(preview.length, CELL_PREVIEW_CHARS + 1)
+  assert.ok(preview.endsWith('…'))
+  // Never splits an emoji (a surrogate pair) at the cut.
+  const emoji = `${'a'.repeat(CELL_PREVIEW_CHARS - 1)}😀tail`
+  assert.equal(formatCellPreview(emoji), `${'a'.repeat(CELL_PREVIEW_CHARS - 1)}…`)
+  // Copy paths keep the full value.
+  assert.equal(formatCellForDisplay(long).length, long.length)
 })

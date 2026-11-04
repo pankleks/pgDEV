@@ -146,3 +146,10 @@ test('signature help works at the end of an unfinished body', () => {
   assert.equal(help.signatures[0].label, 'item_count(p integer)')
   assert.equal(help.activeParameter, 0)
 })
+
+test('an unclosed parenthesis in an earlier statement is not the call being typed', () => {
+  const text = 'SELECT f(1; SELECT 1 + '
+  assert.equal(findCall(text, text.length), null)
+  const call = 'SELECT f(1; SELECT g(2, '
+  assert.deepEqual(findCall(call, call.length)?.chain, ['g'])
+})

@@ -32,6 +32,8 @@
   let editor: monaco.editor.IStandaloneCodeEditor | null = null
   let mounted = $state(false)
   const models = new Map<string, monaco.editor.ITextModel>()
+  /** The text each model last pushed into the store, to recognise the echo. */
+  const fromModel = new Map<string, string>()
   const viewStates = new Map<string, monaco.editor.ICodeEditorViewState>()
   const activeKey = $derived(tab.key)
   const errorSignature = $derived(snapshot.current.errors[activeKey])
@@ -155,7 +157,9 @@
       model = monaco.editor.createModel(tab.content, 'sql', monaco.Uri.parse(modelUri(tab.key)))
       model.onDidChangeContent(() => {
         monaco.editor.setModelMarkers(model!, 'pgdev-sql', [])
-        tabs.updateContent(tab.key, model!.getValue())
+        const value = model!.getValue()
+        fromModel.set(tab.key, value)
+        tabs.updateContent(tab.key, value)
       })
       models.set(tab.key, model)
     }
@@ -188,7 +192,10 @@
   }
   function syncExternalContent(tab: EditorTab) {
     const model = models.get(tab.key)
-    if (!model || model.getValue() === tab.content) return
+    // Typing writes the model's own text into the store; that very string
+    // coming back is not an external change (and comparing the reference is
+    // O(1), unlike rebuilding the document with getValue()).
+    if (!model || fromModel.get(tab.key) === tab.content || model.getValue() === tab.content) return
     replaceContent(model, tab.content)
     if (editor?.getModel() === model) {
       const saved = viewStates.get(tab.key)
@@ -245,7 +252,7 @@
       // Detach before disposing a closed active model; editor contributions
       // must stop using it before its disposal event fires.
       if (editor?.getModel() === model) editor.setModel(null)
-      model.dispose(); models.delete(key); viewStates.delete(key)
+      model.dispose(); models.delete(key); viewStates.delete(key); fromModel.delete(key)
     }
   })
   onDestroy(() => {

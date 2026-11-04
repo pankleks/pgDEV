@@ -29,6 +29,7 @@ import {
   finishSession,
   teardownSession,
   assertTransaction,
+  openTransactionCount,
 } from './sessions.js'
 
 // Runs in flight per tab, and how many closes landed while any were. A run
@@ -578,7 +579,7 @@ async function runBatchOnTab(
   try {
     client = await pool.connect()
   } catch (err) {
-    return { kind: 'error', error: { kind: 'connect', message: pgErrorMessage(err) } }
+    return { kind: 'error', error: { kind: 'connect', message: checkoutFailure(connId, err) } }
   }
   // Checkout can wait: a different request may have opened a transaction meanwhile.
   try {
@@ -715,6 +716,21 @@ async function runBatchOnTab(
   }
 }
 
+/**
+ * Message for a failed pool checkout. A timeout means every client is in use,
+ * typically pinned by tabs with open transactions: say so, since the driver's
+ * "timeout exceeded when trying to connect" reads like a network problem.
+ */
+function checkoutFailure(connId: string, err: unknown): string {
+  const message = pgErrorMessage(err)
+  if (!/timeout exceeded when trying to connect/i.test(message)) return message
+  const max = (getPool(connId) as { options?: { max?: number } }).options?.max
+  const pinned = openTransactionCount(connId)
+  return `All ${max ?? 'available'} database connections are busy` +
+    (pinned ? `; ${pinned} tab${pinned === 1 ? ' holds an open transaction' : 's hold open transactions'} (COMMIT or ROLLBACK to free them)` : '') +
+    '. Try again when a running query finishes.'
+}
+
 /** Command tags a read may produce (VALUES, TABLE and WITH report SELECT). */
 const READ_TAGS = new Set(['SELECT', 'SHOW', 'EXPLAIN'])
 
@@ -741,7 +757,7 @@ export async function runReadOnlyBatch(
   try {
     client = await getPool(connId).connect()
   } catch (err) {
-    return { kind: 'error', error: { kind: 'connect', message: pgErrorMessage(err) } }
+    return { kind: 'error', error: { kind: 'connect', message: checkoutFailure(connId, err) } }
   }
   if (getRunning(runKey)) {
     client.release()

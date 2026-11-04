@@ -169,3 +169,20 @@ export function groupNamedObjects<T extends NamedObject>(
 
   return entries
 }
+
+/**
+ * How many leading entries fit a rendering budget of `limit` rows, where
+ * `rows(entry)` is what one entry renders (a group header plus its children
+ * while open). The first entry always fits, so a huge group still shows.
+ */
+export function entriesWithin<E>(entries: readonly E[], rows: (entry: E) => number, limit: number): number {
+  let used = 0
+  let count = 0
+  for (const entry of entries) {
+    const size = rows(entry)
+    if (count && used + size > limit) break
+    used += size
+    count++
+  }
+  return count
+}

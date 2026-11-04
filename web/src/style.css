@@ -821,6 +821,21 @@ body.dragging-results {
   font-style: italic;
 }
 
+.show-more {
+  display: block;
+  margin: 2px 10px 6px 24px;
+  padding: 2px 6px;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-size: 12px;
+  cursor: pointer;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
 .app-version {
   color: var(--text-dim);
   font-size: 11px;

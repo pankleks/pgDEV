@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { sourceLoader } from '../lib/load.mjs'
 
 const load = sourceLoader()
-const { allTokens } = await load('web/lib/sqlcache.ts')
+const { allTokens, allLexemes, firstAtOrAfter } = await load('web/lib/sqlcache.ts')
 const sqllex = await load('server/sqllex.ts')
 const { scanSqlLexemes } = sqllex
 
@@ -27,4 +27,29 @@ test('an edited text is re-lexed instead of serving the stale list', () => {
   const first = allTokens(text)
   assert.equal(allTokens(text), first)
   assert.notEqual(allTokens(`${text} `), first)
+})
+
+test('the cache keeps a few texts, so alternating providers do not evict each other', () => {
+  const doc = 'SELECT a FROM t; SELECT b FROM u'
+  const before = doc.slice(0, 20)
+  const inner = 'SELECT 1'
+  const first = allLexemes(doc)
+  allLexemes(before)
+  allLexemes(inner)
+  // Same content in a fresh string (as Monaco hands back) still hits.
+  assert.equal(allLexemes(String(doc.split('').join(''))), first)
+  // Beyond the slots, the least recently used text is dropped.
+  for (let i = 0; i < 8; i++) allLexemes(`SELECT ${i}`)
+  assert.notEqual(allLexemes(doc), first)
+})
+
+test('firstAtOrAfter finds the first item starting at or after an offset', () => {
+  const items = [{ start: 0 }, { start: 3 }, { start: 3 }, { start: 7 }]
+  assert.equal(firstAtOrAfter(items, -1), 0)
+  assert.equal(firstAtOrAfter(items, 0), 0)
+  assert.equal(firstAtOrAfter(items, 1), 1)
+  assert.equal(firstAtOrAfter(items, 3), 1)
+  assert.equal(firstAtOrAfter(items, 4), 3)
+  assert.equal(firstAtOrAfter(items, 8), 4)
+  assert.equal(firstAtOrAfter([], 5), 0)
 })

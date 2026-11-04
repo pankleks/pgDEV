@@ -11,6 +11,9 @@ const load = sourceLoader()
 const { catalogFor, findCatalogRelation, resolveRelation } = await load('web/lib/catalog.ts')
 const { findFunctions } = await load('web/lib/sqlobjects.ts')
 const { resolveQueryScope } = await load('web/monaco/sqlscope.ts')
+const { identifierRangeAt, callSite } = await load('web/monaco/sqlcontext.ts')
+const { bodySymbols } = await load('web/monaco/plpgsql.ts')
+const { findCall } = await load('web/lib/signature.ts')
 const { allLexemes } = await load('web/lib/sqlcache.ts')
 const { scanSqlLexemes } = await load('server/sqllex.ts')
 
@@ -103,6 +106,19 @@ perOp('raw scanSqlLexemes (uncached baseline)', 200, () => {
   return n
 })
 perOp('resolveQueryScope warm (cached lexemes)', 500, () => resolveQueryScope(script, script.length))
+// One keystroke: a freshly edited document, then the pure work completion and
+// signature help do for it. The edit forces one lex; everything else should
+// reuse it.
+let edit = 0
+perOp('keystroke: completion + signature pass', 100, () => {
+  const text = `${script}c${edit++ % 10}`
+  const offset = text.length
+  identifierRangeAt(text, offset)
+  callSite(text, offset)
+  bodySymbols(text, offset)
+  resolveQueryScope(text, offset)
+  findCall(text, offset)
+})
 
 console.log('')
 perOp('findFunctions (grouped by name)', 200000, () => findFunctions(data, [], 'fn_25_40'))

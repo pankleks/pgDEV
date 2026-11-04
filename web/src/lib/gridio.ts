@@ -16,6 +16,21 @@ export function formatCellForDisplay(value: unknown): string {
   return cellToText(value)
 }
 
+/** Longest text a grid cell renders. A cell shows one clipped line, so a
+ * multi-megabyte value would only cost layout; copying and the value dialog
+ * still use the full value. */
+export const CELL_PREVIEW_CHARS = 1000
+
+/** Grid cell text, cut to CELL_PREVIEW_CHARS (never inside a surrogate pair). */
+export function formatCellPreview(value: unknown): string {
+  const text = formatCellForDisplay(value)
+  if (text.length <= CELL_PREVIEW_CHARS) return text
+  let end = CELL_PREVIEW_CHARS
+  const code = text.charCodeAt(end - 1)
+  if (code >= 0xd800 && code <= 0xdbff) end--
+  return `${text.slice(0, end)}…`
+}
+
 /**
  * Prefix spreadsheet formula starters so a pasted cell cannot execute as a
  * formula. Applies to every export path — CSV download and clipboard TSV

@@ -136,6 +136,13 @@ export async function teardownSession(
   await releaseSession(key, s, mode)
 }
 
+/** Tabs of a connection currently holding an open transaction (each pins a client). */
+export function openTransactionCount(connId: string): number {
+  let count = 0
+  for (const s of sessions.values()) if (s.connId === connId) count++
+  return count
+}
+
 export async function closeSessionsForConnection(connId: string): Promise<void> {
   const keys = [...sessions.keys()].filter((k) => sessions.get(k)?.connId === connId)
   await Promise.all(

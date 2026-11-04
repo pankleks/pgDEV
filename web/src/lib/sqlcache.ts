@@ -6,58 +6,66 @@
 // JavaScript compares string keys by value, so an unchanged editor value hits
 // the cache even though Monaco hands back a fresh string. A single slot per
 // shape is enough: only the focused document is served between edits, and a
-// new edit simply replaces it.
+// new edit simply replaces it (see SLOTS below for the few that coexist).
 import { scanSqlLexemes, type SqlLexeme } from '../../../server/src/sqllex'
 
-export interface SqlToken {
-  kind: 'ident' | 'punct'
-  start: number
-  end: number
-  /** The text as written (identifiers keep quotes, doubled quotes unescaped in `name`). */
-  raw: string
-  /** Unquoted name: quoted identifiers have their quotes stripped. */
-  name: string
-  quoted: boolean
+/** An identifier or punctuation lexeme (identifiers keep their quotes in
+ * `raw`; `name` is unquoted; punctuation has `name === raw`). */
+export type SqlToken = SqlLexeme & { kind: 'ident' | 'punct' }
+
+/**
+ * Index of the first item starting at or after `offset` (items sorted by
+ * `start`, as lexemes and tokens are). `index - 1` is then the last item
+ * starting before `offset`: the only one that can contain it.
+ */
+export function firstAtOrAfter(items: readonly { start: number }[], offset: number): number {
+  let low = 0
+  let high = items.length
+  while (low < high) {
+    const mid = (low + high) >>> 1
+    if (items[mid]!.start < offset) low = mid + 1
+    else high = mid
+  }
+  return low
 }
 
-let lexemeText = ''
-let lexemes: SqlLexeme[] = []
-let tokenText = ''
-let tokens: SqlToken[] = []
+// A few slots, most recent first: one keystroke's providers alternate between
+// the document, the text before the cursor and a routine's inner body, which
+// would evict each other from a single slot. A miss compares lengths first, so
+// lookups stay cheap; four slots bound the memory kept for large scripts.
+const SLOTS = 4
+
+function memo<T>(cache: { text: string; value: T }[], text: string, build: () => T): T {
+  const index = cache.findIndex((entry) => entry.text === text)
+  if (index === 0) return cache[0]!.value
+  if (index > 0) {
+    const [hit] = cache.splice(index, 1)
+    cache.unshift(hit!)
+    return hit!.value
+  }
+  const value = build()
+  cache.unshift({ text, value })
+  if (cache.length > SLOTS) cache.pop()
+  return value
+}
+
+const lexemeCache: { text: string; value: SqlLexeme[] }[] = []
+const tokenCache: { text: string; value: SqlToken[] }[] = []
 
 /** Every lexeme of `text`, memoized by content. */
 export function allLexemes(text: string): readonly SqlLexeme[] {
-  if (text !== lexemeText) {
+  return memo(lexemeCache, text, () => {
     const out: SqlLexeme[] = []
     scanSqlLexemes(text, (lex) => {
       out.push(lex)
     })
-    lexemeText = text
-    lexemes = out
-  }
-  return lexemes
+    return out
+  })
 }
 
-/** Identifier and punctuation tokens of `text`, memoized by content. */
+/** Identifier and punctuation tokens of `text`, memoized by content. The
+ * cached lexeme objects themselves, so no per-token copy is made. */
 export function allTokens(text: string): readonly SqlToken[] {
-  if (text !== tokenText) {
-    const out: SqlToken[] = []
-    for (const lex of allLexemes(text)) {
-      if (lex.kind === 'ident') {
-        out.push({
-          kind: 'ident',
-          start: lex.start,
-          end: lex.end,
-          raw: lex.raw,
-          name: lex.name,
-          quoted: lex.quoted,
-        })
-      } else if (lex.kind === 'punct') {
-        out.push({ kind: 'punct', start: lex.start, end: lex.end, raw: lex.raw, name: lex.raw, quoted: false })
-      }
-    }
-    tokenText = text
-    tokens = out
-  }
-  return tokens
+  return memo(tokenCache, text, () =>
+    allLexemes(text).filter((lex): lex is SqlToken => lex.kind === 'ident' || lex.kind === 'punct'))
 }

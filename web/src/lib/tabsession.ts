@@ -41,6 +41,10 @@ export function isTabDirty(tab: EditorTab): boolean {
   // read-only previews stay out of the session.
   if (tab.readOnly) return false
   if (tab.savedContent === null) return tab.kind === 'ddl' ? false : tab.content.length > 0
+  // Runs for every tab on every keystroke: compare without allocating unless
+  // a carriage return makes line-ending normalization matter.
+  if (tab.content === tab.savedContent) return false
+  if (!tab.content.includes('\r') && !tab.savedContent.includes('\r')) return true
   return normalizedContent(tab.content) !== normalizedContent(tab.savedContent)
 }
 

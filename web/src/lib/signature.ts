@@ -4,7 +4,7 @@
 // provider in monaco/signature.ts stays thin.
 
 import type { FunctionInfo, SchemaData } from '../types'
-import { allLexemes } from './sqlcache'
+import { allLexemes, firstAtOrAfter } from './sqlcache'
 import { dollarBody } from '../../../server/src/sqllex'
 import { argumentText, parseFunctionArgs } from './functionargs'
 import { functionSignatureDoc } from './hovertext'
@@ -48,8 +48,14 @@ interface Token {
 // the call being typed.
 function tokensUpTo(text: string, offset: number): Token[] {
   const tokens: Token[] = []
-  for (const lex of allLexemes(text)) {
-    if (lex.start >= offset) break
+  // A call never spans a top-level `;`, so read only the cursor's statement
+  // (found by walking back from the cursor), not the whole document.
+  const lexemes = allLexemes(text)
+  const end = firstAtOrAfter(lexemes, offset)
+  let begin = end
+  while (begin > 0 && !(lexemes[begin - 1]!.kind === 'punct' && lexemes[begin - 1]!.raw === ';')) begin--
+  for (let k = begin; k < end; k++) {
+    const lex = lexemes[k]!
     if (lex.kind === 'ident' || lex.kind === 'punct') {
       tokens.push({ kind: lex.kind, start: lex.start, end: lex.end, raw: lex.raw })
       continue
@@ -63,14 +69,13 @@ function tokensUpTo(text: string, offset: number): Token[] {
 
 /** The dollar-quoted body containing `offset`, rebased onto its inner text. */
 function dollarInner(text: string, offset: number): { text: string; offset: number } | null {
-  for (const lex of allLexemes(text)) {
-    if (lex.start >= offset) break
-    if (lex.kind !== 'dollar') continue
-    const { start: tagLen, closed } = dollarBody(lex.raw)
-    // An unclosed body ends at EOF, so a call typed at the end is still inside.
-    if (lex.start < offset && offset < (closed ? lex.end : lex.end + 1)) {
-      return { text: lex.raw.slice(tagLen), offset: offset - lex.start - tagLen }
-    }
+  const lexemes = allLexemes(text)
+  const lex = lexemes[firstAtOrAfter(lexemes, offset) - 1]
+  if (lex?.kind !== 'dollar') return null
+  const { start: tagLen, closed } = dollarBody(lex.raw)
+  // An unclosed body ends at EOF, so a call typed at the end is still inside.
+  if (offset < (closed ? lex.end : lex.end + 1)) {
+    return { text: lex.raw.slice(tagLen), offset: offset - lex.start - tagLen }
   }
   return null
 }
