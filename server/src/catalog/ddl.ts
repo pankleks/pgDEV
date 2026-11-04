@@ -410,20 +410,24 @@ export async function tableDdl(pool: Pool, oid: string, schema: string, name: st
     }
   }
 
-  // Storage parameters and replica identity: one ALTER form for plain tables
-  // and partitions alike.
+  // Foreign tables have their own ALTER/COMMENT forms (ALTER TABLE and
+  // COMMENT ON TABLE reject them).
+  const objectKind = rel.relkind === 'f' ? 'FOREIGN TABLE' : 'TABLE'
+  // Storage parameters: one ALTER form for plain tables and partitions alike.
   if (rel.reloptions) chunks.push(`ALTER TABLE ${table} SET (${rel.reloptions});`)
+  // Replica identity exists only for ordinary tables; a foreign table
+  // reports 'n' (nothing) but refuses the clause.
   const replicaIdentity: Record<string, string> = { n: 'NOTHING', f: 'FULL' }
-  if (rel.replident === 'i' && rel.replident_index) {
+  if (rel.relkind === 'r' && rel.replident === 'i' && rel.replident_index) {
     chunks.push(`ALTER TABLE ${table} REPLICA IDENTITY USING INDEX ${rel.replident_index};`)
-  } else if (replicaIdentity[rel.replident as string]) {
+  } else if (rel.relkind === 'r' && replicaIdentity[rel.replident as string]) {
     chunks.push(`ALTER TABLE ${table} REPLICA IDENTITY ${replicaIdentity[rel.replident as string]};`)
   }
   const triggerState: Record<string, string> = { D: 'DISABLE', R: 'ENABLE REPLICA', A: 'ENABLE ALWAYS' }
   for (const t of triggersRes.rows) {
     chunks.push(`${t.def};`)
     const state = triggerState[t.enabled as string]
-    if (state) chunks.push(`ALTER TABLE ${table} ${state} TRIGGER ${ident(t.tgname)};`)
+    if (state) chunks.push(`ALTER ${objectKind} ${table} ${state} TRIGGER ${ident(t.tgname)};`)
   }
 
   if (rel.relrowsecurity || rel.relforcerowsecurity) chunks.push(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY;`)
@@ -440,8 +444,6 @@ export async function tableDdl(pool: Pool, oid: string, schema: string, name: st
     )
   }
 
-  // Foreign tables have their own forms; COMMENT ON TABLE rejects them.
-  const objectKind = rel.relkind === 'f' ? 'FOREIGN TABLE' : 'TABLE'
   if (rel.owner) chunks.push(`ALTER ${objectKind} ${table} OWNER TO ${ident(rel.owner)};`)
   for (const g of grantsRes.rows) {
     chunks.push(`GRANT ${g.privileges} ON TABLE ${table} TO ${g.grantee}${g.is_grantable ? ' WITH GRANT OPTION' : ''};`)

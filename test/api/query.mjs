@@ -82,6 +82,7 @@ console.log('\n== graphical explain execution ==')
 {
   const query = (sql, extra = {}) => call('POST', `/api/connections/${id}/query`, { sql, tabKey: 'explain', ...extra })
   await query('CREATE TABLE explain_fixture (value integer)')
+  await query('CREATE SEQUENCE explain_seq')
   const estimated = await query('INSERT INTO explain_fixture VALUES (1); -- trailing comment', { explain: 'explain' })
   eq('estimated explain succeeds', estimated.status, 200)
   const estimatedPlan = JSON.parse(estimated.body.results[0].rows[0][0])[0]
@@ -94,17 +95,25 @@ console.log('\n== graphical explain execution ==')
   eq('analyze succeeds', analyzed.status, 200)
   const actualPlan = JSON.parse(analyzed.body.results[0].rows[0][0])[0]
   ok('analyze includes execution timing', typeof actualPlan['Execution Time'] === 'number')
-  eq('analyze executes exactly once', (await query('SELECT count(*) FROM explain_fixture')).body.results[0].rows[0][0], '1')
+  // Analyze measures, then rolls the statement's changes back.
+  eq('analyze rolls its changes back', (await query('SELECT count(*) FROM explain_fixture')).body.results[0].rows[0][0], '0')
+  // A sequence is not rolled back, so it proves the statement ran exactly once.
+  await query("SELECT nextval('explain_seq')", { explain: 'analyze' })
+  eq('analyze executes exactly once', (await query('SELECT last_value FROM explain_seq')).body.results[0].rows[0][0], '1')
   const begun = await query('BEGIN')
   const transactionId = begun.body.transactionId
   const inTransaction = await query('INSERT INTO explain_fixture VALUES (3)', { explain: 'analyze', transactionId })
   eq('analyze retains the manual transaction', inTransaction.body.transactionId, transactionId)
+  // Inside the user's own transaction the change stays until they decide.
+  eq('analyzed insert is visible inside the manual transaction',
+    (await query('SELECT count(*) FROM explain_fixture', { transactionId })).body.results[0].rows[0][0], '1')
   const invalidInTransaction = await query('SELECT 1; SELECT 2', { explain: 'explain', transactionId })
   eq('multiple statements in manual transaction are rejected', invalidInTransaction.status, 400)
   eq('rejection retains the transaction', invalidInTransaction.body.transactionId, transactionId)
   await query('ROLLBACK', { transactionId })
-  eq('manual rollback undoes analyzed insert', (await query('SELECT count(*) FROM explain_fixture')).body.results[0].rows[0][0], '1')
+  eq('manual rollback undoes analyzed insert', (await query('SELECT count(*) FROM explain_fixture')).body.results[0].rows[0][0], '0')
   await query('DROP TABLE explain_fixture')
+  await query('DROP SEQUENCE explain_seq')
 }
 
 console.log('\n== GET /schema ==')
