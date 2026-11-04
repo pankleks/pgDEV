@@ -1268,6 +1268,10 @@ body.dragging-results {
     border-top: 1px solid var(--border);
     background: var(--panel);
     flex-shrink: 0;
+
+    .grid-warn {
+      color: var(--error);
+    }
   }
 }
 

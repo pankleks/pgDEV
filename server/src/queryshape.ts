@@ -73,6 +73,45 @@ export function hasOpenTransaction(statements: string[]): boolean {
   return open
 }
 
+/**
+ * True when the statement orders its own output: an ORDER BY outside every
+ * parenthesis (CTE bodies, subqueries and window clauses are nested, so only
+ * the final query's ORDER BY counts). Paging re-runs the query for each page,
+ * and without one PostgreSQL may return rows in a different order each time.
+ */
+export function hasTopLevelOrderBy(stmt: string): boolean {
+  let depth = 0
+  let previous = ''
+  let found = false
+  scanSqlLexemes(stmt, (lex) => {
+    if (lex.kind === 'punct') {
+      if (lex.raw === '(') depth++
+      else if (lex.raw === ')') depth = Math.max(0, depth - 1)
+      previous = ''
+      return
+    }
+    if (lex.kind !== 'ident' || lex.quoted) {
+      if (lex.kind !== 'whitespace' && lex.kind !== 'lineComment' && lex.kind !== 'blockComment') previous = ''
+      return
+    }
+    const word = lex.name.toUpperCase()
+    if (depth === 0 && previous === 'ORDER' && word === 'BY') {
+      found = true
+      return false
+    }
+    previous = word
+  })
+  return found
+}
+
+/** Statements DECLARE can usually take as a query: the ones worth reading
+ * through a cursor so only the displayed rows are produced. */
+const ROW_KEYWORDS = new Set(['select', 'values', 'table', 'with'])
+
+export function returnsRows(stmt: string): boolean {
+  return ROW_KEYWORDS.has(leadingKeywords(stmt, 1)[0]?.toLowerCase() ?? '')
+}
+
 export function canUseCursor(stmt: string): boolean {
   // WITH is included so CTE queries (`WITH … SELECT …`) are paged instead of
   // being materialized in full. DECLARE only accepts SELECT/VALUES, so a

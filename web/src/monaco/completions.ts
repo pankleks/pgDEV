@@ -13,6 +13,7 @@ import {
   escapeSnippet,
   splitChain,
   unquoteIdent,
+  declaredReference,
   normIdent,
   relationLabel,
 } from './sqlrefs'
@@ -144,6 +145,7 @@ export function registerSqlCompletion(monaco: typeof Monaco): void {
       const symbols = bodySymbols(text, offset)
       for (const sym of symbols) {
         const ident = unquoteIdent(sym.name)
+        const insertText = declaredReference(sym.name)
         if (!matchesPrefix(ident)) continue
         const detail = sym.kind === 'param'
           ? `${sym.mode} parameter${sym.type ? ` · ${sym.type}` : ''}`
@@ -152,7 +154,7 @@ export function registerSqlCompletion(monaco: typeof Monaco): void {
           label: ident,
           kind: K.Variable,
           detail,
-          insertText: quoteIdent(ident),
+          insertText,
           range,
           sortText: '0',
         })

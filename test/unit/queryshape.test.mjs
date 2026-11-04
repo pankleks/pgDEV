@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { sourceLoader } from '../lib/load.mjs'
 
 const load = sourceLoader()
-const { withoutLeadingComments, canUseCursor, requiresAutocommit, parseMaxRows, transactionControl } =
+const { withoutLeadingComments, canUseCursor, requiresAutocommit, parseMaxRows, transactionControl, hasTopLevelOrderBy } =
   await load('server/queryshape.ts')
 
 // These decide whether a batch runs inside a transaction and whether results
@@ -168,4 +168,22 @@ test('transactionControl: PREPARE TRANSACTION ends the session transaction', () 
   assert.equal(transactionControl("prepare /* x */ transaction 'gid'"), 'end')
   // A prepared statement is not transaction control.
   assert.equal(transactionControl('PREPARE q AS SELECT 1'), 'unchanged')
+})
+
+test('hasTopLevelOrderBy sees only the final query ordering', () => {
+  for (const sql of [
+    'SELECT * FROM t ORDER BY id',
+    'select * from t order /* c */ by 1',
+    'WITH x AS (SELECT * FROM t) SELECT * FROM x ORDER BY a',
+    'SELECT a FROM t UNION ALL SELECT a FROM u ORDER BY a',
+  ]) assert.equal(hasTopLevelOrderBy(sql), true, sql)
+  for (const sql of [
+    'SELECT * FROM t',
+    'SELECT * FROM (SELECT * FROM t ORDER BY id) s',
+    'WITH x AS (SELECT * FROM t ORDER BY a) SELECT * FROM x',
+    'SELECT row_number() OVER (ORDER BY id) FROM t',
+    "SELECT 'ORDER BY' FROM t",
+    'SELECT "order", by FROM t',
+    'SELECT * FROM t -- ORDER BY id',
+  ]) assert.equal(hasTopLevelOrderBy(sql), false, sql)
 })

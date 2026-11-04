@@ -8,6 +8,7 @@ import { createStorage } from './storage.mjs'
 import { createFiles } from './files.mjs'
 import { isAppUrl, validateRequest } from './security.mjs'
 import { stopBackend } from './shutdown.mjs'
+import { createAiSubscription } from './aisubscription.mjs'
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const DEV = !app.isPackaged && process.env.PGDEV_DESKTOP_DEV === '1'
@@ -48,8 +49,6 @@ async function runDesktop() {
   let closing = false
   let stopped = false
   let stopTask
-  let aiController
-  let aiTask
   let closeTimer
   const files = createFiles(dialog, () => window)
   const stored = await storage.load()
@@ -192,36 +191,12 @@ async function runDesktop() {
     return result.response === 1
   })
 
-  async function subscribeAi() {
-    if (aiController) return
-    aiController = new AbortController()
-    const controller = aiController
-    aiTask = (async () => {
-      while (!controller.signal.aborted) {
-        try {
-          const response = await backendFetch('/api/ai/bridge', { signal: controller.signal })
-          if (!response.ok || !response.body) throw new Error('Bridge unavailable')
-          window.webContents.send('pgdev:ai-status', true)
-          let pending = ''
-          for await (const chunk of response.body.pipeThrough(new TextDecoderStream())) {
-            pending += chunk.replace(/\r\n/g, '\n')
-            let end
-            while ((end = pending.indexOf('\n\n')) !== -1) {
-              const event = pending.slice(0, end)
-              pending = pending.slice(end + 2)
-              const data = event.split('\n').filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trimStart()).join('\n')
-              if (data && !window.isDestroyed()) window.webContents.send('pgdev:ai-message', data)
-            }
-            if (pending.length > 8 * 1024 * 1024) throw new Error('Bridge event too large')
-          }
-        } catch { /* Reconnect without replaying database work. */ }
-        if (!window.isDestroyed()) window.webContents.send('pgdev:ai-status', false)
-        if (!controller.signal.aborted) await new Promise((resolveDelay) => setTimeout(resolveDelay, 1000))
-      }
-    })()
-  }
-  handle('ai-start', subscribeAi)
-  handle('ai-stop', async () => { aiController?.abort(); await aiTask; aiController = undefined })
+  const ai = createAiSubscription({
+    fetchBridge: (signal) => backendFetch('/api/ai/bridge', { signal }),
+    send: (channel, payload) => { if (!window.isDestroyed()) window.webContents.send(channel, payload) },
+  })
+  handle('ai-start', () => ai.start())
+  handle('ai-stop', () => ai.stop())
 
   function stop() {
     return stopTask ??= stopDesktop()
@@ -229,7 +204,7 @@ async function runDesktop() {
 
   async function stopDesktop() {
     const hardStop = setTimeout(() => { child.kill(); app.exit(1) }, 10000)
-    aiController?.abort()
+    ai.abort()
     clearTimeout(closeTimer)
     await files.abortAll()
     await storage.flush()

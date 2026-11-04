@@ -48,6 +48,7 @@ test('paging reruns only the final SELECT and releases every transaction/client'
     assert.equal(first.kind, 'ok', JSON.stringify(first))
     assert.deepEqual(first.results.at(-1).rows, [[1], [2]])
     assert.equal(first.results.at(-1).truncated, true)
+    assert.equal(first.results.at(-1).unordered, undefined, 'an ORDER BY query pages consistently')
     assert.equal(first.transactionOpen, false)
     assert.equal(getSession(sessionKey(id, 'page')), undefined)
     assert.equal(releases, 1)
@@ -63,7 +64,8 @@ test('paging reruns only the final SELECT and releases every transaction/client'
     assert.deepEqual(await fetchNextPage(id, 'page', 2), { kind: 'ok', rows: [[5]], rowCount: 1, truncated: false })
     assert.equal((await fetchNextPage(id, 'page', 2)).error.kind, 'no-more')
 
-    await runBatch(id, 'shape', 'SELECT n FROM numbers', 2)
+    const unordered = await runBatch(id, 'shape', 'SELECT n FROM numbers', 2)
+    assert.equal(unordered.results.at(-1).unordered, true, 'paging without ORDER BY is flagged')
     changedShape = true
     assert.match((await fetchNextPage(id, 'shape', 2)).error.message, /columns changed/)
     changedShape = false

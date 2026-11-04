@@ -18,6 +18,8 @@ import {
   hasOpenTransaction,
   canUseCursor,
   requiresAutocommit,
+  hasTopLevelOrderBy,
+  returnsRows,
 } from './queryshape.js'
 import {
   sessionKey,
@@ -29,11 +31,24 @@ import {
   assertTransaction,
 } from './sessions.js'
 
-// Per-tab operation generations: every runBatch run bumps the tab's counter,
-// so a close that lands mid-operation can invalidate exactly that
-// operation's session-retention decision (see closeTabSession).
-const operationGeneration = new Map<string, number>()
-const closedGeneration = new Map<string, number>()
+// Runs in flight per tab, and how many closes landed while any were. A run
+// snapshots `closes` when it starts; a different count when it decides whether
+// to keep a transaction means the tab was closed meanwhile (see
+// closeTabSession). Requests rejected as "already running" never touch it, and
+// the entry is dropped when the last run leaves, so nothing accumulates.
+const inFlight = new Map<string, { runs: number; closes: number }>()
+
+function enterRun(key: string): number {
+  let entry = inFlight.get(key)
+  if (!entry) inFlight.set(key, (entry = { runs: 0, closes: 0 }))
+  entry.runs++
+  return entry.closes
+}
+
+function leaveRun(key: string): void {
+  const entry = inFlight.get(key)
+  if (entry && --entry.runs === 0) inFlight.delete(key)
+}
 
 // Only query text and an offset survive between pages — never a client or lock.
 interface PagingQuery {
@@ -68,6 +83,7 @@ export interface MappedData {
   truncated: boolean
   limited: boolean
   totalRowCount?: number
+  unordered?: boolean
   editable?: EditableGrid
 }
 
@@ -327,8 +343,14 @@ async function executeStatements(
     statements.push(stmt)
     const cursor = `pgdev_cur_${++seq}`
     const cursorForThisStatement = useCursors && !txn.userManaged && canUseCursor(stmt) && !nextStatement(sql, offset, mode)
+    // Inside the user's own transaction nothing pages, but a query is still
+    // read through a short-lived cursor: only the displayed rows (plus one to
+    // detect more) are produced, instead of streaming the whole result through
+    // Node until the statement timeout. The savepoint is released straight
+    // away so the user's transaction does not accumulate subtransactions.
+    const boundedCursor = txn.userManaged && !cursorForThisStatement && returnsRows(stmt)
     const base = part.start
-    if (!txn.inTxn || !cursorForThisStatement) {
+    if (!txn.inTxn || (!cursorForThisStatement && !boundedCursor)) {
       try {
         await execDirect(stmt)
       } catch (err) {
@@ -337,15 +359,31 @@ async function executeStatements(
       continue
     }
     await client.query('SAVEPOINT pgdev_sp')
+    const declarePrefix = `DECLARE "${cursor}" NO SCROLL CURSOR FOR `
     try {
-      await client.query(`DECLARE "${cursor}" NO SCROLL CURSOR FOR ${stmt}`)
+      await client.query(declarePrefix + stmt)
     } catch (declareError) {
+      // Only a statement DECLARE cannot take (syntax class 42, feature class
+      // 0A: SHOW, EXPLAIN, a data-modifying WITH, …) is retried directly. A
+      // cancel, statement or lock timeout, serialization failure or lost
+      // connection is the statement's real outcome: running it again would
+      // ignore the cancel, wait out the timeout twice or repeat side effects.
+      const code = String((declareError as { code?: unknown })?.code ?? '')
+      if (!/^(42|0A)/.test(code)) {
+        const e = declareError as { message?: string; code?: string; position?: string }
+        const local = Number(e.position) - declarePrefix.length
+        throw mappedStatementError(
+          { message: e.message, code: e.code, position: local >= 1 ? String(local) : undefined },
+          base,
+        )
+      }
       // Not a cursor-compatible statement (DDL, writes, EXPLAIN, …):
       // roll back to the savepoint so the failed DECLARE doesn't poison
       // the transaction, then run it directly. The retried error is
       // statement-relative (no DECLARE prefix to subtract), so map that one.
       try {
         await client.query('ROLLBACK TO SAVEPOINT pgdev_sp')
+        if (boundedCursor) await client.query('RELEASE SAVEPOINT pgdev_sp')
       } catch {
         throw mappedStatementError(declareError, base)
       }
@@ -356,6 +394,7 @@ async function executeStatements(
       }
       continue
     }
+    if (boundedCursor) await client.query('RELEASE SAVEPOINT pgdev_sp')
     // A FETCH failure is a query failure, not evidence that the statement
     // should be executed again without a cursor. Its position (if any) is
     // relative to the internal FETCH text, so it maps to null.
@@ -364,6 +403,12 @@ async function executeStatements(
       page = await fetchPage(client, cursor, cap)
     } catch (err) {
       throw mappedStatementError(err, null)
+    }
+    if (boundedCursor) {
+      // Rows past the display limit are never produced; the result says so.
+      await closeCursor(client, cursor)
+      results.push({ kind: 'data', page: { ...page, hasMore: false, limited: page.hasMore } })
+      continue
     }
     if (page.hasMore) {
       // Only the last result set is pageable in the UI; earlier
@@ -490,13 +535,28 @@ export async function runBatch(
   cap: number,
   options: BatchOptions = {},
 ): Promise<BatchOutcome> {
-  const transactionId = options.transactionId
-  const pageable = options.pageable !== false
   if (!sql.trim()) return { kind: 'error', error: { kind: 'empty' } }
   const pool = getPool(connId)
   const runKey = sessionKey(connId, tabKey)
-  const generation = (operationGeneration.get(runKey) ?? 0) + 1
-  operationGeneration.set(runKey, generation)
+  const closesAtStart = enterRun(runKey)
+  try {
+    return await runBatchOnTab(pool, connId, runKey, sql, cap, options, closesAtStart)
+  } finally {
+    leaveRun(runKey)
+  }
+}
+
+async function runBatchOnTab(
+  pool: ReturnType<typeof getPool>,
+  connId: string,
+  runKey: string,
+  sql: string,
+  cap: number,
+  options: BatchOptions,
+  closesAtStart: number,
+): Promise<BatchOutcome> {
+  const transactionId = options.transactionId
+  const pageable = options.pageable !== false
   assertTransaction(runKey, transactionId)
   if (getRunning(runKey) || pagingQueries.get(runKey)?.busy) return { kind: 'error', error: { kind: 'running' } }
   pagingQueries.delete(runKey)
@@ -575,6 +635,7 @@ export async function runBatch(
       )
       // Replay only the final SELECT, never earlier statements from the batch.
       const last = mapped.at(-1)
+      if (last?.kind === 'data' && !hasTopLevelOrderBy(statements.at(-1)!)) last.unordered = true
       paging = {
         sql: statements.at(-1)!, offset: last?.kind === 'data' ? last.rows.length : 0,
         fields, searchPath: settings.rows[0].search_path, stringMode: settings.rows[0].string_mode,
@@ -584,8 +645,7 @@ export async function runBatch(
     // A close that landed while this batch ran abandons the tab: nothing may
     // be kept, and the (possibly empty) transaction is rolled back instead of
     // committed. Consumed so a later run on the same tab retains normally.
-    const abandoned = closedGeneration.get(runKey) === generation
-    if (abandoned) closedGeneration.delete(runKey)
+    const abandoned = (inFlight.get(runKey)?.closes ?? 0) !== closesAtStart
 
     if (!abandoned && txn.userManaged && txn.inTxn) {
       // A forgotten transaction must not pin this client forever: bound its
@@ -624,6 +684,16 @@ export async function runBatch(
       transactionOpen: !openCursor && txn.userManaged && txn.inTxn && !abandoned,
     }
   } catch (err) {
+    const abandoned = (inFlight.get(runKey)?.closes ?? 0) !== closesAtStart
+    if (!sessionKept && !abandoned && txn.userManaged && txn.inTxn) {
+      // The batch opened a transaction the user has not ended and then
+      // failed: keep it (aborted) for an explicit ROLLBACK, exactly as when a
+      // later batch fails inside it, and as psql does. Rolling it back here
+      // would silently discard the work the batch did before the error.
+      setSession(runKey, connId, client)
+      if (isMappedStatementError(err)) return { kind: 'error', error: err.error }
+      return { kind: 'error', error: sqlError(err) }
+    }
     await teardownSession(runKey, 'rollback')
     if (!sessionKept) {
       // Error before any session was kept: the client may still hold the
@@ -831,6 +901,9 @@ export async function closeTabSession(connId: string, tabKey: string): Promise<v
   pagingQueries.delete(key)
   const running = getRunning(key)
   if (running) cancelClientQuery(running)
-  closedGeneration.set(key, operationGeneration.get(key) ?? 0)
+  // Only a run already in flight can be abandoned; with none, there is
+  // nothing to record (and nothing left behind for a tab that is gone).
+  const entry = inFlight.get(key)
+  if (entry) entry.closes++
   await teardownSession(key, 'rollback')
 }

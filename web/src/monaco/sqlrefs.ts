@@ -59,6 +59,18 @@ export function quoteIdent(name: string): string {
 }
 
 /**
+ * How to refer to a name exactly as it was declared (a routine parameter or
+ * DECLARE variable). An unquoted declaration (`pUserId`) folds to lowercase in
+ * PostgreSQL, so its spelling is reused as is; quoting the mixed-case form
+ * would name a different, nonexistent variable. A quoted declaration keeps
+ * its exact, quoted name.
+ */
+export function declaredReference(declared: string): string {
+  const name = declared.trim()
+  return name.startsWith('"') ? quoteIdent(unquoteIdent(name)) : name
+}
+
+/**
  * Escape text that will be placed inside a Monaco snippet (function call
  * insert text). A literal `$`, `}` or `\` would otherwise be read as snippet
  * syntax, so an object named `a$b` must not turn into a snippet variable.

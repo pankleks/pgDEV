@@ -213,6 +213,9 @@ export interface DataResult {
   /** Rows were discarded after reaching the limit; no cursor can retrieve them. */
   limited?: boolean
   totalRowCount?: number
+  /** More pages are available but the query has no top-level ORDER BY: each
+   * page re-runs it, so later pages may repeat or skip rows. */
+  unordered?: boolean
   /** Present only when this result's rows can be edited in place. */
   editable?: EditableGrid
 }

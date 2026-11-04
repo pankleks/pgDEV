@@ -8,6 +8,7 @@ import type {
   TableEditState,
 } from '../schema-types.js'
 import { ident } from '../sqlident.js'
+import { scanSqlLexemes } from '../sqllex.js'
 
 // Table-editor catalog access: one read turns a table into the dialog state,
 // and a submitted dialog state is diffed against a fresh live read into a
@@ -15,8 +16,12 @@ import { ident } from '../sqlident.js'
 // read-only flag (pk, unique keys, identity/generated/serial) is recomputed
 // here, and the final diff always runs against what PostgreSQL actually has.
 
+/** A string literal that reads the same whatever standard_conforming_strings
+ * is: text with a backslash uses the E'' form, where backslashes are always
+ * escapes, so they are doubled. */
 function quoteLiteral(v: string): string {
-  return `'${v.replace(/'/g, "''")}'`
+  const quoted = v.replace(/'/g, "''")
+  return v.includes('\\') ? `E'${quoted.replace(/\\/g, '\\\\')}'` : `'${quoted}'`
 }
 
 export interface LiveColumn {
@@ -59,7 +64,12 @@ export type DiffOutcome =
  * generated DDL never rewrites a literal. */
 function trimExpr(expr: string | null): string {
   if (expr === null) return ''
-  return expr.trim()
+  const trimmed = expr.trim()
+  // A trailing `-- comment` would swallow whatever the diff appends on the
+  // same line (` NOT NULL`, the statement's `;`): end it with a newline.
+  let last = ''
+  scanSqlLexemes(trimmed, (lex) => { if (lex.kind !== 'whitespace') last = lex.kind })
+  return last === 'lineComment' ? `${trimmed}\n` : trimmed
 }
 
 /**
@@ -293,10 +303,16 @@ export function diffTableEdit(live: LiveTable, req: TableEditRequest): DiffOutco
   const byId = new Map(req.columns.map((col) => [col.id, col]))
   const liveById = new Map(live.columns.map((col) => [col.id, col]))
 
+  // Final column names. A name sent back unchanged is used exactly, so a
+  // column legitimately named with outer spaces is not renamed; a typed or
+  // changed name has stray outer whitespace trimmed.
+  const nameOf = new Map<string, string>()
   const finalNames = new Set<string>()
   for (const col of req.columns) {
-    const name = col.name.trim()
-    if (!name) return { kind: 'error', error: { kind: 'empty-name' } }
+    const liveName = isAddedColumn(col) ? undefined : liveById.get(col.id)?.name
+    const name = col.name === liveName ? col.name : col.name.trim()
+    if (!name.trim()) return { kind: 'error', error: { kind: 'empty-name' } }
+    nameOf.set(col.id, name)
     if (isAddedColumn(col)) {
       // An added row must not reuse a live column's identity: the drop loop
       // would keep the live column and the add loop would collide with it.
@@ -326,7 +342,7 @@ export function diffTableEdit(live: LiveTable, req: TableEditRequest): DiffOutco
   const renameSteps = planRenames(
     live.columns
       .filter((col) => byId.has(col.id))
-      .map((col) => ({ id: col.id, from: col.name, to: byId.get(col.id)?.name.trim() ?? col.name })),
+      .map((col) => ({ id: col.id, from: col.name, to: nameOf.get(col.id) ?? col.name })),
     keptNames,
   )
   for (const step of renameSteps) {
@@ -353,19 +369,19 @@ export function diffTableEdit(live: LiveTable, req: TableEditRequest): DiffOutco
     if (!col.locked && typeNorm !== normalizeExpr(col.type)) {
       const type = trimExpr(edit.type)
       if (!type) return { kind: 'error', error: { kind: 'empty-type', column: col.name } }
-      statements.push(`ALTER TABLE ${table}\n  ALTER COLUMN ${ident(edit.name.trim())} TYPE ${type}`)
+      statements.push(`ALTER TABLE ${table}\n  ALTER COLUMN ${ident(nameOf.get(col.id)!)} TYPE ${type}`)
     }
     if (!edit.nullable && col.nullable) {
-      statements.push(`ALTER TABLE ${table}\n  ALTER COLUMN ${ident(edit.name.trim())} SET NOT NULL`)
+      statements.push(`ALTER TABLE ${table}\n  ALTER COLUMN ${ident(nameOf.get(col.id)!)} SET NOT NULL`)
     } else if (edit.nullable && !col.nullable) {
-      statements.push(`ALTER TABLE ${table}\n  ALTER COLUMN ${ident(edit.name.trim())} DROP NOT NULL`)
+      statements.push(`ALTER TABLE ${table}\n  ALTER COLUMN ${ident(nameOf.get(col.id)!)} DROP NOT NULL`)
     }
     if (normalizeExpr(edit.defaultValue) !== normalizeExpr(col.defaultValue)) {
       const reqDefault = trimExpr(edit.defaultValue)
       if (reqDefault === '') {
-        statements.push(`ALTER TABLE ${table}\n  ALTER COLUMN ${ident(edit.name.trim())} DROP DEFAULT`)
+        statements.push(`ALTER TABLE ${table}\n  ALTER COLUMN ${ident(nameOf.get(col.id)!)} DROP DEFAULT`)
       } else {
-        statements.push(`ALTER TABLE ${table}\n  ALTER COLUMN ${ident(edit.name.trim())} SET DEFAULT ${reqDefault}`)
+        statements.push(`ALTER TABLE ${table}\n  ALTER COLUMN ${ident(nameOf.get(col.id)!)} SET DEFAULT ${reqDefault}`)
       }
     }
   }
@@ -373,7 +389,7 @@ export function diffTableEdit(live: LiveTable, req: TableEditRequest): DiffOutco
   // --- added columns, in dialog order --------------------------------------
   for (const col of req.columns) {
     if (!isAddedColumn(col)) continue
-    const name = col.name.trim()
+    const name = nameOf.get(col.id)!
     if (!normalizeExpr(col.type)) return { kind: 'error', error: { kind: 'empty-type', column: name } }
     const parts = [`ADD COLUMN ${ident(name)} ${trimExpr(col.type)}`]
     const reqDefault = trimExpr(col.defaultValue)
@@ -389,7 +405,7 @@ export function diffTableEdit(live: LiveTable, req: TableEditRequest): DiffOutco
     const reqDesc = normalizeText(edit.description)
     if (reqDesc !== normalizeText(col.description)) {
       statements.push(
-        `COMMENT ON COLUMN ${table}.${ident(edit.name.trim())} IS ${reqDesc === null ? 'NULL' : quoteLiteral(reqDesc)}`,
+        `COMMENT ON COLUMN ${table}.${ident(nameOf.get(col.id)!)} IS ${reqDesc === null ? 'NULL' : quoteLiteral(reqDesc)}`,
       )
     }
   }
@@ -398,7 +414,7 @@ export function diffTableEdit(live: LiveTable, req: TableEditRequest): DiffOutco
     const reqDesc = normalizeText(col.description)
     if (reqDesc !== null) {
       statements.push(
-        `COMMENT ON COLUMN ${table}.${ident(col.name.trim())} IS ${quoteLiteral(reqDesc)}`,
+        `COMMENT ON COLUMN ${table}.${ident(nameOf.get(col.id)!)} IS ${quoteLiteral(reqDesc)}`,
       )
     }
   }

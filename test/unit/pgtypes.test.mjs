@@ -16,8 +16,33 @@ test('lossy type ids parse as identity', () => {
   }
 })
 
-test('ordinary types keep the driver parser', () => {
-  const parse = rawTextTypes.getTypeParser(23)
-  assert.equal(typeof parse, 'function')
-  assert.equal(parse('42'), 42)
+test('arrays, interval, geometric and range types stay PostgreSQL text', () => {
+  // Their driver parsers produce JS arrays/objects whose JSON text PostgreSQL
+  // cannot read back, so editing such a cell would fail on save.
+  const cases = {
+    1231: '{1.10,2.20}', // numeric[]
+    2951: '{a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11}', // uuid[]
+    3807: '{"{\\"a\\": 1}"}', // jsonb[]
+    1022: '{1.5,NaN}', // float8[]
+    1186: '1 day 02:00:00', // interval
+    600: '(1,2)', // point
+    718: '<(1,2),3>', // circle
+    3904: '[1,5)', // int4range
+  }
+  for (const [oid, text] of Object.entries(cases)) {
+    assert.equal(rawTextTypes.getTypeParser(Number(oid))(text), text, `oid ${oid}`)
+  }
+})
+
+test('lossless scalars keep the driver parser', () => {
+  assert.equal(rawTextTypes.getTypeParser(23)('42'), 42)
+  assert.equal(rawTextTypes.getTypeParser(21)('-7'), -7)
+  assert.equal(rawTextTypes.getTypeParser(16)('t'), true)
+  assert.equal(rawTextTypes.getTypeParser(701)('1.5'), 1.5)
+  assert.ok(Buffer.isBuffer(rawTextTypes.getTypeParser(17)('\\x00ff')), 'bytea stays a Buffer for the size label')
+})
+
+test('int8 and numeric stay exact text', () => {
+  assert.equal(rawTextTypes.getTypeParser(20)('9007199254740993'), '9007199254740993')
+  assert.equal(rawTextTypes.getTypeParser(1700)('12345678901234567890.123'), '12345678901234567890.123')
 })

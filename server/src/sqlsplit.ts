@@ -11,6 +11,41 @@ const GUC = 'standard_conforming_strings'
  * the string mode; the buffer is capped accordingly. */
 const SCS_WINDOW = 10
 
+/**
+ * psql's heuristic (psqlscan.l, PostgreSQL 14+) for SQL-standard routine
+ * bodies: inside `CREATE [OR REPLACE] FUNCTION|PROCEDURE … BEGIN ATOMIC … END`
+ * the inner semicolons do not end the statement. Outside parentheses, BEGIN
+ * opens a block, CASE nests only within one, END closes. Feed every lexeme of
+ * one statement; `depth > 0` means a `;` is part of the body.
+ */
+export class AtomicBodyTracker {
+  /** First letters of the leading create/or/replace/function/procedure words. */
+  private words: string[] = []
+  private count = 0
+  private parens = 0
+  depth = 0
+
+  visit(lex: SqlLexeme): void {
+    if (lex.kind === 'punct') {
+      if (lex.raw === '(') this.parens++
+      else if (lex.raw === ')' && this.parens > 0) this.parens--
+      return
+    }
+    if (lex.kind !== 'ident' || lex.quoted) return
+    const word = lex.name.toLowerCase()
+    if (this.count < 4) this.words[this.count] = ROUTINE_WORDS.has(word) ? word[0]! : ''
+    this.count++
+    const [w0, w1, w2, w3] = this.words
+    const routine = w0 === 'c' && (w1 === 'f' || w1 === 'p' || (w1 === 'o' && w2 === 'r' && (w3 === 'f' || w3 === 'p')))
+    if (!routine || this.parens !== 0) return
+    if (word === 'begin') this.depth++
+    else if (word === 'case') { if (this.depth >= 1) this.depth++ }
+    else if (word === 'end') { if (this.depth > 0) this.depth-- }
+  }
+}
+
+const ROUTINE_WORDS = new Set(['create', 'or', 'replace', 'function', 'procedure'])
+
 export interface StatementWithOffset {
   /** Trimmed statement text (same as `splitStatements()` returns). */
   text: string
@@ -36,12 +71,14 @@ export function nextStatement(sql: string, offset: number, standardConformingStr
     const remaining = sql.slice(offset)
     let end = remaining.length
     let consumed = remaining.length
+    const body = new AtomicBodyTracker()
     scanSqlLexemes(remaining, (lex) => {
-      if (lex.kind === 'punct' && lex.raw === ';') {
+      if (lex.kind === 'punct' && lex.raw === ';' && body.depth === 0) {
         end = lex.start
         consumed = lex.end
         return false
       }
+      body.visit(lex)
     }, { standardConformingStrings })
     const segment = remaining.slice(0, end)
     const text = segment.trim()
@@ -71,8 +108,10 @@ export function splitStatementsWithOffsets(sql: string, options: SplitOptions = 
   /** Original offset just past the previous top-level `;` (start of the
    * current segment). */
   let segStart = 0
+  let body = new AtomicBodyTracker()
 
   const finish = (segEnd: number) => {
+    body = new AtomicBodyTracker()
     const segment = sql.slice(segStart, segEnd)
     const text = segment.trim()
     if (text) {
@@ -125,11 +164,12 @@ export function splitStatementsWithOffsets(sql: string, options: SplitOptions = 
 
   scanSqlLexemes(sql,
     (lex) => {
-      if (lex.kind === 'punct' && lex.raw === ';') {
+      if (lex.kind === 'punct' && lex.raw === ';' && body.depth === 0) {
         finish(lex.start)
         segStart = lex.end
         return
       }
+      body.visit(lex)
       // The SET that flips the mode must start its own statement, so only a
       // few leading tokens can ever matter (a spelling of the GUC name inside
       // a string literal, comment or deep expression is data, not a setting).

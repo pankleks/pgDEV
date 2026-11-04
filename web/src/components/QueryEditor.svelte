@@ -170,16 +170,26 @@
       if (key && state) viewStates.set(key, state)
     }
     const model = modelFor(tab)
-    if (model.getValue() !== tab.content) model.setValue(tab.content)
+    if (model.getValue() !== tab.content) replaceContent(model, tab.content)
     editor.setModel(model)
     const saved = viewStates.get(tab.key)
     if (saved) editor.restoreViewState(saved)
     editor.updateOptions({ readOnly: tab.readOnly })
   }
+  /**
+   * Replace a model's text as one undoable step. `setValue` would clear the
+   * undo stack, so text the agent or a DDL refresh wrote over a (possibly
+   * dirty) tab could not be taken back with Ctrl+Z.
+   */
+  function replaceContent(model: monaco.editor.ITextModel, text: string) {
+    model.pushStackElement()
+    model.pushEditOperations([], [{ range: model.getFullModelRange(), text }], () => null)
+    model.pushStackElement()
+  }
   function syncExternalContent(tab: EditorTab) {
     const model = models.get(tab.key)
     if (!model || model.getValue() === tab.content) return
-    model.setValue(tab.content)
+    replaceContent(model, tab.content)
     if (editor?.getModel() === model) {
       const saved = viewStates.get(tab.key)
       if (saved) editor.restoreViewState(saved)

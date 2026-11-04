@@ -151,3 +151,15 @@ test('findSchema folds unquoted parts and matches quoted ones exactly', () => {
   assert.equal(findSchema(schemas, 'nope'), null)
   assert.equal(findSchema(schemas, '"App"'), null, 'quoted names are case-sensitive')
 })
+
+test('declared names are referenced the way PostgreSQL resolves them', async () => {
+  const { declaredReference } = await load('web/monaco/sqlrefs.ts')
+  // Unquoted declarations fold to lowercase: the written spelling resolves,
+  // a quoted mixed-case one would not.
+  assert.equal(declaredReference('pUserId'), 'pUserId')
+  assert.equal(declaredReference('total'), 'total')
+  // Quoted declarations keep their exact name.
+  assert.equal(declaredReference('"pUserId"'), '"pUserId"')
+  assert.equal(declaredReference('"total"'), 'total')
+  assert.equal(declaredReference('"a""b"'), '"a""b"')
+})

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { sourceLoader } from '../lib/load.mjs'
 
 const load = sourceLoader()
-const { splitStatements } = await load('server/sqlsplit.ts')
+const { splitStatements, nextStatement } = await load('server/sqlsplit.ts')
 
 // The splitter decides what runs as a separate statement, so a mistake here
 // changes query semantics rather than presentation.
@@ -144,4 +144,40 @@ test('savepoint rollback restores the effective string mode', () => {
 
 test('splitting accepts the physical connection string mode', () => {
   assert.deepEqual(splitStatements("SELECT 'a\\';b'; SELECT 2;", { standardConformingStrings: false }), ["SELECT 'a\\';b'", 'SELECT 2'])
+})
+
+test('SQL-standard routine bodies (BEGIN ATOMIC … END) are one statement', () => {
+  const fn = `CREATE OR REPLACE FUNCTION public.f(a integer)
+ RETURNS integer
+ LANGUAGE sql
+BEGIN ATOMIC
+ SELECT CASE WHEN a > 0 THEN 1 ELSE 0 END;
+ SELECT a + 1;
+END`
+  const proc = 'CREATE PROCEDURE p() LANGUAGE sql BEGIN ATOMIC INSERT INTO t VALUES (1); INSERT INTO t VALUES (2); END'
+  assert.deepEqual(splitStatements(`${fn};\nSELECT 2;`), [fn, 'SELECT 2'])
+  assert.deepEqual(splitStatements(`${proc}; ${proc}`), [proc, proc])
+  // The executor reads statements one at a time with the same rule.
+  const first = nextStatement(`${fn};\nSELECT 2;`, 0, true)
+  assert.equal(first.text, fn)
+  assert.equal(nextStatement(`${fn};\nSELECT 2;`, first.end, true).text, 'SELECT 2')
+})
+
+test('BEGIN outside a routine definition still splits normally', () => {
+  assert.deepEqual(splitStatements('BEGIN; SELECT 1; END;'), ['BEGIN', 'SELECT 1', 'END'])
+  assert.deepEqual(splitStatements('DO $$ BEGIN PERFORM 1; END $$; SELECT 1'), ['DO $$ BEGIN PERFORM 1; END $$', 'SELECT 1'])
+  // Dollar-quoted and RETURN-style bodies are unaffected.
+  assert.deepEqual(
+    splitStatements('CREATE FUNCTION g() RETURNS int LANGUAGE sql RETURN CASE WHEN true THEN 1 END; SELECT 1'),
+    ['CREATE FUNCTION g() RETURNS int LANGUAGE sql RETURN CASE WHEN true THEN 1 END', 'SELECT 1'],
+  )
+  assert.deepEqual(
+    splitStatements("CREATE FUNCTION h() RETURNS int LANGUAGE plpgsql AS $$ BEGIN RETURN 1; END $$; SELECT 1"),
+    ['CREATE FUNCTION h() RETURNS int LANGUAGE plpgsql AS $$ BEGIN RETURN 1; END $$', 'SELECT 1'],
+  )
+  // Words inside parentheses (a default, a column named begin) never open a block.
+  assert.deepEqual(
+    splitStatements('CREATE FUNCTION k("begin" int DEFAULT (1)) RETURNS int LANGUAGE sql RETURN 1; SELECT 1'),
+    ['CREATE FUNCTION k("begin" int DEFAULT (1)) RETURNS int LANGUAGE sql RETURN 1', 'SELECT 1'],
+  )
 })

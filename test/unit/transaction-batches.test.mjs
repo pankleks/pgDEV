@@ -44,12 +44,29 @@ function fakePool(options = {}) {
       if (text === 'SHOW standard_conforming_strings') {
         return { fields: [], rows: [{ standard_conforming_strings: 'on' }], command: 'SHOW', rowCount: 1 }
       }
-      if (options.fail && text.includes(options.fail)) throw new Error(`boom: ${text}`)
+      if (options.fail && text.includes(options.fail)) {
+        throw Object.assign(new Error(`boom: ${text}`), options.failCode ? { code: options.failCode, position: options.failPosition } : {})
+      }
       // Statements matching `hold` stay in flight: the Query object is kept so
       // the test can complete (or fail) it later, simulating a cancel race.
-      if (options.hold && text.includes(options.hold) && typeof query.emit === 'function') {
-        state.held.push(query)
-        return { fields: [], rows: [], command: 'OK', rowCount: 1 }
+      if (options.hold && text.includes(options.hold)) {
+        if (typeof query.emit === 'function') {
+          state.held.push(query)
+          return { fields: [], rows: [], command: 'OK', rowCount: 1 }
+        }
+        // A plain query (e.g. the DECLARE of a cursor) settles when the test
+        // emits 'end' or 'error' on the held handle, like a Query object.
+        const handle = new EventEmitter()
+        state.held.push(handle)
+        return new Promise((resolve, reject) => {
+          handle.once('end', resolve)
+          handle.once('error', reject)
+        })
+      }
+      if (options.fetchAll && text.startsWith('FETCH FORWARD')) {
+        // An endless result: every FETCH is filled to the requested count.
+        const count = Number(text.match(/FETCH FORWARD (\d+)/)[1])
+        return { fields: [{ name: 'n', tableID: 0, dataTypeID: 23, dataTypeModifier: -1 }], rows: Array.from({ length: count }, (_, i) => [i]) }
       }
       if (typeof query.emit === 'function') {
         queueMicrotask(() => query.emit('end', { fields: [], rows: [], command: 'OK', rowCount: 1 }))
@@ -154,19 +171,52 @@ test('a failed statement inside an open transaction keeps it open for ROLLBACK',
   })
 })
 
-test('an error in the batch that opened the transaction rolls it back immediately', async () => {
+test('an error in the batch that opened the transaction keeps it open for ROLLBACK, like a later batch', async () => {
   const fake = fakePool({ fail: 'explode' })
   await withApp('opening-error-test', fake, async (inject) => {
-    const response = await inject('BEGIN; SELECT explode()')
+    fake.executed.length = 0
+    const response = await inject('BEGIN; UPDATE t SET x = 1; SELECT explode()')
     assert.equal(response.statusCode, 400)
     assert.match(response.json().error, /boom/)
-    assert.equal(fake.state.releases, 1, 'nothing stays pinned after the opening batch failed')
-    assert.ok(fake.executed.includes('ROLLBACK'), JSON.stringify(fake.executed))
+    assert.equal(response.json().transactionOpen, true, 'the work before the error is not silently discarded')
+    assert.equal(fake.state.releases, 0, 'the aborted transaction stays pinned')
+    assert.ok(!fake.executed.includes('ROLLBACK'), JSON.stringify(fake.executed))
 
-    // The tab is clean again: the next batch checks out a fresh client.
-    const next = await inject('SELECT 1')
-    assert.equal(next.statusCode, 200)
-    assert.equal(fake.state.connects, 2)
+    // The user's ROLLBACK runs on the pinned client and ends it.
+    const rollback = await inject('ROLLBACK')
+    assert.equal(rollback.statusCode, 200)
+    assert.equal(rollback.json().transactionOpen, false)
+    assert.equal(fake.state.connects, 1)
+    assert.equal(fake.state.releases, 1)
+  })
+})
+
+test('an error before the user opened a transaction still rolls the implicit one back', async () => {
+  const fake = fakePool({ fail: 'explode' })
+  await withApp('implicit-error-test', fake, async (inject) => {
+    const response = await inject('UPDATE t SET x = 1; SELECT explode()')
+    assert.equal(response.statusCode, 400)
+    assert.equal(response.json().transactionOpen, false)
+    assert.ok(fake.executed.includes('ROLLBACK'))
+    assert.equal(fake.state.releases, 1)
+  })
+})
+
+test('a tab closed while its opening batch fails keeps nothing', async () => {
+  const fake = fakePool({ hold: 'pg_sleep' })
+  await withApp('close-failing-open-test', fake, async (inject, app) => {
+    const running = inject('BEGIN; UPDATE t SET x = 1; SELECT pg_sleep(60)')
+    for (let waited = 0; !fake.state.held.length && waited < 1000; waited++) {
+      await new Promise((resolve) => setTimeout(resolve, 1))
+    }
+    await app.inject({
+      method: 'POST', url: '/api/connections/close-failing-open-test/query/close',
+      headers: { origin: 'http://localhost' }, payload: { tabKey: '' },
+    })
+    fake.state.held[0].emit('error', Object.assign(new Error('query canceled'), { code: '57014' }))
+    const outcome = await running
+    assert.equal(outcome.json().transactionOpen, false)
+    assert.equal(fake.state.releases, 1)
   })
 })
 
@@ -320,5 +370,97 @@ test('a failed COMMIT in a batch that opened its own transaction is not rolled b
     assert.equal(response.statusCode, 400)
     assert.equal(response.json().transactionOpen, false)
     assert.equal(fake.state.releases, 1)
+  })
+})
+
+test('a request rejected as already running does not hide a later close from the running batch', async () => {
+  const fake = fakePool({ hold: 'pg_sleep' })
+  await withApp('close-after-reject-test', fake, async (inject, app) => {
+    const running = inject('BEGIN; UPDATE t SET x = 1; SELECT pg_sleep(60)')
+    for (let waited = 0; !fake.state.held.length && waited < 1000; waited++) {
+      await new Promise((resolve) => setTimeout(resolve, 1))
+    }
+    assert.equal(fake.state.held.length, 1, 'the statement is in flight')
+
+    // A second run on the same tab is refused while the first is running.
+    const rejected = await inject('SELECT 1')
+    assert.notEqual(rejected.statusCode, 200)
+
+    const close = await app.inject({
+      method: 'POST',
+      url: `/api/connections/close-after-reject-test/query/close`,
+      headers: { origin: 'http://localhost' },
+      payload: { tabKey: '' },
+    })
+    assert.equal(close.statusCode, 200)
+
+    fake.state.held[0].emit('end', { fields: [], rows: [], command: 'OK', rowCount: 1 })
+    const outcome = await running
+    assert.equal(outcome.json().transactionOpen, false, 'the closed tab must not keep a transaction')
+    assert.ok(fake.executed.includes('ROLLBACK'), JSON.stringify(fake.executed))
+    assert.equal(fake.state.releases, 1)
+  })
+})
+
+test('a cancel or timeout during DECLARE is the outcome, not a reason to re-run the statement', async () => {
+  for (const code of ['57014', '55P03', '40001']) {
+    const fake = fakePool({ fail: 'DECLARE', failCode: code })
+    await withApp(`declare-${code}-test`, fake, async (inject) => {
+      fake.executed.length = 0
+      const response = await inject('SELECT pg_sleep(60)')
+      assert.equal(response.statusCode, 400, code)
+      assert.equal(response.json().code, code)
+      const direct = fake.executed.filter((text) => text === 'SELECT pg_sleep(60)')
+      assert.equal(direct.length, 0, `${code}: the statement must not run again without the cursor`)
+      assert.ok(fake.executed.includes('ROLLBACK'), JSON.stringify(fake.executed))
+    })
+  }
+})
+
+test('a statement DECLARE cannot take still falls back to direct execution', async () => {
+  const fake = fakePool({ fail: 'DECLARE', failCode: '42601' })
+  await withApp('declare-fallback-test', fake, async (inject) => {
+    fake.executed.length = 0
+    const response = await inject('SHOW search_path')
+    assert.equal(response.statusCode, 200, JSON.stringify(response.json()))
+    assert.ok(fake.executed.includes('ROLLBACK TO SAVEPOINT pgdev_sp'))
+    assert.ok(fake.executed.includes('SHOW search_path'))
+  })
+})
+
+test('an error raised at DECLARE points into the statement, not the DECLARE prefix', async () => {
+  const prefix = 'DECLARE "pgdev_cur_1" NO SCROLL CURSOR FOR '
+  const fake = fakePool({ fail: 'DECLARE', failCode: '22012', failPosition: String(prefix.length + 8) })
+  await withApp('declare-position-test', fake, async (inject) => {
+    const response = await inject('SELECT 1/0')
+    assert.equal(response.statusCode, 400)
+    assert.equal(response.json().position, '8')
+  })
+})
+
+test('a query inside a user transaction produces only the displayed rows', async () => {
+  const fake = fakePool({ fetchAll: true })
+  await withApp('bounded-txn-test', fake, async (inject) => {
+    await inject('BEGIN; UPDATE t SET x = 1')
+    fake.executed.length = 0
+    const response = await inject('SELECT n FROM big_table')
+    assert.equal(response.statusCode, 200, JSON.stringify(response.json()))
+    const data = response.json().results[0]
+    assert.equal(data.limited, true, 'rows past the limit are reported as not retained')
+    assert.equal(data.truncated, false, 'nothing pages inside a user transaction')
+    const sent = fake.executed
+    const declare = sent.findIndex((text) => /^DECLARE "pgdev_cur_\d+" NO SCROLL CURSOR FOR SELECT n FROM big_table$/.test(text))
+    assert.ok(declare > 0, JSON.stringify(sent))
+    assert.equal(sent[declare - 1], 'SAVEPOINT pgdev_sp')
+    assert.equal(sent[declare + 1], 'RELEASE SAVEPOINT pgdev_sp', 'no subtransaction is left in the user transaction')
+    assert.match(sent[declare + 2], /^FETCH FORWARD \d+ FROM/)
+    assert.match(sent[declare + 3], /^CLOSE "pgdev_cur_\d+"$/)
+    assert.ok(!sent.includes('SELECT n FROM big_table'), 'the query is not also streamed directly')
+    assert.equal(response.json().transactionOpen, true)
+
+    // Statements that do not return rows still run directly.
+    fake.executed.length = 0
+    await inject('UPDATE t SET x = 2')
+    assert.deepEqual(fake.executed.filter((text) => !text.startsWith('SELECT oid')), ['UPDATE t SET x = 2'])
   })
 })

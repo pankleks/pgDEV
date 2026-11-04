@@ -92,7 +92,7 @@ async function resolveOid(pool: Pool, schema: string, name: string, relkinds: st
 export async function tableDdl(pool: Pool, oid: string, schema: string, name: string): Promise<string> {
   const relOid = oid || (await resolveOid(pool, schema, name, ['r', 'p', 'f']))
 
-  const [colsRes, consRes, idxRes, pkRes, relRes, policiesRes, foreignRes] = await Promise.all([
+  const [colsRes, consRes, idxRes, pkRes, relRes, policiesRes, foreignRes, triggersRes, grantsRes] = await Promise.all([
     pool.query(
       `SELECT a.attname AS name, format_type(a.atttypid, a.atttypmod) AS type,
          a.attnotnull AS notnull,
@@ -145,48 +145,16 @@ export async function tableDdl(pool: Pool, oid: string, schema: string, name: st
       [relOid],
     ),
     pool.query(
-      // A foreign key pointing at a partition of a partitioned table is stored
-      // once per partition. Those copies are rewritten to name the partitioned
-      // parent, in the usual clause order, so the duplicate rows collapse and
-      // the DDL never references a partition (which does not exist yet at that
-      // point). Every other constraint — ordinary foreign keys included — comes
-      // straight from pg_get_constraintdef, so MATCH, NOT VALID, deferred and
-      // SET NULL/DEFAULT options all round-trip.
-      `SELECT con.conname, con.contype,
-         (con.contype = 'f' AND pc.oid IS NOT NULL) AS is_clone,
-         CASE
-           WHEN con.contype = 'f' AND pc.oid IS NOT NULL THEN
-             'FOREIGN KEY (' ||
-               (SELECT string_agg(quote_ident(a.attname), ', ' ORDER BY k.ord)
-                  FROM unnest(con.conkey) WITH ORDINALITY AS k(attnum, ord)
-                  JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = k.attnum)
-             || ') REFERENCES ' || format('%I.%I', pcn.nspname, pc.relname) || ' (' ||
-               (SELECT string_agg(quote_ident(a.attname), ', ' ORDER BY k.ord)
-                  FROM unnest(con.confkey) WITH ORDINALITY AS k(attnum, ord)
-                  JOIN pg_attribute a ON a.attrelid = con.confrelid AND a.attnum = k.attnum)
-             || ')'
-             || CASE con.confmatchtype WHEN 'f' THEN ' MATCH FULL' WHEN 'p' THEN ' MATCH PARTIAL' ELSE '' END
-             || CASE con.confdeltype WHEN 'r' THEN ' ON DELETE RESTRICT' WHEN 'c' THEN ' ON DELETE CASCADE'
-                  WHEN 'n' THEN ' ON DELETE SET NULL' WHEN 'd' THEN ' ON DELETE SET DEFAULT' ELSE '' END
-             || CASE con.confupdtype WHEN 'r' THEN ' ON UPDATE RESTRICT' WHEN 'c' THEN ' ON UPDATE CASCADE'
-                  WHEN 'n' THEN ' ON UPDATE SET NULL' WHEN 'd' THEN ' ON UPDATE SET DEFAULT' ELSE '' END
-             || CASE WHEN con.condeferrable THEN ' DEFERRABLE' ELSE '' END
-             || CASE WHEN con.condeferred THEN ' INITIALLY DEFERRED' ELSE '' END
-             || CASE WHEN NOT con.convalidated THEN ' NOT VALID' ELSE '' END
-           ELSE pg_get_constraintdef(con.oid)
-         END AS def
+      // Every constraint comes straight from pg_get_constraintdef, so MATCH,
+      // NOT VALID, deferred and SET NULL/DEFAULT options all round-trip, and a
+      // foreign key that deliberately references one partition keeps doing so.
+      `SELECT con.conname, con.contype, pg_get_constraintdef(con.oid) AS def
        FROM pg_constraint con
-       -- Walk up the inheritance chain so every per-partition copy of a
-       -- foreign key referencing a partitioned table is attributed to the same
-       -- partitioned ancestor; identical definitions then collapse.
-       LEFT JOIN pg_class rc ON rc.oid = con.confrelid
-       LEFT JOIN pg_inherits inh ON inh.inhrelid = rc.oid
-       LEFT JOIN pg_class pc ON pc.oid = inh.inhparent AND pc.relkind = 'p'
-       LEFT JOIN pg_namespace pcn ON pcn.oid = pc.relnamespace
        WHERE con.conrelid = $1 AND con.contype IN ('p', 'u', 'f', 'c', 'x')
-         -- Constraints cloned from a partitioned parent (conparentid) or
-         -- plain-inherited ones (coninhcount) are recreated automatically by
-         -- the PARTITION OF / INHERITS clause — emitting them would collide.
+         -- Copies PostgreSQL makes itself are recreated by their origin: those
+         -- cloned from a partitioned parent or made per partition for a foreign
+         -- key to a partitioned table (conparentid), and plain-inherited ones
+         -- (coninhcount, recreated by INHERITS).
          AND con.conparentid = 0 AND con.coninhcount = 0
        ORDER BY con.contype, conname`,
       [relOid],
@@ -233,7 +201,13 @@ export async function tableDdl(pool: Pool, oid: string, schema: string, name: st
             JOIN pg_namespace pn ON pn.oid = p.relnamespace
             WHERE i.inhrelid = c.oid) AS inherits,
          pn.nspname AS part_schema, p.relname AS part_name,
-         CASE WHEN c.relispartition THEN pg_get_expr(c.relpartbound, c.oid) END AS partbound
+         CASE WHEN c.relispartition THEN pg_get_expr(c.relpartbound, c.oid) END AS partbound,
+         (SELECT string_agg(quote_ident(split_part(o, '=', 1)) || '=' ||
+                   quote_literal(substr(o, strpos(o, '=') + 1)), ', ' ORDER BY ord)
+            FROM unnest(c.reloptions) WITH ORDINALITY AS opt(o, ord)) AS reloptions,
+         c.relreplident::text AS replident,
+         (SELECT quote_ident(ic.relname) FROM pg_index ri JOIN pg_class ic ON ic.oid = ri.indexrelid
+           WHERE ri.indrelid = c.oid AND ri.indisreplident) AS replident_index
        FROM pg_class c
        JOIN pg_namespace n ON n.oid = c.relnamespace
        LEFT JOIN pg_inherits i ON i.inhrelid = c.oid AND c.relispartition
@@ -264,6 +238,27 @@ export async function tableDdl(pool: Pool, oid: string, schema: string, name: st
        FROM pg_foreign_table ft
        JOIN pg_foreign_server s ON s.oid = ft.ftserver
        WHERE ft.ftrelid = $1`,
+      [relOid],
+    ),
+    pool.query(
+      // User triggers only: internal ones back constraints, and those cloned
+      // onto partitions (tgparentid) are recreated by the parent's trigger.
+      `SELECT t.tgname, pg_get_triggerdef(t.oid) AS def, t.tgenabled::text AS enabled
+       FROM pg_trigger t
+       WHERE t.tgrelid = $1 AND NOT t.tgisinternal AND t.tgparentid = 0
+       ORDER BY t.tgname`,
+      [relOid],
+    ),
+    pool.query(
+      // Table privileges held by roles other than the owner (whose implicit
+      // privileges come with ownership). A NULL relacl means the defaults.
+      `SELECT CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE quote_ident(pg_get_userbyid(a.grantee)) END AS grantee,
+         string_agg(a.privilege_type, ', ' ORDER BY a.privilege_type) AS privileges,
+         a.is_grantable
+       FROM pg_class c, aclexplode(c.relacl) a
+       WHERE c.oid = $1 AND a.grantee <> c.relowner
+       GROUP BY a.grantee, a.is_grantable
+       ORDER BY 1, 3`,
       [relOid],
     ),
   ])
@@ -362,6 +357,9 @@ export async function tableDdl(pool: Pool, oid: string, schema: string, name: st
       const parts = [`${ident(r.name)} ${explicitSerial ? r.type : serial ?? r.type}${fdwOptions}${r.collation ?? ''}`]
       if (r.generated === 's' && r.default_value != null) {
         parts.push(`GENERATED ALWAYS AS (${r.default_value}) STORED`)
+      } else if (r.generated === 'v' && r.default_value != null) {
+        // PostgreSQL 18 virtual generated column: computed on read.
+        parts.push(`GENERATED ALWAYS AS (${r.default_value}) VIRTUAL`)
       } else if (r.identity === 'a' || r.identity === 'd') {
         const keyword = r.identity === 'a' ? 'GENERATED ALWAYS AS IDENTITY' : 'GENERATED BY DEFAULT AS IDENTITY'
         const options = owned ? sequenceOptions(owned, sequenceNameClause) : []
@@ -379,14 +377,9 @@ export async function tableDdl(pool: Pool, oid: string, schema: string, name: st
     // CONSTRAINT makes the names collide, so collapse identical clone rows.
     // Ordinary FKs are not deduped: two same-shaped foreign keys are legal and
     // distinct, and names are unique per relation anyway.
-    const seenFkDefs = new Set<string>()
     const deferredConstraints: string[] = []
     for (const c of consRes.rows) {
       const def = String(c.def)
-      if (c.is_clone) {
-        if (seenFkDefs.has(def)) continue
-        seenFkDefs.add(def)
-      }
       // CREATE TABLE accepts but silently ignores NOT VALID, so an unvalidated
       // constraint must be added afterwards with ALTER TABLE (as pg_dump does)
       // or it is recreated as validated.
@@ -418,6 +411,22 @@ export async function tableDdl(pool: Pool, oid: string, schema: string, name: st
     }
   }
 
+  // Storage parameters and replica identity: one ALTER form for plain tables
+  // and partitions alike.
+  if (rel.reloptions) chunks.push(`ALTER TABLE ${table} SET (${rel.reloptions});`)
+  const replicaIdentity: Record<string, string> = { n: 'NOTHING', f: 'FULL' }
+  if (rel.replident === 'i' && rel.replident_index) {
+    chunks.push(`ALTER TABLE ${table} REPLICA IDENTITY USING INDEX ${rel.replident_index};`)
+  } else if (replicaIdentity[rel.replident as string]) {
+    chunks.push(`ALTER TABLE ${table} REPLICA IDENTITY ${replicaIdentity[rel.replident as string]};`)
+  }
+  const triggerState: Record<string, string> = { D: 'DISABLE', R: 'ENABLE REPLICA', A: 'ENABLE ALWAYS' }
+  for (const t of triggersRes.rows) {
+    chunks.push(`${t.def};`)
+    const state = triggerState[t.enabled as string]
+    if (state) chunks.push(`ALTER TABLE ${table} ${state} TRIGGER ${ident(t.tgname)};`)
+  }
+
   if (rel.relrowsecurity || rel.relforcerowsecurity) chunks.push(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY;`)
   if (rel.relforcerowsecurity) chunks.push(`ALTER TABLE ${table} FORCE ROW LEVEL SECURITY;`)
   const cmdName: Record<string, string> = { r: 'SELECT', a: 'INSERT', w: 'UPDATE', d: 'DELETE', '*': 'ALL' }
@@ -432,8 +441,13 @@ export async function tableDdl(pool: Pool, oid: string, schema: string, name: st
     )
   }
 
-  if (rel.owner) chunks.push(`ALTER TABLE ${table} OWNER TO ${ident(rel.owner)};`)
-  if (rel.comment) chunks.push(`COMMENT ON TABLE ${table} IS ${rel.comment};`)
+  // Foreign tables have their own forms; COMMENT ON TABLE rejects them.
+  const objectKind = rel.relkind === 'f' ? 'FOREIGN TABLE' : 'TABLE'
+  if (rel.owner) chunks.push(`ALTER ${objectKind} ${table} OWNER TO ${ident(rel.owner)};`)
+  for (const g of grantsRes.rows) {
+    chunks.push(`GRANT ${g.privileges} ON TABLE ${table} TO ${g.grantee}${g.is_grantable ? ' WITH GRANT OPTION' : ''};`)
+  }
+  if (rel.comment) chunks.push(`COMMENT ON ${objectKind} ${table} IS ${rel.comment};`)
   for (const c of colsRes.rows) {
     if (c.comment) {
       chunks.push(`COMMENT ON COLUMN ${table}.${ident(c.name)} IS ${c.comment};`)

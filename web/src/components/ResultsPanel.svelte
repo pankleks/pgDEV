@@ -293,7 +293,7 @@
       </div>
       <div class="grid-foot">
         {result.grid?.rowCount ?? 0} row(s)
-        {#if grid.g.truncated}<span>· more available</span>
+        {#if grid.g.truncated}<span>· more available</span>{#if grid.g.unordered}<span class="grid-warn" title="Each page re-runs the query. Without ORDER BY, PostgreSQL may return rows in a different order each time.">· no ORDER BY: later pages may repeat or skip rows</span>{/if}
         {:else if grid.g.limited}<span>· first {grid.g.rows.length}{#if grid.g.totalRowCount} of {grid.g.totalRowCount}{/if} · row limit reached; remaining rows were not retained</span>
         {:else if grid.g.exported?.incomplete}<span>· export interrupted — re-run the query</span>
         {:else if grid.g.exported}<span>· first {grid.g.rows.length} shown · {grid.g.exported.rows} row(s) exported to CSV</span>{/if}

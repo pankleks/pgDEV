@@ -483,3 +483,36 @@ test('ukLabels numbers unique keys in order and shares numbers across columns', 
   assert.equal(map.get('code')[0].name, 'bom_code_key')
   assert.equal(map.get('code')[0].definition, 'UNIQUE (code)')
 })
+
+test('a column legitimately named with outer spaces is not renamed by an unchanged echo', () => {
+  const l = live([col(' x ', { id: '1' })])
+  assert.deepEqual(runOut(l, { columns: [edit(' x ', { id: '1' })], description: null }), { kind: 'ok', statements: [] })
+  // A changed (typed) name still has stray outer whitespace trimmed.
+  assert.deepEqual(
+    runOut(l, { columns: [edit('  y  ', { id: '1' })], description: null }).statements,
+    ['ALTER TABLE "public"."t"\n  RENAME COLUMN " x " TO "y"'],
+  )
+  assert.equal(errKind(runOut(l, { columns: [edit('   ', { id: '1' })], description: null })), 'empty-name')
+})
+
+test('comments with backslashes read the same whatever standard_conforming_strings is', () => {
+  const l = live([col('a', { id: '1' })])
+  const out = runOut(l, { columns: [edit('a', { id: '1', description: "C:\\path it's" })], description: null })
+  assert.deepEqual(out.statements, [`COMMENT ON COLUMN "public"."t"."a" IS E'C:\\\\path it''s'`])
+  const plain = runOut(l, { columns: [edit('a', { id: '1', description: "it's" })], description: null })
+  assert.deepEqual(plain.statements, [`COMMENT ON COLUMN "public"."t"."a" IS 'it''s'`])
+})
+
+test('a trailing line comment in a type or default cannot swallow what follows', () => {
+  const l = live([col('a', { id: '1' })])
+  const added = runOut(l, {
+    columns: [
+      edit('a', { id: '1' }),
+      edit('b', { id: 'new:1', added: true, type: 'integer -- counter', defaultValue: '0 -- start', nullable: false }),
+    ],
+    description: null,
+  })
+  assert.deepEqual(added.statements, ['ALTER TABLE "public"."t"\n  ADD COLUMN "b" integer -- counter\n DEFAULT 0 -- start\n NOT NULL'])
+  const altered = runOut(l, { columns: [edit('a', { id: '1', defaultValue: '1 -- one' })], description: null })
+  assert.deepEqual(altered.statements, ['ALTER TABLE "public"."t"\n  ALTER COLUMN "a" SET DEFAULT 1 -- one\n'])
+})
