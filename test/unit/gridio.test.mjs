@@ -8,11 +8,25 @@ const { csvEscape, csvHeader, csvRows, cellToText, formatCellForDisplay, toDelim
 test('csvEscape neutralises spreadsheet formula starters', () => {
   // A database value must not execute when the export is opened.
   assert.equal(csvEscape('=cmd|calc'), "'=cmd|calc")
-  assert.equal(csvEscape('+1'), "'+1")
-  assert.equal(csvEscape('-1'), "'-1")
   assert.equal(csvEscape('@SUM(A1)'), "'@SUM(A1)")
+  // Starts like a number but is not one: still a possible formula.
+  assert.equal(csvEscape('-1+cmd|calc'), "'-1+cmd|calc")
+  assert.equal(csvEscape('+48 123 456'), "'+48 123 456")
+  assert.equal(csvEscape('-2-3'), "'-2-3")
+  assert.equal(csvEscape('-'), "'-")
+  assert.equal(csvEscape('-Infinity'), "'-Infinity")
+  assert.equal(csvEscape(' -1'), "' -1")
   assert.equal(csvEscape('\t=x'), "'\t=x")
   assert.equal(csvEscape(' =x'), "' =x")
+})
+
+test('csvEscape leaves plain numbers intact', () => {
+  // Negative and signed numbers cannot execute; prefixing them would turn
+  // every negative value into text in the spreadsheet.
+  for (const n of ['-1', '+1', '-12.5', '-0.001', '-.5', '+3.', '-1e5', '-1.5E-10', '-12345678901234567890.123']) {
+    assert.equal(csvEscape(n), n, n)
+  }
+  assert.equal(csvRows([[-3, '-12.50']]), '-3,-12.50\n')
 })
 
 test('csvEscape leaves ordinary values alone', () => {
@@ -66,8 +80,9 @@ test('TSV copy neutralises spreadsheet formula starters like the CSV path', () =
   // The clipboard path feeds Excel/Sheets just as a .csv download does, so
   // the formula guard must apply before TSV flattening.
   assert.equal(toDelimited(['v'], [['=cmd|calc']], '\t'), 'v\n\'=cmd|calc')
-  assert.equal(toDelimited(['v'], [['+1']], '\t'), 'v\n\'+1')
-  assert.equal(toDelimited(['v'], [['-2']], '\t'), 'v\n\'-2')
+  assert.equal(toDelimited(['v'], [['+1']], '\t'), 'v\n+1')
+  assert.equal(toDelimited(['v'], [['-2']], '\t'), 'v\n-2')
+  assert.equal(toDelimited(['v'], [['-2+cmd']], '\t'), 'v\n\'-2+cmd')
   assert.equal(toDelimited(['v'], [['@SUM(A1)']], '\t'), 'v\n\'@SUM(A1)')
   assert.equal(toDelimited(['v'], [['\t=x']], '\t'), 'v\n\' =x')
   assert.equal(toDelimited(['v'], [['hello']], '\t'), 'v\nhello')

@@ -20,9 +20,14 @@ export function formatCellForDisplay(value: unknown): string {
  * Prefix spreadsheet formula starters so a pasted cell cannot execute as a
  * formula. Applies to every export path — CSV download and clipboard TSV
  * alike — because the data comes from the database, not from the user.
+ * A value that is exactly a numeric literal (`-12.5`, `+3`, `-1e-5`) cannot
+ * run as a formula, so it is left intact: prefixing it would turn every
+ * negative number into text and break round-trips.
  */
+const PLAIN_NUMBER = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/
+
 function neutralizeFormula(value: string): string {
-  if (/^[\t\r\n ]*[=+\-@]/.test(value)) return `'${value}`
+  if (/^[\t\r\n ]*[=+\-@]/.test(value) && !PLAIN_NUMBER.test(value)) return `'${value}`
   return value
 }
 
