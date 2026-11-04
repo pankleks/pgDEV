@@ -1,7 +1,7 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, protocol, safeStorage, shell, utilityProcess } from 'electron'
-import { mkdir, appendFile, writeFile, rename, rm } from 'node:fs/promises'
+import { mkdir, appendFile, chmod, writeFile, rename, rm } from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
-import { dirname, join, relative, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { randomBytes } from 'node:crypto'
 import { createStorage } from './storage.mjs'
@@ -43,7 +43,13 @@ if (!app.requestSingleInstanceLock()) {
 async function runDesktop() {
   const directory = app.getPath('userData')
   await mkdir(directory, { recursive: true, mode: 0o700 })
-  const log = (message) => appendFile(join(directory, 'desktop.log'), `${new Date().toISOString()} ${message}\n`).catch(() => undefined)
+  // mkdir's mode only applies to a directory it creates; Electron usually
+  // creates userData first, with the default umask. It holds the MCP token,
+  // endpoint secret and credentials, so tighten it (and the log) either way.
+  await chmod(directory, 0o700).catch(() => undefined)
+  const logFile = join(directory, 'desktop.log')
+  await chmod(logFile, 0o600).catch(() => undefined)
+  const log = (message) => appendFile(logFile, `${new Date().toISOString()} ${message}\n`, { mode: 0o600 }).catch(() => undefined)
   const storage = createStorage(join(directory, 'state'), safeStorage)
   let window
   let closing = false
@@ -121,7 +127,9 @@ async function runDesktop() {
       const url = new URL(request.url)
       if (url.hostname !== 'app' || !['GET', 'HEAD'].includes(request.method)) return new Response(null, { status: 403 })
       const path = resolve(assets, `.${decodeURIComponent(url.pathname === '/' ? '/index.html' : url.pathname)}`)
-      if (relative(assets, path).startsWith('..') || path === assets) return new Response(null, { status: 403 })
+      // An absolute relative() result means another drive/root (Windows).
+      const inside = relative(assets, path)
+      if (inside.startsWith('..') || isAbsolute(inside) || path === assets) return new Response(null, { status: 403 })
       const response = await net.fetch(pathToFileURL(path).href)
       const headers = new Headers(response.headers)
       headers.set('Content-Security-Policy', CSP)
@@ -210,21 +218,52 @@ async function runDesktop() {
 
   async function stopDesktop() {
     const hardStop = setTimeout(() => { child.kill(); app.exit(1) }, 10000)
-    ai.abort()
-    clearTimeout(closeTimer)
-    await files.abortAll()
-    await storage.flush()
-    await stopBackend(child)
-    await rm(endpointFile, { force: true }).catch(() => undefined)
-    stopped = true
-    clearTimeout(hardStop)
+    try {
+      ai.abort()
+      clearTimeout(closeTimer)
+      await files.abortAll()
+      await storage.flush()
+      await stopBackend(child)
+    } catch (error) {
+      // The backend may still run: make sure it does not outlive the app.
+      child.kill()
+      void log('Shutdown did not complete cleanly (details redacted).')
+      throw error
+    } finally {
+      // Whatever failed, a stale endpoint must not point MCP helpers at a port
+      // this app no longer owns, and a second quit must not wait again.
+      await rm(endpointFile, { force: true }).catch(() => undefined)
+      stopped = true
+      clearTimeout(hardStop)
+    }
   }
 
-  handle('close-ready', async () => { if (!closing) return; await stop(); app.exit(0) })
+  /** Stop and exit without the renderer's save round-trip (hung, gone, logoff). */
+  function quitNow() {
+    closing = true
+    void stop().catch(() => undefined).finally(() => app.exit(0))
+  }
+
+  handle('close-ready', async () => {
+    if (!closing) return
+    try {
+      await stop()
+    } finally {
+      app.exit(0)
+    }
+  })
   handle('close-failed', () => { closing = false; clearTimeout(closeTimer) })
+  // A hung or crashed renderer can never answer the save request; waiting the
+  // full timeout (and then re-arming) would block quitting and OS logoff.
+  let rendererStuck = false
+  window.on('unresponsive', () => { rendererStuck = true })
+  window.on('responsive', () => { rendererStuck = false })
+  window.webContents.on('render-process-gone', () => { rendererStuck = true })
+  window.on('session-end', quitNow)
   function requestClose(event) {
     if (stopped) return
     event.preventDefault()
+    if (rendererStuck) return quitNow()
     if (closing) return
     closing = true
     window.webContents.send('pgdev:before-close')

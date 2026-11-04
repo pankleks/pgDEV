@@ -67,7 +67,22 @@ export async function connectionRoutes(app: FastifyInstance) {
   })
 
   app.post('/api/connections', async (req, reply) => {
-    const b = req.body as ConnectBody
+    const b = (req.body ?? {}) as ConnectBody
+    // Shape check before anything reaches node-postgres, which would otherwise
+    // coerce or crash on unexpected types (e.g. an object as host).
+    const shape: [keyof ConnectBody, 'string' | 'boolean'][] = [
+      ['connectionString', 'string'], ['host', 'string'], ['database', 'string'],
+      ['user', 'string'], ['password', 'string'], ['ssl', 'boolean'],
+    ]
+    for (const [key, kind] of shape) {
+      const value = b[key]
+      if (value !== undefined && (typeof value !== kind || (kind === 'string' && (value as string).length > 4096))) {
+        return reply.code(400).send({ error: `Invalid ${key}` })
+      }
+    }
+    if (b.port !== undefined && (typeof b.port !== 'number' || !Number.isInteger(b.port) || b.port < 1 || b.port > 65535)) {
+      return reply.code(400).send({ error: 'port must be an integer from 1 to 65535' })
+    }
     // Statement timeout arrives in seconds from the settings UI; absent means
     // the documented 30 s default, anything else outside 1–600 is rejected.
     let statementTimeoutMs = DEFAULT_STATEMENT_TIMEOUT_MS

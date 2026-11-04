@@ -26,7 +26,7 @@ async function shutdown() {
 parent.on('message', ({ data }) => {
   if (data?.type === 'shutdown') void shutdown().catch(() => process.exit(1))
 })
-parent.on('close', () => void shutdown())
+parent.on('close', () => void shutdown().catch(() => process.exit(1)))
 
 try {
   app = await createApp({

@@ -141,7 +141,10 @@
     if (!rowEditable || !activeGrid?.editable) return false
     for (const key of activeGrid.editable.pk) {
       const index = activeGrid.columns.indexOf(key)
-      if (index < 0 || row[index] === null || row[index] === undefined) return false
+      // A key column selected twice (`SELECT id, *`) is ambiguous, exactly as
+      // the row editor treats it, so the row cannot be identified.
+      if (index < 0 || activeGrid.columns.indexOf(key, index + 1) >= 0) return false
+      if (row[index] === null || row[index] === undefined) return false
     }
     return true
   }
@@ -250,7 +253,7 @@
       <button class="danger" disabled={result.cancelling} title="Cancel running query or row load" onclick={cancelRun}><Square size={11} /> {result.cancelling ? 'Canceling…' : result.loadingMore ? 'Cancel load' : 'Cancel'}</button>
     {:else}
       <button class="btn-sm" disabled={!snapshot.current.connectionId || !snapshot.current.hasSelection || snapshot.current.readOnly} title="Show estimated plan for the selected SQL (one statement)" onclick={() => onexplain('explain')}>Explain</button>
-      <button class="btn-sm" disabled={!snapshot.current.connectionId || !snapshot.current.hasSelection || snapshot.current.readOnly} title="Execute the selected SQL and show actual timings (requires confirmation)" onclick={() => onexplain('analyze')}>Explain Analyze</button>
+      <button class="btn-sm" disabled={!snapshot.current.connectionId || !snapshot.current.hasSelection || snapshot.current.readOnly} title="Execute the selected SQL, show actual timings and roll its changes back (requires confirmation)" onclick={() => onexplain('analyze')}>Explain Analyze</button>
       <button class="primary run-btn" disabled={!snapshot.current.connectionId || result?.loadingMore || snapshot.current.readOnly} title="Run (F5 or Ctrl+Enter)" onclick={onrun}><Play size={13} /> Run</button>
     {/if}
   </div>

@@ -12,6 +12,17 @@ export async function ddlRoutes(app: FastifyInstance) {
       oid?: string
       parent?: string
     }
+    // Validate before anything reaches the catalog: an oid is cast with ::oid,
+    // so a non-numeric value would surface as a 500 from PostgreSQL.
+    for (const [key, value] of Object.entries({ type, schema, name, oid, parent })) {
+      if (value !== undefined && (typeof value !== 'string' || value.length > 1024)) {
+        throw Object.assign(new Error(`Invalid ${key}`), { statusCode: 400 })
+      }
+    }
+    if (typeof type !== 'string') throw Object.assign(new Error('type is required'), { statusCode: 400 })
+    if (oid !== undefined && oid !== '' && !/^\d{1,10}$/.test(oid)) {
+      throw Object.assign(new Error('oid must be a number'), { statusCode: 400 })
+    }
     const ddl = await objectDdl(getCatalogPool(id), { type, schema, name, oid, parent })
     return { ddl }
   })

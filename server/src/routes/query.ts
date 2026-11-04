@@ -22,6 +22,13 @@ interface MoreBody {
   maxRows?: number
 }
 
+/** A tab key is an opaque client string; anything else is a client bug. */
+function parseTabKey(value: unknown): string {
+  if (value === undefined || value === null) return ''
+  if (typeof value === 'string' && value.length <= 256) return value
+  throw Object.assign(new Error('Invalid tabKey'), { statusCode: 400 })
+}
+
 function mapError(error: BatchError): { code: number; body: Record<string, unknown> } {
   switch (error.kind) {
     case 'empty':
@@ -48,23 +55,25 @@ function errorReply(reply: FastifyReply, error: BatchError, transaction?: Transa
 export async function queryRoutes(app: FastifyInstance) {
   app.post('/api/connections/:id/query', async (req, reply) => {
     const { id } = req.params as { id: string }
-    const { sql, maxRows, tabKey, transactionId, explain } = (req.body ?? {}) as QueryBody
+    const { sql, maxRows, transactionId, explain } = (req.body ?? {}) as QueryBody
+    const tabKey = parseTabKey((req.body as QueryBody | undefined)?.tabKey)
     if (explain !== undefined && explain !== 'explain' && explain !== 'analyze') return reply.code(400).send({ error: 'Invalid explain mode' })
     if (typeof sql !== 'string' || !sql.trim()) return reply.code(400).send({ error: 'Empty query' })
     const cap = parseMaxRows(maxRows)
     if (cap === null) return reply.code(400).send({ error: 'maxRows must be an integer from 1 to 10000' })
-    const outcome = await runBatch(id, tabKey ?? '', sql, cap, { transactionId: parseTransactionId(transactionId), explain })
-    const transaction = transactionState(sessionKey(id, tabKey ?? ''))
+    const outcome = await runBatch(id, tabKey, sql, cap, { transactionId: parseTransactionId(transactionId), explain })
+    const transaction = transactionState(sessionKey(id, tabKey))
     if (outcome.kind === 'error') return errorReply(reply, outcome.error, transaction)
     return { results: outcome.results, durationMs: outcome.durationMs, ...transaction }
   })
 
   app.post('/api/connections/:id/query/more', async (req, reply) => {
     const { id } = req.params as { id: string }
-    const { tabKey, maxRows } = (req.body ?? {}) as MoreBody
+    const { maxRows } = (req.body ?? {}) as MoreBody
+    const tabKey = parseTabKey((req.body as MoreBody | undefined)?.tabKey)
     const cap = parseMaxRows(maxRows)
     if (cap === null) return reply.code(400).send({ error: 'maxRows must be an integer from 1 to 10000' })
-    const outcome = await fetchNextPage(id, tabKey ?? '', cap)
+    const outcome = await fetchNextPage(id, tabKey, cap)
     if (outcome.kind === 'error') return errorReply(reply, outcome.error)
     const { rows, rowCount, truncated } = outcome
     return { rows, rowCount, truncated }
@@ -72,15 +81,15 @@ export async function queryRoutes(app: FastifyInstance) {
 
   app.post('/api/connections/:id/cancel', async (req) => {
     const { id } = req.params as { id: string }
-    const { tabKey } = (req.body ?? {}) as { tabKey?: string }
-    return { ok: cancelRunning(id, tabKey ?? '') }
+    const tabKey = parseTabKey((req.body as { tabKey?: unknown } | undefined)?.tabKey)
+    return { ok: cancelRunning(id, tabKey) }
   })
 
   app.post('/api/connections/:id/query/close', async (req) => {
     const { id } = req.params as { id: string }
-    const { tabKey } = (req.body ?? {}) as { tabKey?: string }
+    const tabKey = parseTabKey((req.body as { tabKey?: unknown } | undefined)?.tabKey)
     getPool(id)
-    await closeTabSession(id, tabKey ?? '')
+    await closeTabSession(id, tabKey)
     return { ok: true }
   })
 }

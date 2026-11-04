@@ -191,9 +191,8 @@ export async function tableDdl(pool: Pool, oid: string, schema: string, name: st
          n.nspname AS schema, c.relname AS name,
          pg_get_userbyid(c.relowner) AS owner,
          (SELECT spcname FROM pg_tablespace WHERE oid = c.reltablespace) AS tablespace,
-         quote_literal(obj_description(c.oid)) AS comment,
+         quote_literal(obj_description(c.oid, 'pg_class')) AS comment,
          (SELECT pg_get_partkeydef(p.partrelid) FROM pg_partitioned_table p WHERE p.partrelid = c.oid) AS partkey,
-         (SELECT pg_get_partkeydef(pp.partrelid) FROM pg_partitioned_table pp WHERE pp.partrelid = c.oid) AS own_partkey,
          -- Plain (non-partition) inheritance parents, for an INHERITS clause.
          (SELECT string_agg(format('%I.%I', pn.nspname, p.relname), ', ' ORDER BY i.inhseqno)
             FROM pg_inherits i
@@ -303,7 +302,7 @@ export async function tableDdl(pool: Pool, oid: string, schema: string, name: st
     const partitionBound = /^(FOR\s+VALUES|DEFAULT)\b/i.test(bound) ? bound : `FOR VALUES ${bound}`
     // A partition can itself be partitioned; without its own PARTITION BY it
     // would be recreated as a plain table, breaking its own children.
-    const subPartition = rel.own_partkey ? `\n  PARTITION BY ${rel.own_partkey}` : ''
+    const subPartition = rel.partkey ? `\n  PARTITION BY ${rel.partkey}` : ''
     chunks.push(
       `CREATE TABLE ${table}\n  PARTITION OF ${ident(rel.part_schema)}.${ident(rel.part_name)}\n  ${partitionBound}${subPartition};`,
     )
@@ -468,7 +467,7 @@ export async function viewDdl(pool: Pool, oid: string, schema: string, name: str
       `SELECT c.relkind, n.nspname AS schema, c.relname AS name,
          pg_get_viewdef(c.oid, true) AS def,
          pg_get_userbyid(c.relowner) AS owner,
-         quote_literal(obj_description(c.oid)) AS comment,
+         quote_literal(obj_description(c.oid, 'pg_class')) AS comment,
          (SELECT spcname FROM pg_tablespace WHERE oid = c.reltablespace) AS tablespace,
          (SELECT string_agg(quote_ident(split_part(o, '=', 1)) || '=' ||
                    quote_literal(substr(o, strpos(o, '=') + 1)), ', ' ORDER BY ord)
@@ -742,11 +741,13 @@ export async function typeDdl(pool: Pool, oid: string, schema: string, name: str
           WHERE mt.oid = (SELECT x.rngmultitypid FROM pg_range x WHERE x.rngtypid = t.oid)
             AND mt.typname <> t.typname || '_multirange'
             AND mt.typname <> '_' || t.typname) AS multirange_name,
-       -- regproc/regclass render oid 0 as "-", not NULL, so NULLIF it away
-       -- here: a truthiness check downstream would otherwise emit
-       -- "CANONICAL = -", which no CREATE TYPE can accept.
-       NULLIF(r.rngcanonical, 0)::regproc::text AS canonical,
-       NULLIF(r.rngsubdiff, 0)::regproc::text AS subdiff
+       -- Schema-qualified explicitly: regproc::text drops the schema when it
+       -- is on the current search_path, which the script's reader may not
+       -- share. Oid 0 (no function) matches no row and yields NULL.
+       (SELECT format('%I.%I', pn.nspname, p.proname) FROM pg_proc p
+          JOIN pg_namespace pn ON pn.oid = p.pronamespace WHERE p.oid = r.rngcanonical) AS canonical,
+       (SELECT format('%I.%I', pn.nspname, p.proname) FROM pg_proc p
+          JOIN pg_namespace pn ON pn.oid = p.pronamespace WHERE p.oid = r.rngsubdiff) AS subdiff
      FROM pg_type t
      JOIN pg_namespace n ON n.oid = t.typnamespace
      LEFT JOIN pg_range r ON r.rngtypid = t.oid
@@ -809,7 +810,11 @@ export async function sequenceDdl(pool: Pool, oid: string, schema: string, name:
                JOIN pg_namespace tn ON tn.oid = t.relnamespace
               WHERE d.objid = c.oid AND d.classid = 'pg_class'::regclass
                 AND d.refclassid = 'pg_class'::regclass AND d.deptype IN ('a', 'i')
-              LIMIT 1) AS owned_by
+              LIMIT 1) AS owned_by,
+            -- An identity column's sequence is internal to the column.
+            EXISTS (SELECT 1 FROM pg_depend d
+              WHERE d.objid = c.oid AND d.classid = 'pg_class'::regclass
+                AND d.refclassid = 'pg_class'::regclass AND d.deptype = 'i') AS identity
      FROM pg_sequence s
      JOIN pg_class c ON c.oid = s.seqrelid
      JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -831,6 +836,13 @@ export async function sequenceDdl(pool: Pool, oid: string, schema: string, name:
   const opts = sequenceOptions(props, null)
   // Options only when they differ from a bare creation; OWNED BY is emitted
   // only when the dependency exists (serial/identity columns own theirs).
+  if (row.identity && row.owned_by) {
+    // A standalone CREATE SEQUENCE … OWNED BY would make an ordinary sequence,
+    // not the column's identity; the column's own DDL recreates it.
+    return `-- ${q} is the identity sequence of ${String(row.owned_by)}.\n` +
+      '-- It is created by the column\'s GENERATED … AS IDENTITY clause (see the table DDL);\n' +
+      `-- change its options with ALTER TABLE … ALTER COLUMN … SET${opts.length ? ` (current: ${opts.join(' ')})` : ''}.`
+  }
   let create = `CREATE SEQUENCE ${q} AS ${props.type}`
   if (opts.length) create += ` ${opts.join(' ')}`
   if (row.owned_by) create += ` OWNED BY ${String(row.owned_by)}`

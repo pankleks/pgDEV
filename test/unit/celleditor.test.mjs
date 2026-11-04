@@ -8,6 +8,7 @@ const {
   editorKind, isArrayType, isMultiDimensionalArray, isReadOnlyType, jsonSyntaxError,
   numberStep, fromEditorValue, toBool, toEditorValue, usesTextarea,
 } = await load('web/lib/celleditor.ts')
+const celleditorModule = await load('web/lib/celleditor.ts')
 
 // The row dialog picks a control from the column type and converts the
 // PostgreSQL text into what that control needs; the conversions must be
@@ -221,4 +222,14 @@ test('edited JSON is syntax-checked without rewriting it', () => {
   assert.match(jsonSyntaxError('{"a":}'), /JSON/)
   assert.match(jsonSyntaxError(''), /JSON/)
   assert.match(jsonSyntaxError('{"a":1} trailing'), /JSON/)
+})
+
+test('precision modifiers anywhere in the type pick the right editor', () => {
+  const { baseType } = celleditorModule
+  assert.equal(baseType('timestamp(3) with time zone'), 'timestamp with time zone')
+  assert.equal(editorKind('timestamp(3) with time zone'), 'datetime')
+  assert.equal(editorKind('time(6) without time zone'), 'time')
+  assert.equal(baseType('numeric(10, 2)'), 'numeric')
+  assert.equal(baseType('character varying(20)'), 'character varying')
+  assert.equal(baseType('integer[]'), 'integer[]')
 })

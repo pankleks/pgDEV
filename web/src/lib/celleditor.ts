@@ -19,9 +19,10 @@ const INTEGER_TYPES = new Set(['smallint', 'integer', 'bigint'])
  * e.g. `<bytea 12 bytes>`, so saving it would corrupt the column). */
 const READ_ONLY_TYPES = new Set(['bytea'])
 
-/** Strip a parenthesized modifier (`numeric(10,2)`) and normalise case. */
+/** Strip parenthesized modifiers wherever they sit (`numeric(10,2)`,
+ * `timestamp(3) with time zone`) and normalise case and spacing. */
 export function baseType(type: string): string {
-  return type.replace(/\(.*\)$/, '').trim().toLowerCase()
+  return type.replace(/\(\s*\d+(?:\s*,\s*\d+)?\s*\)/g, '').replace(/\s+/g, ' ').trim().toLowerCase()
 }
 
 export function editorKind(type: string): EditorKind {

@@ -11,6 +11,7 @@
   import { useTabs, type EditorTab } from './composables/tabs'
   import { useResults } from './composables/results'
   import { useSettings } from './composables/settings'
+  import { useSchema } from './composables/schema'
   import { useToast } from './composables/toast'
   import { useAi } from './composables/ai'
   import { api } from './api'
@@ -128,6 +129,8 @@
     }))
     desktopSubscriptions.push(desktop().onBackendFailure(() => {
       conn.state.id = null
+      // IntelliSense must not keep serving the dead connection's catalog.
+      useSchema().reset()
       for (const key of Object.keys(results.state.byTab)) results.drop(key)
       toast.show('Database service stopped. Save your work and restart pgDEV; open transactions have ended.')
     }))
@@ -186,7 +189,7 @@
     const connectionId = conn.state.id
     if (explain === 'analyze') {
       const operation = existing?.operation
-      if (!await confirmAction('Explain Analyze executes the selected SQL. It may modify data or cause other side effects, even for SELECT. Continue?')) return
+      if (!await confirmAction('Explain Analyze executes the selected SQL to measure it, then rolls its changes back (inside your own open transaction they stay until you COMMIT or ROLLBACK). Effects outside the transaction, such as sequence values or calls to other systems, are not undone. Continue?')) return
       if (conn.state.id !== connectionId || tabs.state.activeKey !== tab.key || results.state.byTab[tab.key]?.operation !== operation) return
     }
     void results.run(tab.key, connectionId, sql, explain)
@@ -233,5 +236,6 @@
   </div>
   {#if conn.state.dialog}<ConnectDialog />{/if}
   {#if settingsOpen}<SettingsDialog onclose={() => { settingsOpen = false }} />{/if}
-  {#if toast.state.visible}<div class="toast">{toast.state.text}</div>{/if}
+  <!-- Always present so screen readers announce each new message. -->
+  <div class="toast-region" role="status" aria-live="polite">{#if toast.state.visible}<div class="toast">{toast.state.text}</div>{/if}</div>
 </div>

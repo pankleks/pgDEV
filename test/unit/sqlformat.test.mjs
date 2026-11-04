@@ -103,3 +103,11 @@ test('a GUC spelling inside a literal never flips the scanning mode', () => {
     "SELECT\n\t'standard_conforming_strings=off';\n\n\nSELECT\n\t'c:\\;';",
   )
 })
+
+test('a parenthesis keeps its space after an operator or comma, but not after a name', () => {
+  const out = formatSql('select a + (b * c), x = (select 1), f (y) from t where id in (1, 2)')
+  assert.match(out, /a \+ \(b \* c\)/)
+  assert.match(out, /= \(/)
+  assert.match(out, /f\(y\)/)
+  assert.match(out, /IN\(1, 2\)/)
+})

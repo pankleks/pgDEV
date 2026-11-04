@@ -91,3 +91,11 @@ test('columns show type, relation, nullability and default', () => {
     '**qty**\n_numeric · public.items_\n\ndefault 0',
   )
 })
+
+test('schema names and comments cannot inject markdown structure', () => {
+  const fn = { schema: 'a_b*c[x](http://e)', name: 'f', args: '', returns: 'int', typeSig: '', kind: 'function', oid: '1', comment: '# heading <http://x> | col' }
+  const doc = functionSignatureDoc(fn)
+  assert.match(doc, /a_b\\\*c\\\[x\\\]\(http/)
+  assert.match(doc, /\\# heading \\<http:\/\/x\\> \\\| col/)
+  assert.match(formatFunctionHover([fn]), /a_b\\\*c/)
+})

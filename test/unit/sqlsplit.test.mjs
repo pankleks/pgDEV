@@ -109,11 +109,15 @@ test('an identifier ending in e does not turn its string into an E-string', () =
   )
 })
 
-test('U&-prefixed strings honour backslash escapes under SCS=on', () => {
+test('U&-prefixed strings end at the quote after a backslash, as in PostgreSQL', () => {
+  // A backslash in U&'…' starts a Unicode escape but never escapes the quote
+  // (PostgreSQL 16 reports `U&'x\'` as an invalid escape, not an unterminated
+  // string), so the statement ends at the semicolon.
   assert.deepEqual(
     splitStatements("SELECT u&'a\\'; SELECT 2;'"),
-    ["SELECT u&'a\\'; SELECT 2;'"],
+    ["SELECT u&'a\\'", "SELECT 2", "'"],
   )
+  assert.deepEqual(splitStatements("SELECT U&'it''s'; SELECT 2"), ["SELECT U&'it''s'", 'SELECT 2'])
   // The & alone must not trigger it: a plain string with a literal backslash.
   assert.deepEqual(
     splitStatements("SELECT x&'a\\'; SELECT 2"),

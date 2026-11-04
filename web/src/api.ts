@@ -17,9 +17,9 @@ import { desktop } from './lib/desktop'
 
 export type ApiError = Error & Partial<TransactionState> & { code?: string | null; position?: string | null }
 
-async function unwrap<T>(res: Response): Promise<T> {
-  const body = await res.json().catch(() => ({}))
-  if (!res.ok) {
+function unwrap<T>(res: { status: number; body: unknown }): T {
+  const body = res.body ?? {}
+  if (res.status < 200 || res.status > 299) {
     const errBody = body as Partial<TransactionState> & { error?: string; code?: string | null; position?: string | null }
     const err: ApiError = new Error(errBody.error || `Request failed (${res.status})`)
     ;(err as Error & { code?: string | null }).code = errBody.code ?? null
@@ -38,9 +38,8 @@ async function unwrap<T>(res: Response): Promise<T> {
 /** One JSON round-trip: the method, the optional body, and the error mapping
  * are the same for every endpoint, so the callers name only the route. */
 async function send<T>(method: string, url: string, body?: unknown): Promise<T> {
-  const response = await desktop().request(method, url, body)
-  const res = new Response(JSON.stringify(response.body), { status: response.status, headers: { 'content-type': 'application/json' } })
-  return unwrap<T>(res)
+  // The IPC bridge already delivers the parsed body; no re-serialization.
+  return unwrap<T>(await desktop().request(method, url, body))
 }
 
 export const api = {

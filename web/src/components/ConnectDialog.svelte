@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { dialogFocus } from '../lib/dialogfocus'
   import { onDestroy } from 'svelte'
   import { Bot, Check, CodeXml, Database, Eye, EyeOff, Lock, Plug, Power, Search, Server, SlidersHorizontal, User, X } from '@lucide/svelte'
   import { api } from '../api'
@@ -97,14 +98,6 @@
     }
   }
 
-  function pickWithKeyboard(event: KeyboardEvent, entry: SavedConnection | null) {
-    if (event.target !== event.currentTarget || !entry) return
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault()
-      pick(entry)
-    }
-  }
-
   async function clearAll() {
     if (!saved.length) return
     if (await confirmAction('Forget all saved connections?')) conn.forgetAll()
@@ -129,7 +122,7 @@
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 <div class="modal-backdrop" onclick={(event) => { if (event.target === event.currentTarget) close() }}>
-  <div class="modal connect-modal" role="dialog" aria-modal="true" aria-label="Connect to PostgreSQL" tabindex="-1">
+  <div class="modal connect-modal" role="dialog" aria-modal="true" aria-label="Connect to PostgreSQL" tabindex="-1" use:dialogFocus={close}>
     <button class="icon connect-close" title="Close" onclick={close}><X size={16} /></button>
     <div class="connect-head">
       <div class="connect-logo"><Database size={30} /></div>
@@ -147,12 +140,17 @@
           </div>
           <div class="saved">
             {#each allConnections as entry (entry.label)}
-              <div class="saved-item" class:current={entry.active} class:selected={entry.label === selectedLabel} role="button" tabindex={entry.saved ? 0 : -1}
-                aria-label={entry.label} aria-pressed={entry.label === selectedLabel} onclick={() => { if (entry.saved) pick(entry.saved) }}
-                onkeydown={(event) => pickWithKeyboard(event, entry.saved)}>
-                <Database class="saved-icon" size={17} />
-                {#if entry.seq !== null}<span class="saved-seq" title={`Connection #${entry.seq}`}>#{entry.seq}</span>{/if}
-                <span class="saved-text"><strong>{entry.label}</strong>{#if entry.sub}<small>{entry.sub}</small>{/if}</span>
+              <!-- The row is a container; selecting is its own button, so the
+                   Disconnect/Forget buttons are siblings, never nested in one. -->
+              <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+              <div class="saved-item" class:current={entry.active} class:selected={entry.label === selectedLabel}
+                onclick={() => { if (entry.saved) pick(entry.saved) }}>
+                <button type="button" class="saved-pick" disabled={!entry.saved} aria-label={entry.label}
+                  aria-pressed={entry.label === selectedLabel} onclick={(event) => { event.stopPropagation(); if (entry.saved) pick(entry.saved) }}>
+                  <Database class="saved-icon" size={17} />
+                  {#if entry.seq !== null}<span class="saved-seq" title={`Connection #${entry.seq}`}>#{entry.seq}</span>{/if}
+                  <span class="saved-text"><strong>{entry.label}</strong>{#if entry.sub}<small>{entry.sub}</small>{/if}</span>
+                </button>
                 {#if entry.active}
                   <button class="row-action disconnect" title="Disconnect" disabled={snapshot.current.connecting}
                     onclick={(event) => { event.stopPropagation(); void conn.disconnect() }}><Power size={14} /></button>

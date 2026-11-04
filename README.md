@@ -70,7 +70,7 @@ Tables, plain views, sequences and functions open **editable**; materialized vie
 * Double-click a cell to inspect its raw value (pretty-printed for JSON/JSONB, with a character count) — the dialog's COPY button is the copy path, and a successful copy closes it.
 * Large results load in pages without holding transactions or locks between clicks. “Load more” reruns the SELECT and skips previously loaded rows; concurrent changes can cause skipped or duplicated rows. Use a stable `ORDER BY`. Each page may rerun expensive work; later pages are read-only and cannot repeat database writes from SELECT functions. Explicit `BEGIN` transactions remain open until you finish them.
 * Statement timeout (configurable, applies to new connections) plus explicit cancellation bound runaway queries.
-* **Execution plans** — visual Explain / Explain Analyze. Analyze executes SQL and may modify data.
+* **Execution plans** — visual Explain / Explain Analyze. Analyze executes the SQL to measure it and then rolls its changes back; inside your own open transaction they stay until you COMMIT or ROLLBACK. Effects outside the transaction (sequence values, external calls) are not undone.
 
   ![Execution plan](docs/images/manual/11-execution-plan.png)
 

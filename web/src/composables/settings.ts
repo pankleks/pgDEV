@@ -111,34 +111,43 @@ const state = createState<SettingsState>({
 })
 
 let readyPromise: Promise<void> | null = null
-let locallyChanged = false
+// Fields (and browser-state labels) the user changed before the stored file
+// arrived. The late load fills in everything else, so an early click neither
+// discards the rest of the stored settings nor gets overwritten by them.
+const changed = new Set<keyof SettingsState>()
+const changedBrowserLabels = new Set<string>()
+const keep = (field: keyof SettingsState): boolean => !changed.has(field)
+function mark(...fields: (keyof SettingsState)[]): void {
+  for (const field of fields) changed.add(field)
+}
 
 function ensureReady(): Promise<void> {
   if (!readyPromise) {
     readyPromise = storageReady
       .then(({ settings }) => {
-        if (locallyChanged || !settings || typeof settings !== 'object') return
+        if (!settings || typeof settings !== 'object') return
         const saved = settings as Partial<SettingsState>
-        if (typeof saved.groupObjects === 'boolean') state.groupObjects = saved.groupObjects
-        if (typeof saved.statementTimeout !== 'undefined') {
+        if (keep('groupObjects') && typeof saved.groupObjects === 'boolean') state.groupObjects = saved.groupObjects
+        if (keep('statementTimeout') && typeof saved.statementTimeout !== 'undefined') {
           state.statementTimeout = clampStatementTimeout(saved.statementTimeout)
         }
-        if (typeof saved.sideCollapsed === 'boolean') state.sideCollapsed = saved.sideCollapsed
-        if (typeof saved.editorFontSize !== 'undefined') {
+        if (keep('sideCollapsed') && typeof saved.sideCollapsed === 'boolean') state.sideCollapsed = saved.sideCollapsed
+        if (keep('editorFontSize') && typeof saved.editorFontSize !== 'undefined') {
           state.editorFontSize = clampEditorFontSize(saved.editorFontSize)
         }
-        if (typeof saved.aiLimitRows !== 'undefined') {
+        if (keep('aiLimitRows') && typeof saved.aiLimitRows !== 'undefined') {
           state.aiLimitRows = clampAiLimit(saved.aiLimitRows, AI_LIMIT_ROWS)
         }
-        if (typeof saved.aiLimitKb !== 'undefined') {
+        if (keep('aiLimitKb') && typeof saved.aiLimitKb !== 'undefined') {
           state.aiLimitKb = clampAiLimit(saved.aiLimitKb, AI_LIMIT_KB)
         }
-        if (saved.panelSizes && typeof saved.panelSizes === 'object') {
+        if (keep('panelSizes') && saved.panelSizes && typeof saved.panelSizes === 'object') {
           state.panelSizes.sideW = clampSize(saved.panelSizes.sideW, SIZE_LIMITS.sideW)
           state.panelSizes.resultsH = clampSize(saved.panelSizes.resultsH, SIZE_LIMITS.resultsH)
         }
         if (saved.browserExpanded && typeof saved.browserExpanded === 'object') {
           for (const [label, ui] of Object.entries(saved.browserExpanded)) {
+            if (changedBrowserLabels.has(label)) continue
             const clean = sanitizeBrowserState(ui)
             if (clean) state.browserExpanded[label] = clean
           }
@@ -168,33 +177,37 @@ export function useSettings() {
   const ready = ensureReady()
 
   function setGroupObjects(enabled: boolean) {
-    locallyChanged = true
+    mark('groupObjects')
     state.groupObjects = enabled
     persist()
   }
 
   function setStatementTimeout(seconds: number) {
+    mark('statementTimeout')
     state.statementTimeout = clampStatementTimeout(seconds)
     persist()
   }
 
   function setEditorFontSize(px: number) {
+    mark('editorFontSize')
     state.editorFontSize = clampEditorFontSize(px)
     persist()
   }
 
   function setSideCollapsed(collapsed: boolean) {
-    locallyChanged = true
+    mark('sideCollapsed')
     state.sideCollapsed = collapsed
     persist()
   }
 
   function setAiLimitRows(rows: number) {
+    mark('aiLimitRows')
     state.aiLimitRows = clampAiLimit(rows, AI_LIMIT_ROWS)
     persist()
   }
 
   function setAiLimitKb(kb: number) {
+    mark('aiLimitKb')
     state.aiLimitKb = clampAiLimit(kb, AI_LIMIT_KB)
     persist()
   }
@@ -202,7 +215,7 @@ export function useSettings() {
   /** Restore every preference to its default (per-connection expansion is
    * recorded state, not a preference, so it is left alone). */
   function resetToDefaults() {
-    locallyChanged = true
+    mark('groupObjects', 'statementTimeout', 'editorFontSize', 'sideCollapsed', 'aiLimitRows', 'aiLimitKb', 'panelSizes')
     state.groupObjects = true
     state.statementTimeout = STATEMENT_TIMEOUT.fallback
     state.editorFontSize = EDITOR_FONT.fallback
@@ -215,6 +228,7 @@ export function useSettings() {
   }
 
   function setPanelSizes(sideW: number, resultsH: number) {
+    mark('panelSizes')
     state.panelSizes.sideW = clampSize(sideW, SIZE_LIMITS.sideW)
     state.panelSizes.resultsH = clampSize(resultsH, SIZE_LIMITS.resultsH)
     persist()
@@ -224,6 +238,7 @@ export function useSettings() {
     if (!label) return
     const clean = sanitizeBrowserState(ui)
     if (!clean) return
+    changedBrowserLabels.add(label)
     const keys = Object.keys(state.browserExpanded)
     if (!(label in state.browserExpanded) && keys.length >= MAX_TRACKED_CONNECTIONS) {
       delete state.browserExpanded[keys[0]]

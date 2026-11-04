@@ -5,7 +5,7 @@ import { sourceLoader } from '../lib/load.mjs'
 // Execute the real store with Svelte reactivity and a controllable API
 // injected through the createResults factory — no source rewriting.
 const load = sourceLoader()
-const { createResults } = await load('web/composables/results.ts')
+const { createResults, describeQueryError } = await load('web/composables/results.ts')
 
 function setup() {
   const api = {}
@@ -419,4 +419,17 @@ test('a failed run without a position leaves markers with nothing to point at', 
   const message = results.state.byTab.tab.messages.at(-1)
   assert.equal(message.level, 'error')
   assert.ok(message.position === null || message.position === undefined)
+})
+
+test('query errors: user cancel, timeouts in any language, and other errors', () => {
+  assert.deepEqual(describeQueryError('canceling statement due to user request', '57014', true), { text: 'Query canceled.', level: 'info' })
+  assert.deepEqual(describeQueryError('canceling statement due to statement timeout', '57014', false),
+    { text: 'Query timed out (statement timeout reached).', level: 'error' })
+  // A localized timeout (lc_messages) is still an error, in the server's words.
+  const localized = describeQueryError('anulowano polecenie z powodu przekroczenia czasu', '57014', false)
+  assert.equal(localized.level, 'error')
+  assert.match(localized.text, /anulowano polecenie/)
+  // A cancel from another session is not mistaken for the user's own.
+  assert.equal(describeQueryError('canceling statement due to user request', '57014', false).level, 'error')
+  assert.deepEqual(describeQueryError('syntax error', '42601', false, '5'), { text: 'syntax error', level: 'error', position: '5' })
 })

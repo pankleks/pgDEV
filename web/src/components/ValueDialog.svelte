@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { dialogFocus } from '../lib/dialogfocus'
   import { Copy, X } from '@lucide/svelte'
   import { useToast } from '../composables/toast'
   import { copyText } from '../lib/gridio'
@@ -35,7 +36,7 @@
 <!-- The backdrop handles only pointer dismissal; dialog controls remain keyboard accessible. -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="modal-backdrop" onmousedown={(event) => { if (event.target === event.currentTarget) onclose() }}>
-  <div class="modal valuedialog-modal" role="dialog" aria-modal="true" aria-label={target.column} tabindex="-1">
+  <div class="modal valuedialog-modal" role="dialog" aria-modal="true" aria-label={target.column} tabindex="-1" use:dialogFocus>
     <button class="icon valuedialog-close" title="Close" onclick={onclose}><X size={16} /></button>
     <h2>
       <span class="valuedialog-column">{target.column}</span>

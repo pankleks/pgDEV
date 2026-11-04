@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { dialogFocus } from '../lib/dialogfocus'
   import { Save, X } from '@lucide/svelte'
   import { confirmAction } from '../lib/desktop'
   import { useToast } from '../composables/toast'
@@ -37,6 +38,9 @@
   } = $props()
   const toast = useToast()
   const results = useResults()
+
+  /** What PostgreSQL's numeric input accepts, including NaN/Infinity. */
+  const NUMBER_TEXT = /^\s*[+-]?(?:(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?|nan|inf(?:inity)?)\s*$/i
 
   function buildFields(target: RowEditTarget): Field[] {
     const { grid, row } = target
@@ -97,6 +101,12 @@
     const editable = target.grid.editable
     if (saving || !editable || !changeCount) return
     for (const field of dirty) {
+      // A number input reports '' for a partial or invalid entry (`1e`, `-`);
+      // sending that would fail with "invalid input syntax" on the server.
+      if (field.kind === 'number' && !field.null && !NUMBER_TEXT.test(field.text)) {
+        error = `"${field.name}" needs a number (or set it to NULL).`
+        return
+      }
       if (field.kind !== 'json' || field.null) continue
       const problem = jsonSyntaxError(field.text)
       if (problem) {
@@ -149,7 +159,7 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="modal-backdrop" onmousedown={(event) => { if (event.target === event.currentTarget) void close() }}>
-  <div class="modal rowedit-modal" role="dialog" aria-modal="true" aria-label="Edit row" tabindex="-1">
+  <div class="modal rowedit-modal" role="dialog" aria-modal="true" aria-label="Edit row" tabindex="-1" use:dialogFocus>
     <button class="icon rowedit-close" title="Close" onclick={close}><X size={16} /></button>
     <h2>
       <span class="rowedit-title">Edit row</span>

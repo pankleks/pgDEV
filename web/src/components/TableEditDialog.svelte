@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { dialogFocus } from '../lib/dialogfocus'
   import { onMount } from 'svelte'
   import { KeyRound, Lock, Plus, RotateCcw, Table2, Trash2, X } from '@lucide/svelte'
   import { useConnection } from '../composables/connection'
@@ -175,7 +176,7 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="modal-backdrop" onmousedown={(event) => { if (event.target === event.currentTarget && !submitting) onclose() }}>
-  <div class="modal tableedit-modal" role="dialog" aria-modal="true" aria-label="Edit table" tabindex="-1">
+  <div class="modal tableedit-modal" role="dialog" aria-modal="true" aria-label="Edit table" tabindex="-1" use:dialogFocus>
     <button class="icon tableedit-close" title="Close" onclick={onclose}><X size={16} /></button>
     <h2><Table2 size={16} /> Edit table</h2>
     {#if loading}<div class="tableedit-status">Loading…</div>

@@ -346,7 +346,7 @@ export function diffTableEdit(live: LiveTable, req: TableEditRequest): DiffOutco
 const TABLE_SQL = `
 SELECT c.relkind::text AS relkind, c.relispartition AS is_partition,
   n.nspname AS schema, c.relname AS name,
-  obj_description(c.oid) AS description
+  obj_description(c.oid, 'pg_class') AS description
 FROM pg_class c
 JOIN pg_namespace n ON n.oid = c.relnamespace
 WHERE c.oid = $1::oid`

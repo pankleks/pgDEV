@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte'
   import { ListX, PanelRightClose, PanelTopClose, Pin, PinOff, X } from '@lucide/svelte'
   import { useTabs, type EditorTab } from '../composables/tabs'
   import { useConnection } from '../composables/connection'
@@ -47,6 +48,22 @@
   }
   function menuItem(action: () => void) { action(); menu = null }
   function onTabClick(key: string) { if (!suppressClick) tabs.activate(key) }
+  /** Keyboard: Enter/Space activate; arrows move to (and activate) a neighbour. */
+  async function onTabKeydown(event: KeyboardEvent, index: number) {
+    const list = snapshot.current.tabs
+    let target: number | null = null
+    if (event.key === 'Enter' || event.key === ' ') target = index
+    else if (event.key === 'ArrowRight') target = (index + 1) % list.length
+    else if (event.key === 'ArrowLeft') target = (index - 1 + list.length) % list.length
+    else if (event.key === 'Home') target = 0
+    else if (event.key === 'End') target = list.length - 1
+    if (target === null || !list[target]) return
+    event.preventDefault()
+    const key = list[target]!.key
+    tabs.activate(key)
+    await tick()
+    document.querySelector<HTMLElement>(`.tabstrip [data-tab-key="${CSS.escape(key)}"]`)?.focus()
+  }
   function onDragStart(event: DragEvent, key: string) {
     dragKey = key
     dropIndex = null
@@ -119,12 +136,14 @@
 <svelte:window onclick={() => { menu = null }} />
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 <div class="editor-tabs" data-component="svelte-editor-tabs">
-  <div class="tabstrip" ondblclick={(event) => { if (event.target === event.currentTarget) tabs.newQuery() }}
+  <div class="tabstrip" role="tablist" aria-label="Open editors" tabindex="-1" ondblclick={(event) => { if (event.target === event.currentTarget) tabs.newQuery() }}
     ondragover={(event) => { if (event.target === event.currentTarget) onDragOverStrip(event) }} ondrop={onDrop}>
     {#each snapshot.current.tabs as tab, index (tab.key)}
       <div class="tab" class:active={tab.key === snapshot.current.activeKey} class:agent-tab={tab.agentOpened === true || tab.aiMirror === true}
         class:processes-tab={tab.kind === 'processes'}
         class:dragging={dragKey === tab.key} class:drop-before={dropIndex === index} class:drop-after={dropIndex === index + 1}
+        role="tab" aria-selected={tab.key === snapshot.current.activeKey} tabindex={tab.key === snapshot.current.activeKey ? 0 : -1}
+        data-tab-key={tab.key} onkeydown={(event) => onTabKeydown(event, index)}
         draggable="true" onmousedown={() => { suppressClick = false }} onclick={() => onTabClick(tab.key)}
         oncontextmenu={(event) => openMenu(event, tab.key)} ondragstart={(event) => onDragStart(event, tab.key)}
         ondragover={(event) => onDragOverTab(event, index)} ondragend={onDragEnd}>

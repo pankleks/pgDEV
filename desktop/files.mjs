@@ -1,4 +1,4 @@
-import { open, readFile, rename, rm, stat } from 'node:fs/promises'
+import { chmod, open, readFile, realpath, rename, rm, stat } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
@@ -43,6 +43,10 @@ export function createFiles(dialog, getWindow) {
       path = result.filePath
       grant(path)
     }
+    // Saving over a symlink replaces the file it points to, not the link (the
+    // atomic rename would otherwise swap the link for a regular file). A path
+    // that does not exist yet is used as chosen.
+    path = await realpath(path).catch(() => path)
     const id = randomUUID()
     const temporary = join(dirname(path), `.pgdev-${id}.tmp`)
     const file = await open(temporary, 'wx', 0o600)
@@ -71,7 +75,12 @@ export function createFiles(dialog, getWindow) {
       await entry.writes
       await entry.file.sync()
       await entry.file.close()
-      if (commit) await rename(entry.temporary, entry.path)
+      if (commit) {
+        // Keep an existing file's permissions instead of the temporary's 0600.
+        const existing = await stat(entry.path).catch(() => null)
+        if (existing?.isFile()) await chmod(entry.temporary, existing.mode & 0o7777)
+        await rename(entry.temporary, entry.path)
+      }
       else await rm(entry.temporary, { force: true })
     } catch (error) {
       await entry.file.close().catch(() => undefined)

@@ -102,7 +102,9 @@ function collectCallNames(sql: string): string[] {
  */
 function tightenParentheses(formatted: string): string {
   const mask = codeMask(formatted)
-  const re = /([^\s\u0000])([ \t]+)\(/g
+  // Only after a name (word, quoted identifier, `]`, `)`): an operator or a
+  // comma keeps its space, so `a + (b)` and `= (SELECT …)` stay readable.
+  const re = /([A-Za-z0-9_$"\])])([ \t]+)\(/g
   let out = ''
   let last = 0
   let m: RegExpExecArray | null

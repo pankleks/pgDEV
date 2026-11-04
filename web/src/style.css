@@ -1660,6 +1660,31 @@ body.dragging-results {
         border-radius: 6px;
         cursor: pointer;
 
+        .saved-pick {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          flex: 1;
+          min-width: 0;
+          padding: 0;
+          border: none;
+          background: none;
+          color: inherit;
+          font: inherit;
+          text-align: left;
+          cursor: pointer;
+
+          &:disabled {
+            cursor: default;
+            opacity: 1;
+          }
+
+          &:focus-visible {
+            outline: 1px solid var(--accent);
+            outline-offset: 4px;
+          }
+        }
+
         .saved-icon {
           color: var(--text-dim);
           flex-shrink: 0;
@@ -1900,6 +1925,14 @@ body.dragging-results {
       word-break: break-word;
     }
   }
+}
+
+/* Live region for the toast: out of the layout, always in the document. */
+.toast-region {
+  position: fixed;
+  width: 0;
+  height: 0;
+  overflow: visible;
 }
 
 .toast {

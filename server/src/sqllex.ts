@@ -9,7 +9,7 @@
 // - `--` line comments (span excludes the terminating \n or \r)
 // - nested `/* */` block comments
 // - single-quoted strings with `''` escapes; backslashes escape inside
-//   E'…'/U&'…' (a standalone prefix only) and inside every string when
+//   E'…' (a standalone prefix only; never in U&'…') and inside every string when
 //   `standard_conforming_strings` is off
 // - double-quoted identifiers with `""` escapes
 // - dollar-quoted bodies ($$…$$, $tag$…$tag$); a `$` inside an identifier
@@ -48,7 +48,7 @@ export interface SqlLexeme {
 /** Mutable per-scan state; splitStatements updates it as statements finish. */
 export interface SqlLexState {
   /** When false, backslash escapes are active inside every single-quoted
-   * string; when true (the default), only inside E'…' and U&'…'. */
+   * string; when true (the default), only inside E'…'. */
   standardConformingStrings: boolean
 }
 
@@ -111,15 +111,15 @@ export function scanSqlLexemes(
       continue
     }
     if (ch === "'") {
-      // The prefix letters are read from the characters before the quote: a
-      // standalone `E` enables backslash escapes, and so does `U&`. The char
-      // guard keeps identifiers that merely end in `e`/`u` from counting.
+      // The prefix is read from the characters before the quote: a standalone
+      // `E` enables backslash escapes. The char guard keeps identifiers that
+      // merely end in `e` from counting.
       const p1 = sql[i - 1] ?? ''
       const p2 = sql[i - 2] ?? ''
-      const p3 = sql[i - 3] ?? ''
       const eString = /e/i.test(p1) && !IDENT_PART.test(p2)
-      const uString = p1 === '&' && /u/i.test(p2) && !IDENT_PART.test(p3)
-      const escapeBackslashes = scsOff() || eString || uString
+      // In U&'…' a backslash introduces a Unicode escape but never escapes
+      // the quote: only '' does, as in a standard string.
+      const escapeBackslashes = scsOff() || eString
       let j = i + 1
       while (j < n) {
         if (sql[j] === "'") {

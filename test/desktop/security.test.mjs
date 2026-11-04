@@ -140,3 +140,24 @@ test('rotating the MCP token invalidates the old one at once and needs the deskt
   assert.equal((await app.inject({ url: '/api/ai/config', headers: desktop })).json().token, next)
   assert.equal(validateRequest('POST', '/api/ai/token/rotate'), '/api/ai/token/rotate')
 })
+
+test('malformed request fields are rejected with 400, not passed on', async (t) => {
+  const load = sourceLoader()
+  const { createApp } = await load('server/app.ts')
+  const { mkdtemp, rm } = await import('node:fs/promises')
+  const { join } = await import('node:path')
+  const { tmpdir } = await import('node:os')
+  const directory = await mkdtemp(join(tmpdir(), 'pgdev-validate-'))
+  const app = await createApp({ serveStatic: false, aiTokenFile: join(directory, 'mcp-token') })
+  t.after(async () => { await app.close(); await rm(directory, { recursive: true, force: true }) })
+  const headers = { origin: 'http://localhost' }
+  const post = (url, payload) => app.inject({ method: 'POST', url, headers, payload })
+  for (const tabKey of [{}, ['x'], 42, 'x'.repeat(300)]) {
+    assert.equal((await post('/api/connections/none/query', { sql: 'SELECT 1', tabKey })).statusCode, 400, JSON.stringify(tabKey))
+  }
+  assert.equal((await app.inject({ url: '/api/connections/none/ddl?type=table&oid=abc', headers })).statusCode, 400)
+  assert.equal((await app.inject({ url: '/api/connections/none/ddl?type=table&oid=1;drop', headers })).statusCode, 400)
+  for (const body of [{ host: { x: 1 } }, { port: '5432' }, { port: 70000 }, { ssl: 'yes' }, { connectionString: 5 }]) {
+    assert.equal((await post('/api/connections', body)).statusCode, 400, JSON.stringify(body))
+  }
+})

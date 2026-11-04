@@ -108,11 +108,13 @@ test('every parameter without a pasted value becomes NULL', () => {
 })
 
 test('values arrive as JSON, optionally behind a `--` comment prefix', () => {
-  const values = parseParamValues('-- [1,"assignee_employee_id_list",[10,12],false,null,["QMS Management Review"]]')
-  assert.deepEqual(values, [1, 'assignee_employee_id_list', [10, 12], false, null, ['QMS Management Review']])
-  assert.deepEqual(parseParamValues('  [true, null, 2.5]  '), [true, null, 2.5])
+  // Compared as the SQL they become: numbers keep their exact source text.
+  const sql = (text) => parseParamValues(text).map(sqlLiteral)
+  assert.deepEqual(sql('-- [1,"assignee_employee_id_list",[10,12],false,null,["QMS Management Review"]]'),
+    ['1', "'assignee_employee_id_list'", 'ARRAY[10, 12]', 'FALSE', 'NULL', "ARRAY['QMS Management Review']"])
+  assert.deepEqual(sql('  [true, null, 2.5]  '), ['TRUE', 'NULL', '2.5'])
   // A bare value still maps to one parameter.
-  assert.deepEqual(parseParamValues('42'), [42])
+  assert.deepEqual(sql('42'), ['42'])
   // A pasted comment with nothing after it means "no values".
   assert.equal(parseParamValues('-- '), null)
   assert.equal(parseParamValues(''), null)
@@ -145,4 +147,11 @@ test('shorter value arrays only override the leading parameters', () => {
   const script = mapParams('WHERE a = $1 AND b = $2', [7])
   assert.ok(script)
   assert.match(script, /\t7, -- \$1\n\tNULL -- \$2/)
+})
+
+test('pasted numbers keep their exact text, also inside JSON objects', async () => {
+  const { parseParamValues, sqlLiteral, mapParams } = await sourceLoader()('web/lib/preparemap.ts')
+  const values = parseParamValues('[12345678901234567890, 1.50, {"id": 9007199254740993}, "x"]')
+  assert.deepEqual(values.map(sqlLiteral), ['12345678901234567890', '1.50', `'{"id":9007199254740993}'`, "'x'"])
+  assert.match(mapParams('SELECT $1', parseParamValues('-- [12345678901234567890]')), /\t12345678901234567890 -- \$1/)
 })

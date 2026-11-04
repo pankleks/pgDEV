@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { dialogFocus } from '../lib/dialogfocus'
   import { Copy, KeyRound, RotateCcw, X } from '@lucide/svelte'
   import { api } from '../api'
   import { useAi } from '../composables/ai'
@@ -63,7 +64,7 @@
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 <div class="modal-backdrop" onclick={(event) => { if (event.target === event.currentTarget) onclose() }}>
-  <div class="modal settings-modal" role="dialog" aria-modal="true" aria-label="Settings" tabindex="-1">
+  <div class="modal settings-modal" role="dialog" aria-modal="true" aria-label="Settings" tabindex="-1" use:dialogFocus={onclose}>
     <div class="settings-head">
       <div><h2>Settings</h2></div>
       <button class="icon" title="Close" onclick={onclose}><X size={17} /></button>

@@ -267,7 +267,7 @@ async function executeStatements(
   cap: number,
   useCursors: boolean,
   txn: TxnState,
-): Promise<{ mapped: MappedResult[]; openCursor: string | null; fields: FieldInfo[] }> {
+): Promise<{ mapped: MappedResult[]; openCursor: string | null; fields: FieldInfo[]; executed: string[] }> {
   const results: (
     | { kind: 'command'; command: string; rowCount: number }
     | { kind: 'data'; page: DataPage }
@@ -474,6 +474,7 @@ async function executeStatements(
     mapped,
     openCursor,
     fields: last?.kind === 'data' ? last.page.fields : [],
+    executed: statements,
   }
 }
 
@@ -627,7 +628,7 @@ async function runBatchOnTab(
     // transaction, not paging state. One-shot batches (agent reads) never page:
     // their rows are mirrored to a tab whose key cannot reach this session.
     const useCursors = !options.explain && pageable && !autocommit && !manual && statements.every(canUseCursor)
-    const { mapped, openCursor, fields } = await executeStatements(client, sql, cap, useCursors, txn)
+    const { mapped, openCursor, fields, executed } = await executeStatements(client, sql, cap, useCursors, txn)
     let paging: PagingQuery | null = null
     if (openCursor) {
       await closeCursor(client, openCursor)
@@ -636,9 +637,11 @@ async function runBatchOnTab(
       )
       // Replay only the final SELECT, never earlier statements from the batch.
       const last = mapped.at(-1)
-      if (last?.kind === 'data' && !hasTopLevelOrderBy(statements.at(-1)!)) last.unordered = true
+      if (last?.kind === 'data' && !hasTopLevelOrderBy(executed.at(-1)!)) last.unordered = true
       paging = {
-        sql: statements.at(-1)!, offset: last?.kind === 'data' ? last.rows.length : 0,
+        // The text that actually ran (split with the live string mode), not
+        // the up-front split, which a mode change inside a routine could skew.
+        sql: executed.at(-1)!, offset: last?.kind === 'data' ? last.rows.length : 0,
         fields, searchPath: settings.rows[0].search_path, stringMode: settings.rows[0].string_mode,
         role: settings.rows[0].role, busy: false,
       }
@@ -656,7 +659,10 @@ async function runBatchOnTab(
       sessionKept = true
     } else {
       if (txn.inTxn) {
-        if (abandoned) {
+        // EXPLAIN ANALYZE executes the statement only to measure it: its
+        // changes are rolled back, like a closed tab's. Inside the user's own
+        // transaction (the other path) the user's COMMIT/ROLLBACK decides.
+        if (abandoned || options.explain === 'analyze') {
           try {
             await client.query('ROLLBACK')
           } catch {

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte'
+  import { onDestroy, untrack } from 'svelte'
   import { RefreshCw } from '@lucide/svelte'
   import { api } from '../api'
   import type { DatabaseProcess } from '../types'
@@ -64,7 +64,11 @@
     }
   }
 
-  onMount(() => { void refresh() })
+  // On mount and whenever a reused panel is pointed at another connection.
+  $effect(() => {
+    void connectionId
+    untrack(() => { void refresh() })
+  })
   onDestroy(() => { alive = false })
 </script>
 

@@ -15,9 +15,10 @@ export interface HoverColumn {
 
 export const MAX_OVERLOADS = 5
 
-/** Escape markdown control characters in plain text (comments, defaults). */
+/** Escape markdown control characters in plain text (comments, defaults):
+ * emphasis, code, links, headings (`#`), tables (`|`) and autolinks (`<…>`). */
 export function escapeMarkdown(text: string): string {
-  return text.replace(/([\\`*_[\]])/g, '\\$1')
+  return text.replace(/([\\`*_[\]#<>|])/g, '\\$1')
 }
 
 /** Identifiers and signatures only need the characters that could open
@@ -40,7 +41,7 @@ export function functionSignature(f: FunctionInfo): string {
 
 function overloadBlock(f: FunctionInfo): string {
   const head = `**${escapeName(f.name)}**${escapeName(functionSignatureDetail(f))}`
-  const meta = `${f.kind} · ${f.schema}`
+  const meta = `${f.kind} · ${escapeName(f.schema)}`
   const body = f.comment ? `\n\n${escapeMarkdown(f.comment)}` : ''
   return `${head}\n_${meta}_${body}`
 }
@@ -52,7 +53,7 @@ function overloadBlock(f: FunctionInfo): string {
  */
 export function functionSignatureDoc(f: FunctionInfo): string {
   const body = f.comment ? `\n\n${escapeMarkdown(f.comment)}` : ''
-  return `_${f.kind} · ${f.schema}_${body}`
+  return `_${f.kind} · ${escapeName(f.schema)}_${body}`
 }
 
 /** Markdown for one or more overloads of a function/procedure. */

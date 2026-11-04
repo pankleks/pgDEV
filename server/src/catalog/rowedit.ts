@@ -40,7 +40,9 @@ JOIN pg_namespace n ON n.oid = c.relnamespace`
 const COLUMNS_SQL = `
 SELECT a.attname AS name,
   format_type(a.atttypid, NULL) AS type,
-  a.attgenerated <> '' AS generated,
+  -- GENERATED ALWAYS identity columns refuse a plain UPDATE like generated
+  -- ones (only OVERRIDING SYSTEM VALUE, which INSERT alone accepts, sets them).
+  (a.attgenerated <> '' OR a.attidentity = 'a') AS generated,
   NOT a.attnotnull AS nullable
 FROM pg_attribute a
 WHERE a.attrelid = $1::oid AND a.attnum > 0 AND NOT a.attisdropped

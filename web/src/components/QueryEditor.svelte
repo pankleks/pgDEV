@@ -13,6 +13,7 @@
   import { mapParams, parseParamValues } from '../lib/preparemap'
   import { editorSelection, getActiveSelection, setFormatHandler, setInsertHandler, setParamsHandler, setSelectionGetter } from '../lib/formatbridge'
   import { stateView } from '../lib/state.svelte'
+  import { codePointsToIndex } from '../lib/textoffset'
 
   let { tab, onrun }: { tab: EditorTab; onrun: () => void } = $props()
   let el: HTMLDivElement
@@ -213,7 +214,8 @@
     }
     const offset = Number(failure.position) - 1
     if (!Number.isFinite(offset)) { monaco.editor.setModelMarkers(model, 'pgdev-sql', []); return }
-    const clamped = Math.max(0, Math.min(model.getValueLength(), Math.floor(offset)))
+    // PostgreSQL counts characters; the model counts UTF-16 units.
+    const clamped = codePointsToIndex(model.getValue(), Math.max(0, Math.floor(offset)))
     const position = model.getPositionAt(clamped)
     const word = model.getWordAtPosition(position)
     const end = word && word.startColumn <= position.column

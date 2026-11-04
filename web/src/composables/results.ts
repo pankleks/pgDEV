@@ -44,15 +44,14 @@ export function describeQueryError(
   if (/statement timeout/i.test(raw)) {
     return { text: 'Query timed out (statement timeout reached).', level: 'error' }
   }
-  // A user-initiated cancel surfaces as SQLSTATE 57014 ("canceling statement
-  // due to user request"); the timeout case is handled above. Matching the
-  // message text would misclassify any error that merely contains "cancel".
+  // Only a cancel the user asked for is a quiet "canceled". Any other 57014
+  // (a statement timeout under a localized lc_messages, another session's
+  // pg_cancel_backend) is an error shown with the server's own wording.
   // NB: no /aborted/i heuristic — 25P02 "current transaction is aborted"
   // is a server state, not a user cancel; it must surface verbatim.
-  const cancelled = wasCancelling || code === '57014'
-  return cancelled
-    ? { text: 'Query canceled.', level: 'info' }
-    : { text: raw, level: 'error', position: position ?? null }
+  if (wasCancelling) return { text: 'Query canceled.', level: 'info' }
+  if (code === '57014') return { text: `Query canceled by the server: ${raw}`, level: 'error' }
+  return { text: raw, level: 'error', position: position ?? null }
 }
 
 export interface TabResult {

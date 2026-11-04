@@ -57,6 +57,14 @@ export function prepareScript(sql: string, values: string[]): string {
   return ['PREPARE temp AS', indented, '', '', `EXECUTE temp(\n${argLines}\n);`, '', '', 'DEALLOCATE temp;'].join('\n')
 }
 
+/** JSON source-text access (V8 11.4+): a number kept as its exact text,
+ * which JSON.stringify also emits verbatim inside objects. */
+interface RawJson { rawJSON: string }
+const sourceJson = JSON as unknown as {
+  rawJSON?: (text: string) => RawJson
+  isRawJSON?: (value: unknown) => value is RawJson
+}
+
 /**
  * Convert one parsed parameter value to a SQL literal: numbers pass through,
  * strings get single-quote escaping, booleans become TRUE/FALSE, null/undefined
@@ -65,6 +73,7 @@ export function prepareScript(sql: string, values: string[]): string {
  */
 export function sqlLiteral(v: unknown): string {
   if (v === null || v === undefined) return 'NULL'
+  if (sourceJson.isRawJSON?.(v)) return v.rawJSON
   if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE'
   if (typeof v === 'number') return Number.isFinite(v) ? String(v) : 'NULL'
   if (typeof v === 'string') return `'${v.replace(/'/g, "''")}'`
@@ -85,7 +94,14 @@ export function parseParamValues(text: string): unknown[] | null {
   if (!t) return null
   if (!t.startsWith('[')) t = `[${t}]`
   try {
-    const parsed: unknown = JSON.parse(t)
+    // Keep every number exactly as written (12345678901234567890, 1.50):
+    // a double would round it. Plain parsing where the engine lacks
+    // source-text access.
+    const reviver = sourceJson.rawJSON
+      ? (_key: string, value: unknown, context?: { source?: string }) =>
+          typeof value === 'number' && context?.source ? sourceJson.rawJSON!(context.source) : value
+      : undefined
+    const parsed: unknown = JSON.parse(t, reviver as Parameters<typeof JSON.parse>[1])
     return Array.isArray(parsed) ? parsed : [parsed]
   } catch {
     return null
