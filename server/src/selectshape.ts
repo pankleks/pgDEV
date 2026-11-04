@@ -12,6 +12,8 @@
 // an expression aliased to a real column name (`id + 1 AS id`) would make the
 // row editor send a value that no longer identifies the row it came from.
 
+import { scanSqlLexemes } from './sqllex.js'
+
 export interface PlainSelectSource {
   /** Schema when the statement qualifies the table, else null (search_path). */
   schema: string | null
@@ -30,6 +32,8 @@ interface Token {
   text: string
   /** Parenthesis depth at this token (0 = top level). */
   depth: number
+  /** End offset in the source, to join a number with its trailing letters. */
+  end: number
 }
 
 const CLAUSE_START = new Set(['where', 'order', 'limit', 'offset', 'fetch'])
@@ -48,115 +52,27 @@ const NOT_A_TABLE = new Set([
 ])
 
 /**
- * Split SQL into tokens, skipping comments and hiding string/dollar-quoted
- * bodies as opaque literals so their contents can never look like keywords or
- * parentheses. Mirrors the scanner rules in sqlsplit.ts (nested block
- * comments, '' escapes, $tag$ bodies).
+ * Split SQL into tokens on the shared lexer (sqllex.ts), skipping whitespace
+ * and comments and hiding string/dollar-quoted bodies as opaque literals so
+ * their contents can never look like keywords or parentheses.
  */
 function tokenize(sql: string): Token[] {
   const out: Token[] = []
-  let i = 0
-  const n = sql.length
-
-  while (i < n) {
-    const ch = sql[i] as string
-
-    if (/\s/.test(ch)) {
-      i++
-      continue
-    }
-    if (ch === '-' && sql[i + 1] === '-') {
-      const end = sql.indexOf('\n', i + 2)
-      i = end === -1 ? n : end
-      continue
-    }
-    if (ch === '/' && sql[i + 1] === '*') {
-      let depth = 1
-      let j = i + 2
-      while (j < n && depth > 0) {
-        if (sql[j] === '/' && sql[j + 1] === '*') {
-          depth++
-          j += 2
-        } else if (sql[j] === '*' && sql[j + 1] === '/') {
-          depth--
-          j += 2
-        } else {
-          j++
-        }
-      }
-      i = j
-      continue
-    }
-    if (ch === "'") {
-      let j = i + 1
-      while (j < n) {
-        if (sql[j] === "'") {
-          if (sql[j + 1] === "'") j += 2
-          else {
-            j++
-            break
-          }
-        } else {
-          j++
-        }
-      }
-      out.push({ kind: 'literal', text: sql.slice(i, j), depth: 0 })
-      i = j
-      continue
-    }
-    if (ch === '"') {
-      let j = i + 1
-      let text = ''
-      while (j < n) {
-        if (sql[j] === '"') {
-          if (sql[j + 1] === '"') {
-            text += '"'
-            j += 2
-          } else {
-            j++
-            break
-          }
-        } else {
-          text += sql[j]
-          j++
-        }
-      }
-      out.push({ kind: 'ident', text, depth: 0 })
-      i = j
-      continue
-    }
-    if (ch === '$') {
-      const previous = sql[i - 1]
-      const tag =
-        (!previous || !/[A-Za-z0-9_$]/.test(previous)) &&
-        /^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sql.slice(i))
-      if (tag) {
-        const close = sql.indexOf(tag[0], i + tag[0].length)
-        i = close === -1 ? n : close + tag[0].length
-        out.push({ kind: 'literal', text: '', depth: 0 })
-        continue
-      }
-      out.push({ kind: 'punct', text: ch, depth: 0 })
-      i++
-      continue
-    }
-    if (/[A-Za-z_\u0080-\uffff]/.test(ch)) {
-      let j = i + 1
-      while (j < n && /[A-Za-z0-9_$\u0080-\uffff]/.test(sql[j] as string)) j++
-      out.push({ kind: 'word', text: sql.slice(i, j).toLowerCase(), depth: 0 })
-      i = j
-      continue
-    }
-    if (/[0-9]/.test(ch)) {
-      let j = i + 1
-      while (j < n && /[0-9A-Za-z_]/.test(sql[j] as string)) j++
-      out.push({ kind: 'literal', text: sql.slice(i, j), depth: 0 })
-      i = j
-      continue
-    }
-    out.push({ kind: 'punct', text: ch, depth: 0 })
-    i++
-  }
+  scanSqlLexemes(sql, (lex) => {
+    if (lex.kind === 'whitespace' || lex.kind === 'lineComment' || lex.kind === 'blockComment') return
+    const last = out[out.length - 1]
+    if (lex.kind === 'string') out.push({ kind: 'literal', text: lex.raw, depth: 0, end: lex.end })
+    else if (lex.kind === 'dollar') out.push({ kind: 'literal', text: '', depth: 0, end: lex.end })
+    else if (lex.kind === 'ident' && lex.quoted) out.push({ kind: 'ident', text: lex.name, depth: 0, end: lex.end })
+    else if (lex.kind === 'ident') {
+      // A number with trailing letters (`1e5`, `10abc`) stays one literal.
+      if (last?.kind === 'literal' && last.end === lex.start && /^[0-9]/.test(last.text)) {
+        last.text += lex.raw
+        last.end = lex.end
+      } else out.push({ kind: 'word', text: lex.raw.toLowerCase(), depth: 0, end: lex.end })
+    } else if (/^[0-9]+$/.test(lex.raw)) out.push({ kind: 'literal', text: lex.raw, depth: 0, end: lex.end })
+    else out.push({ kind: 'punct', text: lex.raw, depth: 0, end: lex.end })
+  })
 
   let depth = 0
   for (const t of out) {

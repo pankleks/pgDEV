@@ -12,7 +12,8 @@
 //   E'…'/U&'…' (a standalone prefix only) and inside every string when
 //   `standard_conforming_strings` is off
 // - double-quoted identifiers with `""` escapes
-// - dollar-quoted bodies ($$…$$, $tag$…$tag$), only after a token boundary
+// - dollar-quoted bodies ($$…$$, $tag$…$tag$); a `$` inside an identifier
+//   belongs to the identifier
 // - bare-word identifiers and punctuation/digit runs
 //
 // Feature-specific classification stays with the consumers: this module says
@@ -163,10 +164,11 @@ export function scanSqlLexemes(
       continue
     }
     if (ch === '$') {
-      const previous = sql[i - 1]
-      const tag =
-        (!previous || !IDENT_PART.test(previous)) &&
-        /^\$(?:[A-Za-z_\u0080-\uffff][A-Za-z0-9_\u0080-\uffff]*)?\$/.exec(sql.slice(i))
+      // No look-behind is needed: a `$` inside an identifier (`a$b`) was
+      // already consumed by the identifier, so reaching one here means a new
+      // token, as in PostgreSQL. That includes right after a number or a
+      // parameter: `$1$a$…` is parameter $1 followed by a dollar quote.
+      const tag = /^\$(?:[A-Za-z_\u0080-\uffff][A-Za-z0-9_\u0080-\uffff]*)?\$/.exec(sql.slice(i))
       if (tag) {
         const close = sql.indexOf(tag[0], i + tag[0].length)
         const j = close === -1 ? n : close + tag[0].length
@@ -192,6 +194,17 @@ export function scanSqlLexemes(
     if (visit(punctLike('punct', i, i + 1, sql)) === false) return
     i++
   }
+}
+
+/**
+ * The body of a `dollar` lexeme: its opening tag, the body's span within
+ * `raw`, and whether the closing tag is present (an unterminated body runs to
+ * the end of the text). `$$$$` is a closed, empty body.
+ */
+export function dollarBody(raw: string): { tag: string; start: number; end: number; closed: boolean } {
+  const tag = /^\$[^$]*\$/.exec(raw)?.[0] ?? '$$'
+  const closed = raw.length >= tag.length * 2 && raw.endsWith(tag)
+  return { tag, start: tag.length, end: closed ? raw.length - tag.length : raw.length, closed }
 }
 
 /** A lexeme whose name is just its raw text (everything but ident/string). */

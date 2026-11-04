@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { sourceLoader } from '../lib/load.mjs'
 
 const load = sourceLoader()
-const { scanSqlLexemes } = await load('server/sqllex.ts')
+const { scanSqlLexemes, dollarBody } = await load('server/sqllex.ts')
 
 function lexemes(sql) {
   const out = []
@@ -69,4 +69,26 @@ test('the visitor can stop early', () => {
     if (seen.push(lex) === 3) return false
   })
   assert.deepEqual(seen.map((l) => l.kind), ['ident', 'whitespace', 'punct'])
+})
+
+test('a dollar quote can follow a number or parameter, never extend an identifier', () => {
+  const kinds = (sql) => {
+    const out = []
+    scanSqlLexemes(sql, (lex) => { if (lex.kind !== 'whitespace') out.push([lex.kind, lex.raw]) })
+    return out
+  }
+  // $1 is a parameter; $a$…$a$ after it is a dollar quote, as in PostgreSQL.
+  assert.deepEqual(kinds("$1$a$x;y$a$"), [['punct', '$'], ['punct', '1'], ['dollar', '$a$x;y$a$']])
+  // A $ inside an identifier belongs to the identifier.
+  assert.deepEqual(kinds('a$b$c $$z$$'), [['ident', 'a$b$c'], ['dollar', '$$z$$']])
+})
+
+test('dollarBody locates the body and reports whether it is closed', () => {
+  assert.deepEqual(dollarBody('$$x$$'), { tag: '$$', start: 2, end: 3, closed: true })
+  assert.deepEqual(dollarBody('$fn$ a $fn$'), { tag: '$fn$', start: 4, end: 7, closed: true })
+  assert.deepEqual(dollarBody('$$$$'), { tag: '$$', start: 2, end: 2, closed: true })
+  // Unterminated bodies run to the end; a tag overlapping the opener is not a close.
+  assert.deepEqual(dollarBody('$a$ open'), { tag: '$a$', start: 3, end: 8, closed: false })
+  assert.deepEqual(dollarBody('$$$'), { tag: '$$', start: 2, end: 3, closed: false })
+  assert.deepEqual(dollarBody('$a$a$'), { tag: '$a$', start: 3, end: 5, closed: false })
 })

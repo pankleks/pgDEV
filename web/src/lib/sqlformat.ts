@@ -1,6 +1,7 @@
 import { format, formatDialect, postgresql } from 'sql-formatter'
 import type { DialectOptions } from 'sql-formatter'
 import { applyStandardConformingSetting } from '../../../server/src/sqlsplit'
+import { dollarBody, scanSqlLexemes } from '../../../server/src/sqllex'
 
 const OPTS = {
   tabWidth: 4,
@@ -56,80 +57,23 @@ const NON_CALL_WORDS = nonCallWords()
  */
 function codeMask(sql: string): string {
   const out = sql.split('')
-  const n = sql.length
   const blank = (from: number, to: number): void => {
-    for (let k = from; k < to && k < n; k++) out[k] = '\u0000'
+    for (let k = from; k < to; k++) out[k] = '\u0000'
   }
-
-  let i = 0
-  while (i < n) {
-    const ch = sql[i]
-    if (ch === '-' && sql[i + 1] === '-') {
-      const end = sql.indexOf('\n', i + 2)
-      const stop = end === -1 ? n : end
-      blank(i, stop)
-      i = stop
-      continue
-    }
-    if (ch === '/' && sql[i + 1] === '*') {
-      let depth = 1
-      let j = i + 2
-      while (j < n && depth > 0) {
-        if (sql[j] === '/' && sql[j + 1] === '*') {
-          depth++
-          j += 2
-        } else if (sql[j] === '*' && sql[j + 1] === '/') {
-          depth--
-          j += 2
-        } else {
-          j++
-        }
+  const mask = (text: string, offset: number): void => {
+    scanSqlLexemes(text, (lex) => {
+      const start = offset + lex.start
+      const end = offset + lex.end
+      if (lex.kind === 'string' || lex.kind === 'lineComment' || lex.kind === 'blockComment' || (lex.kind === 'ident' && lex.quoted)) {
+        blank(start, end)
+      } else if (lex.kind === 'dollar') {
+        // A routine body is code: mask what is inside it the same way.
+        const body = dollarBody(lex.raw)
+        mask(lex.raw.slice(body.start, body.end), start + body.start)
       }
-      blank(i, j)
-      i = j
-      continue
-    }
-    if (ch === "'") {
-      const escapeBackslashes = /e/i.test(sql[i - 1] ?? '')
-      let j = i + 1
-      while (j < n) {
-        if (sql[j] === "'") {
-          if (sql[j + 1] === "'") {
-            j += 2
-            continue
-          }
-          j++
-          break
-        }
-        if (escapeBackslashes && sql[j] === '\\' && j + 1 < n) {
-          j += 2
-          continue
-        }
-        j++
-      }
-      blank(i, j)
-      i = j
-      continue
-    }
-    if (ch === '"') {
-      let j = i + 1
-      while (j < n) {
-        if (sql[j] === '"') {
-          if (sql[j + 1] === '"') {
-            j += 2
-            continue
-          }
-          j++
-          break
-        }
-        j++
-      }
-      blank(i, j)
-      i = j
-      continue
-    }
-    i++
+    })
   }
+  mask(sql, 0)
   return out.join('')
 }
 
@@ -214,12 +158,6 @@ interface DollarSegment {
   statementStart: number
 }
 
-function dollarDelimiterAt(sql: string, index: number): string | null {
-  const previous = sql[index - 1]
-  if (previous && /[A-Za-z0-9_$]/.test(previous)) return null
-  return /^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sql.slice(index))?.[0] ?? null
-}
-
 function stripComments(sql: string): string {
   return sql
     .replace(/--[^\r\n]*(?:\r?\n|$)/g, '')
@@ -229,86 +167,28 @@ function stripComments(sql: string): string {
 function findDollarSegments(sql: string): DollarSegment[] {
   const segments: DollarSegment[] = []
   let statementStart = 0
+  // The scanner reads this as it goes, so a SET standard_conforming_strings
+  // statement changes how the strings after it are lexed.
   const state = { standardConformingStrings: true }
-  let i = 0
-  while (i < sql.length) {
-    if (sql[i] === '-' && sql[i + 1] === '-') {
-      const end = sql.indexOf('\n', i + 2)
-      i = end === -1 ? sql.length : end
-      continue
-    }
-    if (sql[i] === '/' && sql[i + 1] === '*') {
-      let depth = 1
-      i += 2
-      while (i < sql.length && depth > 0) {
-        if (sql[i] === '/' && sql[i + 1] === '*') {
-          depth++
-          i += 2
-        } else if (sql[i] === '*' && sql[i + 1] === '/') {
-          depth--
-          i += 2
-        } else {
-          i++
-        }
-      }
-      continue
-    }
-    if (sql[i] === "'") {
-      const escapeBackslashes = !state.standardConformingStrings || /e/i.test(sql[i - 1] ?? '')
-      i++
-      while (i < sql.length) {
-        if (sql[i] === "'") {
-          if (sql[i + 1] === "'") i += 2
-          else {
-            i++
-            break
-          }
-        } else if (escapeBackslashes && sql[i] === '\\' && i + 1 < sql.length) {
-          i += 2
-        } else {
-          i++
-        }
-      }
-      continue
-    }
-    if (sql[i] === '"') {
-      i++
-      while (i < sql.length) {
-        if (sql[i] === '"') {
-          if (sql[i + 1] === '"') i += 2
-          else {
-            i++
-            break
-          }
-        } else {
-          i++
-        }
-      }
-      continue
-    }
-    const delimiter = sql[i] === '$' ? dollarDelimiterAt(sql, i) : null
-    if (delimiter) {
-      const closeStart = sql.indexOf(delimiter, i + delimiter.length)
-      if (closeStart === -1) break
+  scanSqlLexemes(sql, (lex) => {
+    if (lex.kind === 'dollar') {
+      const body = dollarBody(lex.raw)
+      // An unterminated body runs to the end: nothing after it is code.
+      if (!body.closed) return false
       segments.push({
-        openStart: i,
-        openEnd: i + delimiter.length,
-        closeStart,
+        openStart: lex.start,
+        openEnd: lex.start + body.start,
+        closeStart: lex.start + body.end,
         statementStart,
       })
-      i = closeStart + delimiter.length
-      continue
-    }
-    if (sql[i] === ';') {
-      const statement = sql.slice(statementStart, i)
+    } else if (lex.kind === 'punct' && lex.raw === ';') {
       // Shared with the splitter: bare-word detection, so a spelling of the
       // GUC name inside a literal can never flip the scanning mode.
-      const setting = applyStandardConformingSetting(statement)
+      const setting = applyStandardConformingSetting(sql.slice(statementStart, lex.start))
       if (setting) state.standardConformingStrings = setting === 'on'
-      statementStart = i + 1
+      statementStart = lex.end
     }
-    i++
-  }
+  }, state)
   return segments
 }
 

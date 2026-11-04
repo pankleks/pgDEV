@@ -6,6 +6,7 @@
 // token list is built once per document version.
 
 import { allLexemes, allTokens, type SqlToken } from '../lib/sqlcache'
+import { dollarBody } from '../../../server/src/sqllex'
 
 export interface IdentifierAt {
   /** Identifier text without surrounding quotes. */
@@ -100,13 +101,12 @@ export function identifierRangeAt(text: string, offset: number): { start: number
   // so completion inside a routine body still replaces the typed symbol.
   const dollar = dollarTokenAt(text, offset)
   if (dollar) {
-    const tag = /^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/.exec(dollar.raw)?.[0] ?? '$$'
-    const closed = dollar.raw.length >= tag.length * 2 && dollar.raw.endsWith(tag)
-    const inner = dollar.raw.slice(tag.length, closed ? dollar.raw.length - tag.length : undefined)
-    const innerOffset = offset - dollar.start - tag.length
+    const span = dollarBody(dollar.raw)
+    const inner = dollar.raw.slice(span.start, span.end)
+    const innerOffset = offset - dollar.start - span.start
     if (innerOffset >= 0 && innerOffset <= inner.length) {
       const range = identifierRangeAt(inner, innerOffset)
-      const shift = dollar.start + tag.length
+      const shift = dollar.start + span.start
       return range ? { start: range.start + shift, end: range.end + shift } : null
     }
   }

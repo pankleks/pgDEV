@@ -158,3 +158,15 @@ test('statements without a table identity are rejected', () => {
   assert.equal(plainSelectTable('SELECT id INTO new_items FROM items'), null)
   assert.equal(plainSelectTable('SELECT * FROM items TABLESAMPLE SYSTEM (1)'), null)
 })
+
+test("E'' backslash escapes cannot hide a JOIN from the plain-SELECT check", () => {
+  // E'\'' is one string (an escaped quote); the JOIN after it is real SQL.
+  assert.equal(plainSelectTable("SELECT * FROM t WHERE a = E'\\'' JOIN u ON true"), null)
+  assert.equal(plainSelectTable("SELECT * FROM t WHERE a = e'\\'' UNION SELECT * FROM u"), null)
+  // A plain filter with an escaped string is still a plain select.
+  assert.deepEqual(plainSelectTable("SELECT * FROM t WHERE a = E'it\\'s'"), { schema: null, table: 't', columns: null })
+})
+
+test('numbers with exponents stay single literals', () => {
+  assert.deepEqual(plainSelectTable('SELECT * FROM t WHERE a > 1e5 LIMIT 10'), { schema: null, table: 't', columns: null })
+})

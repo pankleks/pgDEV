@@ -5,6 +5,7 @@
 
 import type { FunctionInfo, SchemaData } from '../types'
 import { allLexemes } from './sqlcache'
+import { dollarBody } from '../../../server/src/sqllex'
 import { argumentText, parseFunctionArgs } from './functionargs'
 import { functionSignatureDoc } from './hovertext'
 import { findFunctions } from './sqlobjects'
@@ -65,9 +66,7 @@ function dollarInner(text: string, offset: number): { text: string; offset: numb
   for (const lex of allLexemes(text)) {
     if (lex.start >= offset) break
     if (lex.kind !== 'dollar') continue
-    const tag = /^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/.exec(lex.raw)
-    const tagLen = tag ? tag[0].length : 2
-    const closed = lex.raw.length > tagLen * 2 && lex.raw.endsWith(tag ? tag[0] : '$$')
+    const { start: tagLen, closed } = dollarBody(lex.raw)
     // An unclosed body ends at EOF, so a call typed at the end is still inside.
     if (lex.start < offset && offset < (closed ? lex.end : lex.end + 1)) {
       return { text: lex.raw.slice(tagLen), offset: offset - lex.start - tagLen }

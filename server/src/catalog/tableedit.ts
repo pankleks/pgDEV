@@ -81,111 +81,26 @@ function trimExpr(expr: string | null): string {
  * move the following text into the comment. Emission always uses `trimExpr`;
  * this form exists only for equality checks.
  *
- * Backslash escapes are recognised for `E'…'`/`U&'…'` like the statement
- * splitter; a session-wide `standard_conforming_strings=off` is not tracked
- * here, and mis-scanning it can only cost a redundant ALTER, never a missed
- * literal difference.
+ * Scanned with the shared lexer (sqllex.ts), so backslash escapes are
+ * recognised for `E'…'`/`U&'…'` like the statement splitter; a session-wide
+ * `standard_conforming_strings=off` is not tracked here, and mis-scanning it
+ * can only cost a redundant ALTER, never a missed literal difference.
  */
 function normalizeExpr(expr: string | null): string {
   if (expr === null) return ''
   let out = ''
-  let i = 0
-  const n = expr.length
-  while (i < n) {
-    const ch = expr[i]
-    // Line comment — kept verbatim including its terminating newline.
-    if (ch === '-' && expr[i + 1] === '-') {
-      const end = expr.indexOf('\n', i)
-      const stop = end === -1 ? n : end + 1
-      out += expr.slice(i, stop)
-      i = stop
-      continue
+  let afterLineComment = false
+  scanSqlLexemes(expr, (lex) => {
+    if (lex.kind === 'whitespace') {
+      // The newline ending a line comment is kept (folding it away would pull
+      // the next token into the comment); any further whitespace collapses.
+      const newline = afterLineComment ? /^(\r\n|\r|\n)/.exec(lex.raw)?.[0] ?? '' : ''
+      out += newline + (lex.raw.length > newline.length ? ' ' : '')
+    } else {
+      out += lex.raw
     }
-    // Block comment (nested), verbatim.
-    if (ch === '/' && expr[i + 1] === '*') {
-      let depth = 1
-      let j = i + 2
-      while (j < n && depth > 0) {
-        if (expr[j] === '/' && expr[j + 1] === '*') {
-          depth++
-          j += 2
-        } else if (expr[j] === '*' && expr[j + 1] === '/') {
-          depth--
-          j += 2
-        } else {
-          j++
-        }
-      }
-      out += expr.slice(i, j)
-      i = j
-      continue
-    }
-    // Single-quoted string ('' escape; backslash only for E''/U&'').
-    if (ch === "'") {
-      const p1 = expr[i - 1] ?? ''
-      const p2 = expr[i - 2] ?? ''
-      const eString = /e/i.test(p1) && !/^[A-Za-z0-9_$]/.test(p2)
-      const uString = p1 === '&' && /u/i.test(p2) && !/^[A-Za-z0-9_$]/.test(expr[i - 3] ?? '')
-      const escapeBackslashes = eString || uString
-      let j = i + 1
-      while (j < n) {
-        if (expr[j] === "'") {
-          if (expr[j + 1] === "'") j += 2
-          else {
-            j++
-            break
-          }
-        } else if (escapeBackslashes && expr[j] === '\\' && j + 1 < n) {
-          j += 2
-        } else {
-          j++
-        }
-      }
-      out += expr.slice(i, j)
-      i = j
-      continue
-    }
-    // Double-quoted identifier, verbatim.
-    if (ch === '"') {
-      let j = i + 1
-      while (j < n) {
-        if (expr[j] === '"') {
-          if (expr[j + 1] === '"') j += 2
-          else {
-            j++
-            break
-          }
-        } else {
-          j++
-        }
-      }
-      out += expr.slice(i, j)
-      i = j
-      continue
-    }
-    // Dollar-quoted body, verbatim.
-    if (ch === '$') {
-      const previous = expr[i - 1]
-      const tag =
-        (!previous || !/[A-Za-z0-9_$]/.test(previous)) &&
-        /^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/.exec(expr.slice(i))
-      if (tag) {
-        const close = expr.indexOf(tag[0], i + tag[0].length)
-        const stop = close === -1 ? n : close + tag[0].length
-        out += expr.slice(i, stop)
-        i = stop
-        continue
-      }
-    }
-    // Whitespace outside any protected region collapses to a single space.
-    if (/\s/.test(ch ?? '')) {
-      while (i < n && /\s/.test(expr[i] ?? '')) i++
-      out += ' '
-      continue
-    }
-    out += ch
-    i++
-  }
+    afterLineComment = lex.kind === 'lineComment'
+  })
   return out.trim()
 }
 

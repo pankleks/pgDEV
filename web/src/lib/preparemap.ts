@@ -9,26 +9,7 @@
 // a column takes that column's type — so the template declares no type list
 // and the EXECUTE values are the caller's pasted literals or NULL.
 
-function isIdentStart(ch: string): boolean {
-  return /[A-Za-z_\u0080-\uffff"]/.test(ch)
-}
-
-function isIdentPart(ch: string): boolean {
-  return /[A-Za-z0-9_$\u0080-\uffff"]/.test(ch)
-}
-
-/** Parse one identifier starting at `i` (word or "quoted"), return its text. */
-function scanIdent(sql: string, i: number): string {
-  if (sql[i] === '"') {
-    const re = /"(?:[^"]|"")*"/g
-    re.lastIndex = i
-    const m = re.exec(sql)
-    return m ? m[0] : sql.slice(i, i + 1)
-  }
-  let j = i + 1
-  while (j < sql.length && isIdentPart(sql[j])) j++
-  return sql.slice(i, j)
-}
+import { scanSqlLexemes } from '../../../server/src/sqllex'
 
 /**
  * Indices of the top-level $N parameters of one statement, in first-use
@@ -37,82 +18,20 @@ function scanIdent(sql: string, i: number): string {
 export function findParams(sql: string): number[] | null {
   const indices: number[] = []
   const seen = new Set<number>()
-
-  let i = 0
-  const n = sql.length
-  while (i < n) {
-    const ch = sql[i]
-
-    if (ch === '-' && sql[i + 1] === '-') {
-      const stop = sql.indexOf('\n', i + 2)
-      i = stop === -1 ? n : stop + 1
-      continue
-    }
-    if (ch === '/' && sql[i + 1] === '*') {
-      let depth = 1
-      i += 2
-      while (i < n && depth > 0) {
-        if (sql[i] === '/' && sql[i + 1] === '*') {
-          depth++
-          i += 2
-        } else if (sql[i] === '*' && sql[i + 1] === '/') {
-          depth--
-          i += 2
-        } else i++
+  // A parameter is a bare `$` immediately followed by digits. The shared lexer
+  // already keeps strings, comments, dollar bodies and identifiers that
+  // contain `$` (`a$1`) out of plain punctuation.
+  let afterDollar = -1
+  scanSqlLexemes(sql, (lex) => {
+    if (lex.kind === 'punct' && lex.start === afterDollar && /^[0-9]+$/.test(lex.raw)) {
+      const index = Number(lex.raw)
+      if (index > 0 && !seen.has(index)) {
+        seen.add(index)
+        indices.push(index)
       }
-      continue
     }
-    if (ch === "'") {
-      // E'' strings allow backslash escapes; plain strings do not.
-      const escapeQuotes = /(^|[^A-Za-z0-9_$])[eE]$/.test(sql.slice(Math.max(0, i - 2), i))
-      i++
-      while (i < n) {
-        if (sql[i] === '\\' && escapeQuotes) {
-          i += 2
-          continue
-        }
-        if (sql[i] === "'") {
-          if (sql[i + 1] === "'") {
-            i += 2
-            continue
-          }
-          i++
-          break
-        }
-        i++
-      }
-      continue
-    }
-    // An identifier may contain `$`, so consume the whole word first.
-    if (isIdentStart(ch)) {
-      i += scanIdent(sql, i).length
-      continue
-    }
-    if (ch === '$') {
-      const tag = /^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sql.slice(i, i + 64))?.[0]
-      if (tag) {
-        const close = sql.indexOf(tag, i + tag.length)
-        i = close === -1 ? n : close + tag.length
-        continue
-      }
-      if (/[0-9]/.test(sql[i + 1] ?? '')) {
-        let j = i + 1
-        while (j < n && /[0-9]/.test(sql[j])) j++
-        const index = Number(sql.slice(i + 1, j))
-        if (index > 0 && !seen.has(index)) {
-          seen.add(index)
-          indices.push(index)
-        }
-        i = j
-        continue
-      }
-      // Bare `$` or an unusable fragment: punctuation, not a parameter.
-      i++
-      continue
-    }
-    i++
-  }
-
+    afterDollar = lex.kind === 'punct' && lex.raw === '$' ? lex.end : -1
+  })
   return indices.length ? indices : null
 }
 

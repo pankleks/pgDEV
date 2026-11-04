@@ -3,7 +3,7 @@
 // parentheses are normal editor input. CTEs and derived tables become
 // synthetic relations whose output columns are inferred from their SELECT
 // list, so `d.` can offer columns the catalog does not know about.
-import { scanSqlLexemes, type SqlLexeme } from '../../../server/src/sqllex'
+import { dollarBody, scanSqlLexemes, type SqlLexeme } from '../../../server/src/sqllex'
 import type { ColumnInfo } from '../types'
 import type { RelRef } from './sqlrefs'
 
@@ -382,13 +382,10 @@ export function resolveQueryScope(text: string, offset = text.length): QueryScop
   // strings stay opaque. Analyze the body's own statements independently.
   const body = tokens.find((t) => t.kind === 'dollar' && t.start < offset && offset <= t.end)
   if (body && tokens.some((t) => ['FUNCTION', 'PROCEDURE', 'DO'].includes(keyword(t)))) {
-    const tag = /^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/.exec(body.raw)?.[0]
-    if (tag) {
-      const closed = body.raw.length >= tag.length * 2 && body.raw.endsWith(tag)
-      const inner = body.raw.slice(tag.length, closed ? -tag.length : undefined)
-      const innerOffset = offset - body.start - tag.length
-      if (innerOffset >= 0 && innerOffset <= inner.length) return resolveQueryScope(inner, innerOffset)
-    }
+    const span = dollarBody(body.raw)
+    const inner = body.raw.slice(span.start, span.end)
+    const innerOffset = offset - body.start - span.start
+    if (innerOffset >= 0 && innerOffset <= inner.length) return resolveQueryScope(inner, innerOffset)
   }
   const root = groupTokens(tokens, text.length)
   const path = cursorPath(root, offset)
