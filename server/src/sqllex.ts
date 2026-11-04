@@ -6,7 +6,7 @@
 // can never match inside a literal or comment again:
 //
 // - whitespace
-// - `--` line comments (span excludes the terminating newline)
+// - `--` line comments (span excludes the terminating \n or \r)
 // - nested `/* */` block comments
 // - single-quoted strings with `''` escapes; backslashes escape inside
 //   E'…'/U&'…' (a standalone prefix only) and inside every string when
@@ -54,6 +54,9 @@ export interface SqlLexState {
 const IDENT_START = /[A-Za-z_\u0080-\uffff]/
 const IDENT_PART = /[A-Za-z0-9_$\u0080-\uffff]/
 const DIGIT = /[0-9]/
+// PostgreSQL's `space` class (scan.l). Anything else, including U+00A0 and
+// other Unicode spaces, is an identifier character to the server.
+const SPACE = /[ \t\n\r\f\v]/
 
 /**
  * Visit each lexeme of `sql` in order. Return `false` from the visitor to
@@ -73,16 +76,17 @@ export function scanSqlLexemes(
   while (i < n) {
     const ch = sql[i] as string
 
-    if (/\s/.test(ch)) {
+    if (SPACE.test(ch)) {
       let j = i + 1
-      while (j < n && /\s/.test(sql[j] as string)) j++
+      while (j < n && SPACE.test(sql[j] as string)) j++
       if (visit(punctLike('whitespace', i, j, sql)) === false) return
       i = j
       continue
     }
     if (ch === '-' && sql[i + 1] === '-') {
-      const end = sql.indexOf('\n', i + 2)
-      const j = end === -1 ? n : end
+      // A line comment ends at either newline character, as in PostgreSQL.
+      let j = i + 2
+      while (j < n && sql[j] !== '\n' && sql[j] !== '\r') j++
       if (visit(punctLike('lineComment', i, j, sql)) === false) return
       i = j
       continue
@@ -112,8 +116,8 @@ export function scanSqlLexemes(
       const p1 = sql[i - 1] ?? ''
       const p2 = sql[i - 2] ?? ''
       const p3 = sql[i - 3] ?? ''
-      const eString = /e/i.test(p1) && !/^[A-Za-z0-9_$]/.test(p2)
-      const uString = p1 === '&' && /u/i.test(p2) && !/^[A-Za-z0-9_$]/.test(p3)
+      const eString = /e/i.test(p1) && !IDENT_PART.test(p2)
+      const uString = p1 === '&' && /u/i.test(p2) && !IDENT_PART.test(p3)
       const escapeBackslashes = scsOff() || eString || uString
       let j = i + 1
       while (j < n) {
@@ -161,8 +165,8 @@ export function scanSqlLexemes(
     if (ch === '$') {
       const previous = sql[i - 1]
       const tag =
-        (!previous || !/[A-Za-z0-9_$]/.test(previous)) &&
-        /^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sql.slice(i))
+        (!previous || !IDENT_PART.test(previous)) &&
+        /^\$(?:[A-Za-z_\u0080-\uffff][A-Za-z0-9_\u0080-\uffff]*)?\$/.exec(sql.slice(i))
       if (tag) {
         const close = sql.indexOf(tag[0], i + tag[0].length)
         const j = close === -1 ? n : close + tag[0].length

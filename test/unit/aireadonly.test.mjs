@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { sourceLoader } from '../lib/load.mjs'
 
 const load = sourceLoader()
-const { isReadOnlySql, wrapReadOnly } = await load('server/ai/readonly.ts')
+const { isReadOnlySql } = await load('server/ai/readonly.ts')
 
 // The agent may only run reads; the classifier exists so the common refusal is
 // a clear message instead of a PostgreSQL error (the read-only transaction is
@@ -66,11 +66,16 @@ test('locking clauses are refused, even though they are reads', () => {
   assert.deepEqual(isReadOnlySql("SELECT 'for update' AS note"), { ok: true })
 })
 
-test('an empty batch is refused, and reads are wrapped in a read-only transaction', () => {
+test('an empty batch is refused', () => {
   assert.equal(isReadOnlySql('   -- nothing\n').ok, false)
   assert.equal(isReadOnlySql('').ok, false)
-  // The batch engine opens the transaction; the wrapper only sets its mode.
-  assert.equal(wrapReadOnly('SELECT 1'), 'SET TRANSACTION READ ONLY;\nSELECT 1;')
-  assert.equal(wrapReadOnly('SELECT 1;'), 'SET TRANSACTION READ ONLY;\nSELECT 1;')
-  assert.equal(wrapReadOnly('  SELECT 1 ;  '), 'SET TRANSACTION READ ONLY;\nSELECT 1;')
+})
+
+test('non-ASCII spaces do not open a dollar quote that hides later statements', () => {
+  // PostgreSQL lexes U+00A0 as an identifier character, so " $$" is
+  // not a dollar quote there; the gate must see the COMMIT and DELETE too.
+  for (const space of [' ', ' ', '　']) {
+    const sql = `SELECT 1 ${space}$$; COMMIT; DELETE FROM t; SELECT 1 ${space}$$`
+    assert.equal(isReadOnlySql(sql).ok, false, JSON.stringify(space))
+  }
 })

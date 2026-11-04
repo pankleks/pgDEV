@@ -8,11 +8,15 @@ export interface BoundedResult {
 }
 
 /** Execute once and drain the result without accumulating every row in pg. */
-export function boundedQuery(client: PoolClient, sql: string, cap: number): Promise<BoundedResult> {
+export function boundedQuery(client: PoolClient, sql: string, cap: number, extended = false): Promise<BoundedResult> {
   return new Promise((resolve, reject) => {
     // A row listener with no callback disables node-postgres's internal row
     // accumulation. Slicing the result of a promise-based query is too late.
-    const config: QueryArrayConfig = { text: sql, rowMode: 'array', types: rawTextTypes }
+    // `extended` sends Parse/Bind/Execute: PostgreSQL then refuses text holding
+    // more than one statement, so exactly one statement can run per call.
+    const config: QueryArrayConfig & { queryMode?: 'extended' } = {
+      text: sql, rowMode: 'array', types: rawTextTypes, ...(extended ? { queryMode: 'extended' as const } : {}),
+    }
     const query = new Query<unknown[]>(config)
     const rows: unknown[][] = []
     let totalRowCount = 0

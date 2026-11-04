@@ -11,6 +11,7 @@ import { plainSelectTable } from './selectshape.js'
 import { fetchRowEditInfo, editableGrid } from './catalog/rowedit.js'
 import { typeLength } from './typelength.js'
 import { explainSql } from './explain.js'
+import { isReadOnlySql } from './ai/readonly.js'
 import type { EditableGrid } from './schema-types.js'
 import {
   transactionControl,
@@ -632,6 +633,104 @@ export async function runBatch(
     return { kind: 'error', error: sqlError(err) }
   } finally {
     deleteRunning(runKey, client)
+  }
+}
+
+/** Command tags a read may produce (VALUES, TABLE and WITH report SELECT). */
+const READ_TAGS = new Set(['SELECT', 'SHOW', 'EXPLAIN'])
+
+/**
+ * Run an agent batch with PostgreSQL as the guarantee, independent of how the
+ * text is split. One `BEGIN READ ONLY` transaction; every statement is
+ * re-classified with the connection's live string mode and sent over the
+ * extended protocol, so the server refuses text that holds more than one
+ * statement. After each statement the transaction must still be open and the
+ * command tag must be a read, so a COMMIT the classifier mistook for a read
+ * stops the batch before anything else runs. The transaction is always
+ * rolled back, which also reverts session settings changed by set_config.
+ */
+export async function runReadOnlyBatch(
+  connId: string,
+  tabKey: string,
+  sql: string,
+  cap: number,
+): Promise<BatchOutcome> {
+  if (!sql.trim()) return { kind: 'error', error: { kind: 'empty' } }
+  const runKey = sessionKey(connId, tabKey)
+  if (getRunning(runKey)) return { kind: 'error', error: { kind: 'running' } }
+  let client: PoolClient
+  try {
+    client = await getPool(connId).connect()
+  } catch (err) {
+    return { kind: 'error', error: { kind: 'connect', message: pgErrorMessage(err) } }
+  }
+  if (getRunning(runKey)) {
+    client.release()
+    return { kind: 'error', error: { kind: 'running' } }
+  }
+  guardCheckedOutClient(client)
+  setRunning(runKey, client)
+  const start = performance.now()
+  try {
+    await observeSqlState(client)
+    await client.query('BEGIN READ ONLY')
+    const pages: DataPage[] = []
+    let offset = 0
+    while (true) {
+      const part = nextStatement(sql, offset, standardConformingStrings(client))
+      if (!part) break
+      offset = part.end
+      const check = isReadOnlySql(part.text)
+      if (!check.ok) throw new Error(check.reason)
+      let bounded
+      try {
+        bounded = await boundedQuery(client, part.text, cap, true)
+      } catch (err) {
+        return { kind: 'error', error: sqlError(err, part.start) }
+      }
+      const command = bounded.result.command ?? ''
+      if (client.getTransactionStatus() !== 'T' || !READ_TAGS.has(command)) {
+        throw new Error(`"${command || '?'}" is not a read; the agent's batch was stopped and rolled back.`)
+      }
+      if (!bounded.result.fields?.length) continue
+      pages.push({
+        fields: bounded.result.fields as FieldInfo[],
+        rows: bounded.rows.map((row) => row.map((cell) => normalizeCell(cell))),
+        hasMore: false,
+        limited: bounded.totalRowCount > cap,
+        totalRowCount: bounded.totalRowCount,
+      })
+    }
+    if (!pages.length && offset === 0) return { kind: 'error', error: { kind: 'empty' } }
+    const typeNames = await typeNamesFor(client, pages)
+    const results: MappedResult[] = pages.map((page) => {
+      const types = page.fields.map((f) => typeNames.get(String(f.dataTypeID)) ?? '')
+      return {
+        kind: 'data' as const,
+        columns: page.fields.map((f) => f.name),
+        columnTypes: types,
+        columnTypeLengths: page.fields.map((f, i) => typeLength(types[i], f.dataTypeModifier)),
+        rows: page.rows,
+        rowCount: page.rows.length,
+        truncated: false,
+        limited: page.limited ?? false,
+        totalRowCount: page.totalRowCount,
+      }
+    })
+    return { kind: 'ok', results, durationMs: Math.round(performance.now() - start), transactionOpen: false }
+  } catch (err) {
+    return { kind: 'error', error: sqlError(err) }
+  } finally {
+    deleteRunning(runKey, client)
+    // Never commit agent work. A failed ROLLBACK means the connection state is
+    // unknown, so it is destroyed instead of returned to the pool.
+    let broken = false
+    try {
+      await client.query('ROLLBACK')
+    } catch {
+      broken = true
+    }
+    client.release(broken)
   }
 }
 

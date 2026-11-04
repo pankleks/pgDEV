@@ -96,10 +96,14 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
   })
 
   app.addHook('onRequest', async (req, reply) => {
-    if (!req.url.startsWith('/api/')) return
+    // Decide on the matched route pattern, never the raw URL: the router
+    // percent-decodes the path, so "/%61pi/..." reaches the /api/ routes while
+    // the raw string does not start with "/api/".
+    const route = req.routeOptions.url
+    if (!route?.startsWith('/api/')) return
     // The MCP shim is not a browser: it authenticates with the bearer token
     // instead of an Origin, so the token check in the route is the guard.
-    if (req.url.startsWith('/api/ai/tool/')) return
+    if (route === '/api/ai/tool/:name') return
     if (options.desktopToken) {
       const given = Buffer.from(String(req.headers.authorization ?? ''))
       const expected = Buffer.from(`Bearer ${options.desktopToken}`)

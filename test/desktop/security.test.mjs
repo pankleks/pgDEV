@@ -31,4 +31,23 @@ test('desktop API requires its own token and MCP token cannot authorize it', asy
   const mcpToken = response.json().token
   assert.equal((await app.inject({ url: '/api/version', headers: { authorization: `Bearer ${mcpToken}` } })).statusCode, 401)
   assert.equal((await app.inject({ method: 'POST', url: '/api/ai/tool/get_active_query', headers: { authorization: 'Bearer desktop-secret' }, payload: {} })).statusCode, 401)
+  // The router decodes the path, so encoded spellings must not skip the guard.
+  for (const url of ['/%61pi/ai/config', '/api/%61i/config', '/%2561pi/ai/config', '/api/ai/%63onfig']) {
+    const r = await app.inject({ url, headers: { host: 'evil.example' } })
+    assert.notEqual(r.statusCode, 200, url)
+    assert.doesNotMatch(r.body, /token/, url)
+  }
+})
+
+test('web-mode origin guard also covers percent-encoded API paths', async (t) => {
+  const load = sourceLoader()
+  const { createApp } = await load('server/app.ts')
+  const { mkdtemp, rm } = await import('node:fs/promises')
+  const { join } = await import('node:path')
+  const { tmpdir } = await import('node:os')
+  const directory = await mkdtemp(join(tmpdir(), 'pgdev-auth-'))
+  const app = await createApp({ serveStatic: false, aiTokenFile: join(directory, 'mcp-token') })
+  t.after(async () => { await app.close(); await rm(directory, { recursive: true, force: true }) })
+  const r = await app.inject({ url: '/%61pi/ai/config', headers: { origin: 'http://evil.example' } })
+  assert.equal(r.statusCode, 403)
 })

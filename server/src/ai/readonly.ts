@@ -1,8 +1,9 @@
 // Read-only gate for agent-issued SQL. The tool layer refuses anything that is
 // not a plain read before it reaches the database; the statement then runs in
-// a read-only transaction as well, so PostgreSQL is the real guarantee and
-// this classifier only exists to give a clearer message (and to catch locking
-// clauses that would otherwise fail with a database error).
+// a read-only transaction as well (runReadOnlyBatch in queryexec.ts), so
+// PostgreSQL is the real guarantee and this classifier only exists to give a
+// clearer message (and to catch locking clauses that would otherwise fail with
+// a database error). The classifier's split is never trusted for safety.
 
 import { splitStatements } from '../sqlsplit.js'
 import { scanSqlLexemes } from '../sqllex.js'
@@ -68,17 +69,4 @@ export function isReadOnlySql(sql: string): ReadOnlyCheck {
     }
   }
   return { ok: true }
-}
-
-/**
- * Wrap a read-only batch so it runs with PostgreSQL's own read-only guarantee.
- * `SET TRANSACTION READ ONLY` must be the first statement of a transaction:
- * the batch engine opens one implicitly for these statements (none of the
- * allowed commands require autocommit), so the flag is applied to that
- * transaction — issuing our own `BEGIN` would only warn about a transaction
- * already in progress and silently drop the read-only mode.
- */
-export function wrapReadOnly(sql: string): string {
-  const body = sql.trim().replace(/;+\s*$/, '').trim()
-  return `SET TRANSACTION READ ONLY;\n${body};`
 }

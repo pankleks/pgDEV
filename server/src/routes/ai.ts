@@ -4,10 +4,9 @@ import { fileURLToPath } from 'node:url'
 import { connectionIds, getCatalogPool } from '../pools.js'
 import { fetchSchemaData } from '../catalog/metadata.js'
 import { objectDdl, type DdlTarget } from '../catalog/ddl.js'
-import { runBatch } from '../queryexec.js'
+import { runReadOnlyBatch } from '../queryexec.js'
 import { createBridge } from '../ai/bridge.js'
 import { createAiTools } from '../ai/tools.js'
-import { wrapReadOnly } from '../ai/readonly.js'
 import { AI_LIMIT_RANGES, DEFAULT_AI_LIMITS, type AiLimits } from '../schema-types.js'
 
 // AI surface for external agents (MCP clients, via bin/pgdev-mcp.mjs):
@@ -47,10 +46,9 @@ export async function aiRoutes(app: FastifyInstance, options: AiRouteOptions) {
     getDdl: (id: string, target: DdlTarget) => objectDdl(getCatalogPool(id), target),
     // The read-only transaction is what actually stops a write; the tool layer
     // checks the statement first so the common case gets a clear message.
-    // One-shot: mirrored rows cannot page (the mirror tab's key differs), so
-    // the batch is bounded and never leaves a cursor behind.
+    // One-shot and always rolled back: bounded rows, no cursor, no session.
     runReadOnly: (id: string, sql: string, maxRows: number) =>
-      runBatch(id, AI_TAB_KEY, wrapReadOnly(sql), maxRows, { pageable: false }),
+      runReadOnlyBatch(id, AI_TAB_KEY, sql, maxRows),
     bridge,
     limits,
   })
