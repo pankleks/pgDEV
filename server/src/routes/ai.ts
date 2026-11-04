@@ -7,6 +7,7 @@ import { objectDdl, type DdlTarget } from '../catalog/ddl.js'
 import { runReadOnlyBatch } from '../queryexec.js'
 import { createBridge } from '../ai/bridge.js'
 import { createAiTools } from '../ai/tools.js'
+import { rotateToken } from '../ai/token.js'
 import { AI_LIMIT_RANGES, DEFAULT_AI_LIMITS, type AiLimits } from '../schema-types.js'
 
 // AI surface for external agents (MCP clients, via bin/pgdev-mcp.mjs):
@@ -24,6 +25,8 @@ const AI_TAB_KEY = 'ai'
 
 export interface AiRouteOptions {
   token: string
+  /** Where the token is persisted; rotation rewrites it. */
+  tokenFile?: string
   mcpCommand?: string[]
   mcpEndpointFile?: string
   mcpEndpointSecret?: string
@@ -72,8 +75,12 @@ export async function aiRoutes(app: FastifyInstance, options: AiRouteOptions) {
     })
   }
 
+  // Current agent token. Rotation swaps it in place, so the previous one stops
+  // working for the next call of any connected MCP client.
+  let token = options.token
+
   app.post('/api/ai/tool/:name', async (req, reply) => {
-    if (!bearerMatches(req.headers.authorization, options.token)) {
+    if (!bearerMatches(req.headers.authorization, token)) {
       return reply.code(401).send({ error: 'Invalid or missing token' })
     }
     const { name } = req.params as { name: string }
@@ -82,7 +89,7 @@ export async function aiRoutes(app: FastifyInstance, options: AiRouteOptions) {
     return tool((req.body ?? {}) as Record<string, unknown>)
   })
 
-  app.get('/api/ai/config', async () => {
+  function aiConfig() {
     const address = app.server.address()
     const port = address && typeof address === 'object' ? address.port : Number(process.env.PORT) || 3010
     const url = `http://127.0.0.1:${port}`
@@ -95,7 +102,7 @@ export async function aiRoutes(app: FastifyInstance, options: AiRouteOptions) {
           command: options.mcpCommand ?? ['node', command],
           environment: {
             ...(options.mcpEndpointFile ? { PGDEV_ENDPOINT_FILE: options.mcpEndpointFile } : { PGDEV_URL: url }),
-            PGDEV_TOKEN: options.token,
+            PGDEV_TOKEN: token,
           },
           enabled: true,
         },
@@ -103,11 +110,25 @@ export async function aiRoutes(app: FastifyInstance, options: AiRouteOptions) {
     }
     return {
       url,
-      token: options.token,
+      token,
       command,
       config: JSON.stringify(config, null, 2),
       limits: { ...limits },
     }
+  }
+
+  app.get('/api/ai/config', async () => aiConfig())
+
+  // Browser-facing (desktop token / origin guard): replace the agent token.
+  // Every configured MCP client must take the new config; until then its
+  // calls are rejected with "copy a fresh MCP config".
+  app.post('/api/ai/token/rotate', async (_req, reply) => {
+    try {
+      token = rotateToken(options.tokenFile)
+    } catch (err) {
+      return reply.code(500).send({ error: `The new token could not be saved: ${err instanceof Error ? err.message : String(err)}` })
+    }
+    return aiConfig()
   })
 
   // The browser owns this preference (Settings → AI agent) and pushes it on

@@ -113,6 +113,11 @@ export const api = {
     return send('GET', '/api/ai/config')
   },
 
+  /** Replace the agent token; returns the config carrying the new one. */
+  rotateAiToken(): Promise<AiConfig> {
+    return send('POST', '/api/ai/token/rotate')
+  },
+
   /** Tell the server how much of a result set the agent may read. */
   aiLimits(limits: AiLimits): Promise<AiLimits> {
     return send('PUT', '/api/ai/limits', limits)

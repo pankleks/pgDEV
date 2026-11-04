@@ -1,14 +1,14 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { sourceLoader } from '../lib/load.mjs'
 
 const load = sourceLoader()
-const { defaultTokenPath, ephemeralToken, loadOrCreateToken } = await load('server/ai/token.ts')
+const { defaultTokenPath, ephemeralToken, loadOrCreateToken, rotateToken } = await load('server/ai/token.ts')
 
-// The stable agent token: generated once, persisted, rotated by deleting.
+// The stable agent token: generated once, persisted, rotated from Settings.
 
 function scratch() {
   return mkdtempSync(join(tmpdir(), 'pgdev-aitoken-'))
@@ -64,4 +64,37 @@ test('the token file is owner-only on POSIX', { skip: process.platform === 'win3
 
 test('the default path lives in the user config dir', () => {
   assert.ok(defaultTokenPath().endsWith(join('.config', 'pgdev', 'token')), defaultTokenPath())
+})
+
+test('an existing token file readable by others is tightened to owner-only', { skip: process.platform === 'win32' }, (t) => {
+  const dir = scratch()
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const file = join(dir, 'token')
+  writeFileSync(file, 'abcdef0123456789abcdef0123456789\n')
+  chmodSync(file, 0o644)
+  assert.equal(loadOrCreateToken(file), 'abcdef0123456789abcdef0123456789')
+  assert.equal(statSync(file).mode & 0o777, 0o600)
+})
+
+test('rotation persists a new owner-only token and leaves no temporary file', (t) => {
+  const dir = scratch()
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const file = join(dir, 'token')
+  const first = loadOrCreateToken(file)
+  if (process.platform !== 'win32') chmodSync(file, 0o644)
+  const rotated = rotateToken(file)
+  assert.match(rotated, /^[0-9a-f]{64}$/)
+  assert.notEqual(rotated, first)
+  assert.equal(readFileSync(file, 'utf8').trim(), rotated)
+  assert.equal(loadOrCreateToken(file), rotated, 'the next start keeps the rotated token')
+  if (process.platform !== 'win32') assert.equal(statSync(file).mode & 0o777, 0o600)
+  assert.deepEqual(readdirSync(dir), ['token'])
+})
+
+test('a rotation that cannot be saved fails instead of going ephemeral', (t) => {
+  const dir = scratch()
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const blocker = join(dir, 'blocker')
+  writeFileSync(blocker, 'x')
+  assert.throws(() => rotateToken(join(blocker, 'token')))
 })

@@ -115,7 +115,7 @@ Settings, pinned file references and tab sessions use versioned JSON snapshots i
 
 pgDEV exposes an MCP server.
 
-The AI dialog provides a copyable configuration pointing at the bundled **pgdev-mcp** executable. The helper needs no system Node installation and authenticates to the running app with a separate persistent token. It discovers the current loopback port through a native endpoint file, so the configuration survives app restarts. Before sending the token, the helper checks that the server really is this pgDEV launch, so a stale endpoint left by a crash cannot hand the token to another local process. Keep the token private.
+The AI dialog provides a copyable configuration pointing at the bundled **pgdev-mcp** executable. The helper needs no system Node installation and authenticates to the running app with a separate persistent token. It discovers the current loopback port through a native endpoint file, so the configuration survives app restarts. Before sending the token, the helper checks that the server really is this pgDEV launch, so a stale endpoint left by a crash cannot hand the token to another local process. Keep the token private; if it may have leaked, use **Rotate** next to the MCP config in Settings → AI agent. The old token stops working immediately, and the new config is copied for you to paste into each MCP client.
 
 What the agent's `query` can do:
 

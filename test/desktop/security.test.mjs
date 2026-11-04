@@ -109,3 +109,34 @@ test('requests naming a non-loopback host are refused (DNS rebinding)', async (t
   }
   assert.equal((await desktop.inject({ url: '/api/version', headers: { host: '127.0.0.1:41234', authorization: 'Bearer desktop-secret' } })).statusCode, 200)
 })
+
+test('rotating the MCP token invalidates the old one at once and needs the desktop token', async (t) => {
+  const load = sourceLoader()
+  const { createApp } = await load('server/app.ts')
+  const { mkdtemp, rm, readFile } = await import('node:fs/promises')
+  const { join } = await import('node:path')
+  const { tmpdir } = await import('node:os')
+  const directory = await mkdtemp(join(tmpdir(), 'pgdev-rotate-'))
+  const tokenFile = join(directory, 'mcp-token')
+  const app = await createApp({ serveStatic: false, desktopToken: 'desktop-secret', aiTokenFile: tokenFile })
+  t.after(async () => { await app.close(); await rm(directory, { recursive: true, force: true }) })
+  const desktop = { authorization: 'Bearer desktop-secret' }
+  const old = (await app.inject({ url: '/api/ai/config', headers: desktop })).json().token
+  const tool = (token) => app.inject({ method: 'POST', url: '/api/ai/tool/no_such_tool', headers: { authorization: `Bearer ${token}` }, payload: {} })
+  assert.equal((await tool(old)).statusCode, 404, 'the current token is accepted (unknown tool past auth)')
+
+  // Only the desktop renderer may rotate; an MCP client holding the token may not.
+  assert.equal((await app.inject({ method: 'POST', url: '/api/ai/token/rotate', headers: { authorization: `Bearer ${old}` } })).statusCode, 401)
+  assert.equal((await app.inject({ method: 'POST', url: '/api/ai/token/rotate' })).statusCode, 401)
+
+  const rotated = await app.inject({ method: 'POST', url: '/api/ai/token/rotate', headers: desktop })
+  assert.equal(rotated.statusCode, 200)
+  const next = rotated.json().token
+  assert.notEqual(next, old)
+  assert.match(rotated.json().config, new RegExp(next))
+  assert.equal((await tool(old)).statusCode, 401, 'the old token stops working immediately')
+  assert.equal((await tool(next)).statusCode, 404)
+  assert.equal((await readFile(tokenFile, 'utf8')).trim(), next, 'the new token survives a restart')
+  assert.equal((await app.inject({ url: '/api/ai/config', headers: desktop })).json().token, next)
+  assert.equal(validateRequest('POST', '/api/ai/token/rotate'), '/api/ai/token/rotate')
+})

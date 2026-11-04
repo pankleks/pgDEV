@@ -1360,6 +1360,12 @@ body.dragging-results {
         padding: 8px 0;
       }
 
+      .setting-actions {
+        display: flex;
+        gap: 6px;
+        flex-shrink: 0;
+      }
+
       .setting-text {
         display: flex;
         flex-direction: column;

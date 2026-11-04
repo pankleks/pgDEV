@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { Copy, RotateCcw, X } from '@lucide/svelte'
+  import { Copy, KeyRound, RotateCcw, X } from '@lucide/svelte'
   import { api } from '../api'
   import { useAi } from '../composables/ai'
   import { useSettings } from '../composables/settings'
   import { useToast } from '../composables/toast'
+  import { confirmAction } from '../lib/desktop'
   import { copyText } from '../lib/gridio'
   import { stateView } from '../lib/state.svelte'
   import Stepper from './Stepper.svelte'
@@ -25,6 +26,24 @@
   function reset() {
     settings.resetToDefaults()
     void ai.pushLimits()
+  }
+
+  async function rotateToken() {
+    if (copyingConfig) return
+    const confirmed = await confirmAction(
+      'Rotate the MCP token? Connected MCP clients stop working until you paste the new config into them.',
+    )
+    if (!confirmed) return
+    copyingConfig = true
+    try {
+      const config = await api.rotateAiToken()
+      const ok = await copyText(config.config)
+      toast.show(ok ? 'Token rotated. New MCP config copied.' : 'Token rotated. Copy the new MCP config with COPY.')
+    } catch (error) {
+      toast.show((error as Error).message || 'Could not rotate the token')
+    } finally {
+      copyingConfig = false
+    }
   }
 
   async function copyMcpConfig() {
@@ -78,9 +97,12 @@
       <div class="setting-row">
         <div class="setting-text">
           <strong>MCP config</strong>
-          <small>Copy the JSON config for an MCP client (opencode, Claude Desktop, …). The agent can read the schema, run read-only queries, and stage writes in a tab for you to run.</small>
+          <small>Copy the JSON config for an MCP client (opencode, Claude Desktop, …). The agent can read the schema, run read-only queries, and stage writes in a tab for you to run. Rotate the token if it may have leaked; every client then needs the new config.</small>
         </div>
-        <button class="btn-sm primary" disabled={copyingConfig} onclick={copyMcpConfig}><Copy size={13} /> COPY</button>
+        <div class="setting-actions">
+          <button class="btn-sm" disabled={copyingConfig} title="Replace the MCP token; existing client configs stop working" onclick={rotateToken}><KeyRound size={13} /> Rotate</button>
+          <button class="btn-sm primary" disabled={copyingConfig} onclick={copyMcpConfig}><Copy size={13} /> COPY</button>
+        </div>
       </div>
     </section>
     <section class="settings-section">

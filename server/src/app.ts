@@ -153,7 +153,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
   await app.register(tableEditRoutes)
   await app.register(rowUpdateRoutes)
   await app.register(aiRoutes, {
-    token: aiToken, mcpCommand: options.mcpCommand,
+    token: aiToken, tokenFile: options.aiTokenFile, mcpCommand: options.mcpCommand,
     mcpEndpointFile: options.mcpEndpointFile, mcpEndpointSecret: options.mcpEndpointSecret,
   })
 
