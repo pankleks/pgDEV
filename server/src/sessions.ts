@@ -1,6 +1,7 @@
 import type { PoolClient } from 'pg'
 import { randomUUID } from 'node:crypto'
 import { cancelClientQuery } from './pgcancel.js'
+import { releaseClean } from './pools.js'
 import type { TransactionState } from './schema-types.js'
 
 // Per-tab sessions: a dedicated pooled client holding an open transaction
@@ -121,11 +122,8 @@ async function releaseSession(key: string, s: Session, mode: 'commit' | 'rollbac
       // Rollback may already be gone (cancel, error, or reaper race).
     }
   }
-  try {
-    s.client.release()
-  } catch {
-    // Already released.
-  }
+  // The user's transaction may have changed role, settings or temp tables.
+  await releaseClean(s.client)
   if (commitError) throw commitError
 }
 

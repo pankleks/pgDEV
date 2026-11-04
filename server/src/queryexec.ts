@@ -1,5 +1,5 @@
 import type { PoolClient } from 'pg'
-import { getPool, setRunning, getRunning, deleteRunning, runningKeysForConnection } from './pools.js'
+import { getPool, setRunning, getRunning, deleteRunning, runningKeysForConnection, releaseClean } from './pools.js'
 import { rawTextTypes } from './pgtypes.js'
 import { cancelClientQuery } from './pgcancel.js'
 import { guardCheckedOutClient } from './checkout.js'
@@ -264,7 +264,23 @@ async function executeStatements(
   // user-typed transaction control (COMMIT/ROLLBACK/END).
   const execDirect = async (stmt: string): Promise<void> => {
     const control = transactionControl(stmt)
-    const bounded = await boundedQuery(client, stmt, cap)
+    let bounded
+    try {
+      bounded = await boundedQuery(client, stmt, cap)
+    } catch (err) {
+      if (control === 'end' || control === 'chain') {
+        // A failed COMMIT/END/PREPARE TRANSACTION (deferred constraint,
+        // serialization failure) still ends the transaction server-side;
+        // reporting it as open would make the user's next ROLLBACK a no-op
+        // while later statements autocommit. Should one ever still be open,
+        // releaseClean's DISCARD ALL fails and the connection is dropped,
+        // which rolls it back.
+        openCursor = null
+        txn.inTxn = false
+        txn.userManaged = false
+      }
+      throw err
+    }
     const res = bounded.result
     if (control === 'end' || control === 'chain') {
       // Ends the transaction server-side, taking any open cursor with it.
@@ -601,7 +617,7 @@ export async function runBatch(
           }
         }
       }
-      client.release()
+      await releaseClean(client)
     }
     if (paging && !abandoned) pagingQueries.set(runKey, paging)
     return {
@@ -620,14 +636,10 @@ export async function runBatch(
         try {
           await client.query('ROLLBACK')
         } catch {
-          // Connection already gone; release() will drop it.
+          // Connection already gone; releaseClean() will drop it.
         }
       }
-      try {
-        client.release()
-      } catch {
-        // Already released.
-      }
+      await releaseClean(client)
     }
     if (isMappedStatementError(err)) return { kind: 'error', error: err.error }
     return { kind: 'error', error: sqlError(err) }
@@ -722,15 +734,14 @@ export async function runReadOnlyBatch(
     return { kind: 'error', error: sqlError(err) }
   } finally {
     deleteRunning(runKey, client)
-    // Never commit agent work. A failed ROLLBACK means the connection state is
-    // unknown, so it is destroyed instead of returned to the pool.
-    let broken = false
+    // Never commit agent work. If the ROLLBACK fails, DISCARD ALL fails too
+    // and the connection is destroyed rather than returned to the pool.
     try {
       await client.query('ROLLBACK')
     } catch {
-      broken = true
+      // Reported by releaseClean, which then drops the connection.
     }
-    client.release(broken)
+    await releaseClean(client)
   }
 }
 
@@ -783,7 +794,7 @@ export async function fetchNextPage(
     paging.busy = false
     if (client) {
       deleteRunning(runKey, client)
-      client.release()
+      await releaseClean(client)
     }
   }
 }

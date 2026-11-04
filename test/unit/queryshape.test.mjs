@@ -162,3 +162,10 @@ test('transactionControl: chained endings and plain endings', () => {
   assert.equal(transactionControl('BEGIN'), 'start')
   assert.equal(transactionControl('START /* x */ TRANSACTION'), 'start')
 })
+
+test('transactionControl: PREPARE TRANSACTION ends the session transaction', () => {
+  assert.equal(transactionControl("PREPARE TRANSACTION 'gid'"), 'end')
+  assert.equal(transactionControl("prepare /* x */ transaction 'gid'"), 'end')
+  // A prepared statement is not transaction control.
+  assert.equal(transactionControl('PREPARE q AS SELECT 1'), 'unchanged')
+})

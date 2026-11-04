@@ -260,3 +260,65 @@ test('API still accepts complete explicit transactions and ordinary batches', as
     }
   })
 })
+
+test('session state is reset before a client returns to the pool, never while it is pinned', async () => {
+  const fake = fakePool()
+  await withApp('discard-test', fake, async (inject) => {
+    fake.executed.length = 0
+    let response = await inject("SET ROLE someone; SELECT set_config('search_path', 'evil', false)")
+    assert.equal(response.statusCode, 200, JSON.stringify(response.json()))
+    assert.equal(fake.executed.at(-1), 'DISCARD ALL', JSON.stringify(fake.executed))
+    assert.equal(fake.state.releases, 1)
+
+    fake.executed.length = 0
+    response = await inject('BEGIN; SET search_path = x')
+    assert.equal(response.json().transactionOpen, true)
+    assert.ok(!fake.executed.includes('DISCARD ALL'), 'a pinned transaction keeps its state')
+
+    fake.executed.length = 0
+    response = await inject('COMMIT')
+    assert.deepEqual(fake.executed.slice(-2), ['COMMIT', 'DISCARD ALL'])
+    assert.equal(fake.state.releases, 2)
+  })
+})
+
+test('a failed COMMIT ends the transaction instead of reporting it open', async () => {
+  // A deferred constraint or serialization failure at COMMIT rolls the
+  // transaction back server-side; the tab must not keep a phantom one.
+  const fake = fakePool({ fail: 'COMMIT' })
+  await withApp('failed-commit-test', fake, async (inject) => {
+    let response = await inject('BEGIN; UPDATE t SET x = 1')
+    assert.equal(response.json().transactionOpen, true)
+
+    fake.executed.length = 0
+    response = await inject('COMMIT')
+    assert.equal(response.statusCode, 400)
+    assert.equal(response.json().transactionOpen, false, JSON.stringify(response.json()))
+    assert.equal(fake.state.releases, 1, 'the client is released, not kept pinned')
+    assert.ok(fake.executed.includes('DISCARD ALL'), JSON.stringify(fake.executed))
+    assert.ok(!fake.executed.includes('ROLLBACK'), 'nothing is left to roll back')
+  })
+})
+
+test('PREPARE TRANSACTION detaches the transaction from the tab', async () => {
+  const fake = fakePool()
+  await withApp('prepare-txn-test', fake, async (inject) => {
+    let response = await inject('BEGIN; UPDATE t SET x = 1')
+    assert.equal(response.json().transactionOpen, true)
+    response = await inject("PREPARE TRANSACTION 'gid'")
+    assert.equal(response.statusCode, 200, JSON.stringify(response.json()))
+    assert.equal(response.json().transactionOpen, false)
+    assert.equal(fake.state.releases, 1)
+  })
+})
+
+test('a failed COMMIT in a batch that opened its own transaction is not rolled back twice', async () => {
+  const fake = fakePool({ fail: 'COMMIT' })
+  await withApp('failed-commit-batch-test', fake, async (inject) => {
+    fake.executed.length = 0
+    const response = await inject('BEGIN; UPDATE t SET x = 1; COMMIT')
+    assert.equal(response.statusCode, 400)
+    assert.equal(response.json().transactionOpen, false)
+    assert.equal(fake.state.releases, 1)
+  })
+})

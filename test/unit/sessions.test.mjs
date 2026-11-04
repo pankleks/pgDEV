@@ -125,7 +125,7 @@ test('teardown of a busy session defers to the running batch', async () => {
   assert.equal(getSession(k).closeRequested, true)
   await finishSession(k, s, 'keep')
   assert.equal(getSession(k), undefined, 'keep honours the deferred close with a rollback')
-  assert.deepEqual(client.queries, ['ROLLBACK'])
+  assert.deepEqual(client.queries, ['ROLLBACK', 'DISCARD ALL'])
 })
 
 test('finishSession commits and releases an idle session', async () => {
@@ -134,7 +134,7 @@ test('finishSession commits and releases an idle session', async () => {
   setSession(k, 'conn-1', client, null, null, 'transaction')
   const s = beginSession(k)
   await finishSession(k, s, 'commit')
-  assert.deepEqual(client.queries, ['COMMIT'])
+  assert.deepEqual(client.queries, ['COMMIT', 'DISCARD ALL'])
   assert.equal(wasReleased(), true)
   assert.equal(getSession(k), undefined)
 })

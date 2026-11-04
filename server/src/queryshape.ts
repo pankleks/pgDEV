@@ -44,13 +44,16 @@ function leadingKeywords(stmt: string, limit: number): string[] {
   return words
 }
 
-/** Transaction effect of a successfully executed statement. */
+/** Transaction effect of a statement. 'end' also applies when it fails: a
+ * failed COMMIT or PREPARE TRANSACTION still rolls the transaction back. */
 export function transactionControl(stmt: string): 'unchanged' | 'start' | 'end' | 'chain' {
   // Read only leading keyword tokens; never interpret keywords inside quoted
   // savepoint names or string literals (the scanner makes those opaque).
   const words = leadingKeywords(stmt, 5)
   const first = words.shift()
   if (first === 'BEGIN' || (first === 'START' && words[0] === 'TRANSACTION')) return 'start'
+  // Detaches the current transaction from the session, success or failure.
+  if (first === 'PREPARE' && words[0] === 'TRANSACTION') return 'end'
   if (!first || !['COMMIT', 'ROLLBACK', 'END', 'ABORT'].includes(first)) return 'unchanged'
   if (words[0] === 'WORK' || words[0] === 'TRANSACTION') words.shift()
   if (first === 'ROLLBACK' && words[0] === 'TO') return 'unchanged'

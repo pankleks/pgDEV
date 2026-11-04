@@ -27,6 +27,29 @@ export function deleteRunning(key: string, client?: PoolClient): void {
   runningQueries.delete(key)
 }
 
+/**
+ * Return a client that ran user or agent SQL to the pool with no session state
+ * left behind: role, search_path and other settings, temp tables, advisory
+ * locks, LISTENs and prepared statements would otherwise leak into whichever
+ * tab, row edit or agent read checks the connection out next. Settings the
+ * pool sends at startup (statement_timeout, application_name) survive, since
+ * RESET returns to them. A client that cannot be reset — still inside a
+ * transaction, or a dead connection — is destroyed instead. Never throws.
+ */
+export async function releaseClean(client: PoolClient): Promise<void> {
+  let destroy = false
+  try {
+    await client.query('DISCARD ALL')
+  } catch {
+    destroy = true
+  }
+  try {
+    client.release(destroy)
+  } catch {
+    // Already released.
+  }
+}
+
 export function setPool(id: string, pool: Pool): void {
   pools.set(id, pool)
 }

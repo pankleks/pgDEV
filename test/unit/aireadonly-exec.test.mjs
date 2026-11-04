@@ -26,6 +26,7 @@ function fakePool(tags = {}) {
       }
       if (text === 'BEGIN READ ONLY') state.status = 'T'
       if (text === 'ROLLBACK') state.status = 'I'
+      if (text === 'DISCARD ALL' && state.status !== 'I') throw new Error('DISCARD ALL cannot run inside a transaction block')
       if (text.startsWith('SELECT oid::text')) return { rows: [{ oid: '23', name: 'integer' }] }
       if (typeof query.emit === 'function') {
         const command = tags[text] ?? 'SELECT'
@@ -62,7 +63,7 @@ test('reads run one statement per extended-protocol call in a rolled-back read-o
   assert.deepEqual(outcome.results[0].columnTypes, ['integer'])
   const texts = executed.map((e) => e.text)
   assert.ok(texts.indexOf('BEGIN READ ONLY') < texts.indexOf('SELECT 1'))
-  assert.equal(texts.at(-1), 'ROLLBACK')
+  assert.deepEqual(texts.slice(-2), ['ROLLBACK', 'DISCARD ALL'])
   assert.ok(!texts.includes('COMMIT'))
   for (const e of executed.filter((e) => /^SELECT [12]$/.test(e.text))) assert.equal(e.extended, true)
   assert.deepEqual(state.releases, [false])
@@ -76,7 +77,7 @@ test('a statement the server reports as COMMIT stops the batch before the next o
   assert.match(outcome.error.message, /not a read/)
   const texts = executed.map((e) => e.text)
   assert.ok(!texts.includes('SELECT 3'), 'nothing may run after the transaction ended')
-  assert.equal(texts.at(-1), 'ROLLBACK')
+  assert.deepEqual(texts.slice(-2), ['ROLLBACK', 'DISCARD ALL'])
 })
 
 test('a non-read command tag inside the transaction also stops the batch', async () => {
