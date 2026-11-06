@@ -117,6 +117,10 @@ try {
           ].map((column) => ({ pk: false, locked: false, defaultValue: null, description: null, ...column })),
         } }
       }
+      if (path.endsWith('/row-insert')) {
+        return { status: 200, body: { row: { _generated: 'computed', ...body.set }, transactionId: null, transactionOpen: false } }
+      }
+      if (path.endsWith('/row-delete')) return { status: 200, body: { row: body.key, transactionId: null, transactionOpen: false } }
       if (path.endsWith('/row-update')) {
         if (globalThis.__pgdevSvelteFixture.rejectUpdate) return { status: 409, body: { error: 'Fixture transaction changed' } }
         return { status: 200, body: { row: body.set, transactionId: null, transactionOpen: false } }
@@ -432,6 +436,44 @@ try {
   assert.ok(await saveRow.isDisabled())
   await rowEditor.getByRole('button', { name: 'CANCEL', exact: true }).click()
   await rowEditor.waitFor({ state: 'detached' })
+
+  // Duplicate: the copied values are prefilled; a key without a default must
+  // be given, and INSERT sends every non-default column.
+  // Electron's evaluate passes the electron module first, the argument second.
+  const rowRequests = (suffix) => application.evaluate((_electron, end) => globalThis.__pgdevSvelteFixture.requests.filter((request) => request.path.endsWith(end)).map((request) => request.body), suffix)
+  await page.getByTitle('Duplicate row', { exact: true }).click()
+  const duplicate = page.getByRole('dialog', { name: 'Duplicate row', exact: true })
+  assert.equal(await duplicate.getByLabel('amount', { exact: true }).inputValue(), '2.75', 'duplicate copies the row values')
+  assert.ok(await duplicate.getByLabel('Set note to NULL', { exact: true }).isChecked(), 'a NULL value stays NULL in the copy')
+  assert.equal(await duplicate.getByLabel('id', { exact: true }).inputValue(), '900719925474099312345', 'a key without default is copied for editing')
+  await duplicate.getByLabel('id', { exact: true }).fill('900719925474099312399')
+  await duplicate.getByRole('button', { name: 'INSERT', exact: true }).click()
+  await duplicate.waitFor({ state: 'detached' })
+  const inserted = (await rowRequests('/row-insert')).at(-1)
+  assert.deepEqual(inserted.set, { payload: '{"large":900719925474099312346}', id: '900719925474099312399', amount: '2.75', enabled: false, note: null })
+  assert.equal(inserted.transactionId, null)
+  await page.locator('.grid-foot').filter({ hasText: '2 row(s)' }).waitFor()
+
+  // A blank new row starts on DEFAULT for every nullable column.
+  await page.getByRole('button', { name: 'Add row', exact: true }).click()
+  const newRow = page.getByRole('dialog', { name: 'New row', exact: true })
+  assert.ok(await newRow.getByLabel('Use the default for note', { exact: true }).isChecked())
+  assert.equal(await newRow.getByLabel('Use the default for id', { exact: true }).isChecked(), false, 'a required key needs a value')
+  await newRow.getByLabel('id', { exact: true }).fill('7')
+  await newRow.getByRole('button', { name: 'INSERT', exact: true }).click()
+  await newRow.waitFor({ state: 'detached' })
+  assert.deepEqual((await rowRequests('/row-insert')).at(-1).set, { id: '7' }, 'default columns are left out')
+  await page.locator('.grid-foot').filter({ hasText: '3 row(s)' }).waitFor()
+
+  // Delete asks first; a cancelled confirmation sends nothing.
+  await page.getByTitle('Delete row', { exact: true }).last().click()
+  assert.equal((await rowRequests('/row-delete')).length, 0)
+  await application.evaluate(() => { globalThis.__pgdevSvelteFixture.confirm = true })
+  await page.getByTitle('Delete row', { exact: true }).last().click()
+  await page.locator('.grid-foot').filter({ hasText: '2 row(s)' }).waitFor()
+  await application.evaluate(() => { globalThis.__pgdevSvelteFixture.confirm = false })
+  const deleted = (await rowRequests('/row-delete')).at(-1)
+  assert.deepEqual([deleted.schema, deleted.table, deleted.key, deleted.paged], ['public', 'fixture', { id: '7' }, false])
 
   const resultsPanel = page.locator('.results')
   assert.equal(await resultsPanel.getAttribute('data-component'), 'svelte-results-panel')

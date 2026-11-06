@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, untrack } from 'svelte'
   import { SvelteMap } from 'svelte/reactivity'
-  import { ChevronDown, Copy, Download, Pencil, Play, Square } from '@lucide/svelte'
+  import { ChevronDown, Copy, CopyPlus, Download, Pencil, Play, Plus, Square, Trash2 } from '@lucide/svelte'
   import { useResults, multiResults, confirmResultRelease, LOAD_ALL_ROWS, type GridResult } from '../composables/results'
   import { useConnection } from '../composables/connection'
   import { useTabs } from '../composables/tabs'
@@ -9,6 +9,8 @@
   import { copyGrid, copyText, csvHeader, csvRows, formatCellPreview } from '../lib/gridio'
   import { createOutput } from '../lib/files'
   import { stateView } from '../lib/state.svelte'
+  import { confirmAction } from '../lib/desktop'
+  import { api, type ApiError } from '../api'
   import type { CellValueTarget } from '../lib/valueTarget'
   import type { RowEditTarget } from '../lib/rowEditTarget'
   import ValueDialog from './ValueDialog.svelte'
@@ -72,7 +74,8 @@
   const ROW_H = 24
   const HEADER_H = 24
   const COL_W = 180
-  const ACTION_W = 30
+  // Edit, duplicate and delete icons per row.
+  const ACTION_W = 74
   let bodyEl = $state<HTMLElement | null>(null)
   let scrollTop = $state(0)
   let bodyH = $state(300)
@@ -169,20 +172,72 @@
     }
     return true
   }
-  function openRowEdit(index: number) {
+  /** The store's own grid and tab context (never the display snapshot). */
+  function editContext() {
     const ctx = context()
     const current = results.state.byTab[ctx.key]
     const grid = current?.grid
-    if (!rowEditable || !grid?.editable || !ctx.connectionId || !grid.rows[index]) return
-    rowEdit = { grid, row: grid.rows[index], connectionId: ctx.connectionId, tabKey: ctx.key, transactionId: current.transactionId ?? null }
+    if (!rowEditable || !grid?.editable || !ctx.connectionId || !current) return null
+    return { ctx: { ...ctx, connectionId: ctx.connectionId }, current, grid }
+  }
+  function openRowEdit(index: number, mode: 'edit' | 'insert' = 'edit') {
+    const edit = editContext()
+    if (!edit) return
+    const row = index >= 0 ? edit.grid.rows[index] : null
+    if (index >= 0 && !row) return
+    rowEdit = { grid: edit.grid, row: row ?? null, mode, connectionId: edit.ctx.connectionId, tabKey: edit.ctx.key, transactionId: edit.current.transactionId ?? null }
+  }
+  /** The stored row (RETURNING *) in the grid's column order. */
+  function gridRow(columns: string[], row: Record<string, unknown>): unknown[] {
+    return columns.map((name) => (Object.prototype.hasOwnProperty.call(row, name) ? row[name] : null))
   }
   function onRowSaved(row: Record<string, unknown>) {
     if (!rowEdit) return
-    for (let index = 0; index < rowEdit.grid.columns.length; index++) {
-      const name = rowEdit.grid.columns[index] ?? ''
-      if (Object.prototype.hasOwnProperty.call(row, name)) rowEdit.row[index] = row[name]
+    if (rowEdit.mode === 'insert') {
+      // A new row joins the loaded rows; it is not part of any later page.
+      rowEdit.grid.rows.push(gridRow(rowEdit.grid.columns, row))
+      rowEdit.grid.rowCount = rowEdit.grid.rows.length
+    } else if (rowEdit.row) {
+      for (let index = 0; index < rowEdit.grid.columns.length; index++) {
+        const name = rowEdit.grid.columns[index] ?? ''
+        if (Object.prototype.hasOwnProperty.call(row, name)) rowEdit.row[index] = row[name]
+      }
     }
     rowRevision++
+  }
+  let deleting = $state(false)
+  async function deleteRow(index: number) {
+    const edit = editContext()
+    const row = edit?.grid.rows[index]
+    if (!edit || !row || deleting || !rowKeyComplete(row)) return
+    const { grid, ctx } = edit
+    const editable = grid.editable!
+    const key: Record<string, unknown> = {}
+    for (const name of editable.pk) key[name] = row[grid.columns.indexOf(name)]
+    const keyText = editable.pk.map((name) => `${name} = ${String(key[name])}`).join(', ')
+    const transactionId = edit.current.transactionId ?? null
+    const where = transactionId ? ' inside the open transaction' : ''
+    if (!await confirmAction(`Delete the row ${keyText} from ${editable.schema}.${editable.table}${where}?`)) return
+    deleting = true
+    try {
+      const response = await api.deleteRow(ctx.connectionId, {
+        tabKey: ctx.key, transactionId, schema: editable.schema, table: editable.table, key, paged: grid.truncated,
+      })
+      results.updateTransaction(ctx.key, response, transactionId)
+      // The grid may have moved on while the confirmation was open.
+      const at = grid.rows.indexOf(row)
+      if (at >= 0) {
+        grid.rows.splice(at, 1)
+        grid.rowCount = grid.rows.length
+        rowRevision++
+      }
+      toast.show(response.transactionOpen ? 'Row deleted in the open transaction.' : 'Row deleted.')
+    } catch (cause) {
+      results.updateTransaction(ctx.key, cause as ApiError, transactionId)
+      toast.show(`Delete failed: ${(cause as Error).message}`)
+    } finally {
+      deleting = false
+    }
   }
   function isJsonColumn(index: number) { return activeGrid?.columnTypes[index] === 'json' || activeGrid?.columnTypes[index] === 'jsonb' }
   function openCell(value: unknown, index: number) {
@@ -320,7 +375,7 @@
       <div bind:this={bodyEl} class="grid-body" onscroll={() => { if (bodyEl) scrollTop = bodyEl.scrollTop }}>
         <div class="grid-inner" style:width={`${innerWidth}px`}>
           <div class="grid-head">
-            {#if rowEditable}<div class="grid-cell head actions" style:width={`${ACTION_W}px`} title="Edit a row in a dialog (needs the full primary key in the result)"></div>{/if}
+            {#if rowEditable}<div class="grid-cell head actions" style:width={`${ACTION_W}px`} title="Edit, duplicate or delete a row (needs the full primary key in the result)"></div>{/if}
             {#each grid.g.columns as column, index (`${index}-${column}`)}
               <div class="grid-cell head" style:width={`${colWidth(index)}px`}>
                 <span class="col-name">{column}</span>{#if grid.g.columnTypes[index]}<span class="col-type"> ({grid.g.columnTypes[index]})</span>{/if}
@@ -332,7 +387,11 @@
           {#each grid.rows as row, index (grid.start + index)}
             <div class="grid-row" style:top={`${HEADER_H + (grid.start + index) * ROW_H}px`}>
               {#if rowEditable}
-                <div class="grid-cell actions" style:width={`${ACTION_W}px`}><button class="icon rowedit-open" title={rowKeyComplete(row) ? 'Edit row' : 'Row key is not available'} disabled={!rowKeyComplete(row)} onclick={() => { if (grid) openRowEdit(grid.start + index) }}><Pencil size={12} /></button></div>
+                <div class="grid-cell actions" style:width={`${ACTION_W}px`}>
+                  <button class="icon rowedit-open" title={rowKeyComplete(row) ? 'Edit row' : 'Row key is not available'} disabled={!rowKeyComplete(row)} onclick={() => { if (grid) openRowEdit(grid.start + index) }}><Pencil size={12} /></button>
+                  <button class="icon rowedit-duplicate" title="Duplicate row" onclick={() => { if (grid) openRowEdit(grid.start + index, 'insert') }}><CopyPlus size={12} /></button>
+                  <button class="icon rowedit-delete" title={rowKeyComplete(row) ? 'Delete row' : 'Row key is not available'} disabled={deleting || !rowKeyComplete(row)} onclick={() => { if (grid) void deleteRow(grid.start + index) }}><Trash2 size={12} /></button>
+                </div>
               {/if}
               {#each row as cell, column (column)}
                 <div class="grid-cell" class:nul={cell === null || cell === undefined} style:width={`${colWidth(column)}px`} title={isJsonColumn(column) ? 'Double-click to open value' : 'Double-click to copy'} ondblclick={() => openCell(cell, column)}>
@@ -346,6 +405,7 @@
         </div>
       </div>
       <div class="grid-foot">
+        {#if rowEditable}<button class="btn-sm grid-add-row" title="Insert a new row into this table" onclick={() => openRowEdit(-1, 'insert')}><Plus size={12} /> Add row</button>{/if}
         {result.grid?.rowCount ?? 0} row(s)
         {#if grid.g.truncated}<span>· more available</span>{#if grid.g.unordered}<span class="grid-warn" title="Each page re-runs the query. Without ORDER BY, PostgreSQL may return rows in a different order each time.">· no ORDER BY: later pages may repeat or skip rows</span>{/if}
         {:else if grid.g.limited}<span>· first {grid.g.rows.length}{#if grid.g.totalRowCount} of {grid.g.totalRowCount}{/if} · row limit reached; remaining rows were not retained</span>

@@ -192,6 +192,8 @@ export interface EditableGridColumn {
   generated: boolean
   /** False for NOT NULL columns: the row editor must not offer a NULL checkbox. */
   nullable: boolean
+  /** A new row may leave it to the database (identity, serial, DEFAULT). */
+  hasDefault: boolean
 }
 
 /** Row-editing metadata attached to a data result when its statement is a
@@ -241,6 +243,32 @@ export interface RowUpdateRequest {
   table: string
   key: Record<string, unknown>
   set: Record<string, unknown | null>
+}
+
+/** One new row (insert or duplicate): set = the columns given a value; every
+ * other column takes its default. JSON null means SQL NULL. */
+export interface RowInsertRequest {
+  tabKey: string
+  transactionId?: string | null
+  schema: string
+  table: string
+  set: Record<string, unknown | null>
+}
+
+/** Delete one row by its full primary key. `paged` says the grid is the
+ * paged result, so the server's paging offset follows the removed row. */
+export interface RowDeleteRequest {
+  tabKey: string
+  transactionId?: string | null
+  schema: string
+  table: string
+  key: Record<string, unknown>
+  paged?: boolean
+}
+
+export interface RowDeleteResponse extends TransactionState {
+  /** The deleted row as it was (DELETE … RETURNING *). */
+  row: Record<string, unknown>
 }
 
 export interface RowUpdateResponse extends TransactionState {

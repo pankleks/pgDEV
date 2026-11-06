@@ -18,6 +18,8 @@ export interface RowEditColumn {
   generated: boolean
   pk: boolean
   nullable: boolean
+  /** An INSERT may omit it: identity, serial or an explicit DEFAULT. */
+  hasDefault: boolean
 }
 
 export interface RowEditInfo {
@@ -43,7 +45,8 @@ SELECT a.attname AS name,
   -- GENERATED ALWAYS identity columns refuse a plain UPDATE like generated
   -- ones (only OVERRIDING SYSTEM VALUE, which INSERT alone accepts, sets them).
   (a.attgenerated <> '' OR a.attidentity = 'a') AS generated,
-  NOT a.attnotnull AS nullable
+  NOT a.attnotnull AS nullable,
+  (a.atthasdef OR a.attidentity <> '') AS has_default
 FROM pg_attribute a
 WHERE a.attrelid = $1::oid AND a.attnum > 0 AND NOT a.attisdropped
 ORDER BY a.attnum`
@@ -92,6 +95,7 @@ export async function fetchRowEditInfo(
     generated: r.generated === true,
     pk: pkSet.has(String(r.name)),
     nullable: r.nullable === true,
+    hasDefault: r.has_default === true,
   }))
   return {
     oid: String(row.oid),
@@ -124,6 +128,6 @@ export function editableGrid(
   const allowedSet = allowed ? new Set(allowed) : null
   const columns = info.columns
     .filter((c) => counts.get(c.name) === 1 && (!allowedSet || allowedSet.has(c.name)))
-    .map((c) => ({ name: c.name, pk: c.pk, generated: c.generated, nullable: c.nullable }))
+    .map((c) => ({ name: c.name, pk: c.pk, generated: c.generated, nullable: c.nullable, hasDefault: c.hasDefault }))
   return { schema: info.schema, table: info.name, pk: [...info.pk], columns }
 }

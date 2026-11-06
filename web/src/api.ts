@@ -5,6 +5,9 @@ import type {
   DatabaseProcess,
   FetchMoreResponse,
   QueryResponse,
+  RowDeleteRequest,
+  RowDeleteResponse,
+  RowInsertRequest,
   RowUpdateRequest,
   RowUpdateResponse,
   SchemaData,
@@ -106,6 +109,16 @@ export const api = {
 
   updateRow(id: string, request: RowUpdateRequest): Promise<RowUpdateResponse> {
     return send('POST', `/api/connections/${id}/row-update`, request)
+  },
+
+  /** INSERT … RETURNING *: the stored row, keyed by column name. */
+  insertRow(id: string, request: RowInsertRequest): Promise<RowUpdateResponse> {
+    return send('POST', `/api/connections/${id}/row-insert`, request)
+  },
+
+  /** DELETE one row by its full primary key; returns the removed row. */
+  deleteRow(id: string, request: RowDeleteRequest): Promise<RowDeleteResponse> {
+    return send('POST', `/api/connections/${id}/row-delete`, request)
   },
 
   /** The AI/MCP configuration; `enabled` is false when the server has AI off. */

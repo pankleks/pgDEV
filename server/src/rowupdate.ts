@@ -70,3 +70,55 @@ export function planRowUpdate(values: RowUpdateValues, info: RowEditInfo): RowUp
     `RETURNING *`
   return { kind: 'ok', text, values: params }
 }
+
+export type RowInsertError =
+  | { kind: 'unknown-column'; column: string }
+  | { kind: 'locked-column'; column: string }
+  | { kind: 'bad-value'; column: string }
+
+/**
+ * Build the single INSERT for a new (or duplicated) row. Columns left out of
+ * `set` take their default (identity, serial, DEFAULT, or NULL); with none
+ * set the row is all defaults. Generated and GENERATED ALWAYS identity columns
+ * cannot be written, nor bytea (the grid never holds its real value).
+ */
+export function planRowInsert(set: Record<string, unknown | null>, info: RowEditInfo):
+  | { kind: 'ok'; text: string; values: unknown[] }
+  | { kind: 'error'; error: RowInsertError } {
+  const byName = new Map(info.columns.map((c) => [c.name, c]))
+  const entries = Object.entries(set)
+  for (const [col, v] of entries) {
+    const column = byName.get(col)
+    if (!column) return { kind: 'error', error: { kind: 'unknown-column', column: col } }
+    if (column.generated || column.type === 'bytea') return { kind: 'error', error: { kind: 'locked-column', column: col } }
+    if (v !== null && !isValue(v)) return { kind: 'error', error: { kind: 'bad-value', column: col } }
+  }
+  const table = `${ident(info.schema)}.${ident(info.name)}`
+  if (!entries.length) return { kind: 'ok', text: `INSERT INTO ${table} DEFAULT VALUES RETURNING *`, values: [] }
+  const text =
+    `INSERT INTO ${table} (${entries.map(([col]) => ident(col)).join(', ')}) ` +
+    `VALUES (${entries.map((_, i) => `$${i + 1}`).join(', ')}) RETURNING *`
+  return { kind: 'ok', text, values: entries.map(([, v]) => v) }
+}
+
+/**
+ * Build the DELETE for one row, identified by its full primary key (the same
+ * rule as UPDATE, so it can never match more than one row).
+ */
+export function planRowDelete(key: Record<string, unknown>, info: RowEditInfo):
+  | { kind: 'ok'; text: string; values: unknown[] }
+  | { kind: 'error'; error: RowUpdateError } {
+  const keyNames = Object.keys(key)
+  if (keyNames.length !== info.pk.length || info.pk.some((c) => !keyNames.includes(c))) {
+    return { kind: 'error', error: { kind: 'key-mismatch', expected: [...info.pk] } }
+  }
+  for (const col of info.pk) {
+    if (!isValue(key[col])) return { kind: 'error', error: { kind: 'no-key', column: col } }
+  }
+  const wheres = info.pk.map((col, i) => `${ident(col)} = $${i + 1}`)
+  return {
+    kind: 'ok',
+    text: `DELETE FROM ${ident(info.schema)}.${ident(info.name)} WHERE ${wheres.join(' AND ')} RETURNING *`,
+    values: info.pk.map((col) => key[col]),
+  }
+}

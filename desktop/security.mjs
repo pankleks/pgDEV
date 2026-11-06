@@ -14,7 +14,7 @@ export function validateRequest(method, path, body) {
   if (url.origin !== 'http://backend' || !path.startsWith('/api/')) throw new Error('Invalid API path')
   const routes = {
     GET: [/^\/api\/version$/, /^\/api\/ai\/config$/, /^\/api\/connections\/[\w-]+\/(schema|ddl|processes)$/, /^\/api\/connections\/[\w-]+\/tableedit\/\d+$/],
-    POST: [/^\/api\/connections(?:\/discover)?$/, /^\/api\/connections\/[\w-]+\/(query|query\/more|query\/close|cancel|row-update)$/, /^\/api\/connections\/[\w-]+\/processes\/\d+\/(cancel|terminate)$/, /^\/api\/connections\/[\w-]+\/tableedit\/\d+$/, /^\/api\/ai\/bridge\/result$/, /^\/api\/ai\/token\/rotate$/],
+    POST: [/^\/api\/connections(?:\/discover)?$/, /^\/api\/connections\/[\w-]+\/(query|query\/more|query\/close|cancel|row-update|row-insert|row-delete)$/, /^\/api\/connections\/[\w-]+\/processes\/\d+\/(cancel|terminate)$/, /^\/api\/connections\/[\w-]+\/tableedit\/\d+$/, /^\/api\/ai\/bridge\/result$/, /^\/api\/ai\/token\/rotate$/],
     DELETE: [/^\/api\/connections\/[\w-]+$/],
     PUT: [/^\/api\/ai\/limits$/],
   }

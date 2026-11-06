@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { sourceLoader } from '../lib/load.mjs'
 
 const load = sourceLoader()
-const { planRowUpdate } = await load('server/rowupdate.ts')
+const { planRowUpdate, planRowInsert, planRowDelete } = await load('server/rowupdate.ts')
 
 // The planner is the last line of defence between the row dialog and the
 // database: it must only ever emit one UPDATE whose key is the exact primary
@@ -106,4 +106,36 @@ test('empty, unknown, locked and malformed fields are rejected', () => {
     kind: 'error',
     error: { kind: 'bad-value', column: 'label' },
   })
+})
+
+test('insert writes only the given columns and leaves the rest to their defaults', () => {
+  assert.deepEqual(planRowInsert({ label: 'x', qty: null }, info), {
+    kind: 'ok',
+    text: 'INSERT INTO "public"."items" ("label", "qty") VALUES ($1, $2) RETURNING *',
+    values: ['x', null],
+  })
+  // The primary key may be given explicitly (no default to fall back on).
+  assert.equal(planRowInsert({ id: 7 }, info).kind, 'ok')
+  assert.deepEqual(planRowInsert({}, info), { kind: 'ok', text: 'INSERT INTO "public"."items" DEFAULT VALUES RETURNING *', values: [] })
+})
+
+test('insert refuses generated, binary, unknown and non-scalar columns', () => {
+  assert.deepEqual(planRowInsert({ total: 1 }, info).error, { kind: 'locked-column', column: 'total' })
+  assert.deepEqual(planRowInsert({ blob: '\\x00' }, info).error, { kind: 'locked-column', column: 'blob' })
+  assert.deepEqual(planRowInsert({ nope: 1 }, info).error, { kind: 'unknown-column', column: 'nope' })
+  assert.deepEqual(planRowInsert({ label: { a: 1 } }, info).error, { kind: 'bad-value', column: 'label' })
+})
+
+test('delete matches exactly one row through the full primary key', () => {
+  assert.deepEqual(planRowDelete({ id: 5 }, info), {
+    kind: 'ok',
+    text: 'DELETE FROM "public"."items" WHERE "id" = $1 RETURNING *',
+    values: [5],
+  })
+  const composite = { ...info, pk: ['a', 'b'] }
+  assert.deepEqual(planRowDelete({ b: 2, a: 1 }, composite).values, [1, 2], 'key values follow the primary key order')
+  assert.equal(planRowDelete({ a: 1 }, composite).error.kind, 'key-mismatch')
+  assert.equal(planRowDelete({ id: 5, label: 'x' }, info).error.kind, 'key-mismatch', 'extra columns could widen the match')
+  assert.equal(planRowDelete({ id: null }, info).error.kind, 'no-key')
+  assert.equal(planRowDelete({}, info).error.kind, 'key-mismatch')
 })

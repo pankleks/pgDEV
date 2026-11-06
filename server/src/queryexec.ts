@@ -893,6 +893,16 @@ export async function fetchNextPage(
   }
 }
 
+/**
+ * A row of the paged result was deleted (committed, outside any transaction):
+ * the next page re-runs the query with one row fewer before the cursor
+ * position, so the replay offset moves back to avoid skipping a row.
+ */
+export function shiftPagingOffset(connId: string, tabKey: string, delta: number): void {
+  const paging = pagingQueries.get(sessionKey(connId, tabKey))
+  if (paging && !paging.busy) paging.offset = Math.max(0, paging.offset + delta)
+}
+
 /** Send a PostgreSQL cancel for the tab's running query, if any. */
 export function cancelRunning(connId: string, tabKey: string): boolean {
   const running = getRunning(sessionKey(connId, tabKey))

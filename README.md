@@ -84,6 +84,12 @@ Edit pencils appear only when the result carries the table's primary key (`SELEC
 
 ![Edit row](docs/images/manual/08-row-editor.png)
 
+Next to the pencil, each row has **Duplicate** and **Delete**, and the grid footer has **Add row**:
+
+* **Add row** and **Duplicate** open the same dialog as a new row, with a **DEFAULT** checkbox per column. A checked column is left out of the `INSERT`, so identity, serial and `DEFAULT` values come from the database. A blank row starts on DEFAULT wherever the column has a default or allows NULL. A duplicate copies the row's values (unchanged values are sent exactly as read) but leaves a key with a default to the database, so the copy gets a fresh key. Generated and `bytea` columns are never written.
+* **Delete** asks for confirmation, then deletes exactly that row by its full primary key (`DELETE … WHERE <key> RETURNING *`).
+* Like edits, inserts and deletes run inside the tab's open transaction when there is one (your COMMIT/ROLLBACK decides), otherwise they commit immediately. New rows appear at the end of the loaded rows.
+
 Invalid input (e.g. malformed JSON) is rejected client-side; server rejections (e.g. numeric overflow) arrive in-dialog with the PostgreSQL message — either way the dialog stays open and nothing is lost. A successful save runs a parameterized `UPDATE … RETURNING` and patches the grid from the returned row.
 
 # 8. Table editor

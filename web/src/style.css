@@ -1248,17 +1248,21 @@ body.dragging-results {
     }
   }
 
-  /* Row-editor action column: a narrow leading cell per row with a pencil. */
+  /* Row-editor action column: a narrow leading cell per row with edit,
+   * duplicate and delete icons. */
   .grid-cell.actions {
     display: flex;
     align-items: center;
     justify-content: center;
+    gap: 1px;
     padding: 0;
     overflow: visible;
     font-family: inherit;
   }
 
-  .rowedit-open {
+  .rowedit-open,
+  .rowedit-duplicate,
+  .rowedit-delete {
     color: var(--text-dim);
     padding: 2px 4px;
     cursor: pointer;
@@ -1272,6 +1276,10 @@ body.dragging-results {
       opacity: 0.25;
       cursor: default;
     }
+  }
+
+  .rowedit-delete:hover:not(:disabled) {
+    color: var(--error);
   }
 
   .grid-foot {
@@ -2498,6 +2506,11 @@ body.dragging-results {
     }
 
     td.rowedit-control {
+      .rowedit-default {
+        color: var(--text-dim);
+        font-style: italic;
+      }
+
       .rowedit-input,
       .rowedit-locked {
         display: block;
