@@ -526,6 +526,13 @@ try {
   await resultsPanel.locator('.messages').waitFor()
   await resultsPanel.getByRole('button', { name: 'Result 1', exact: true }).click()
   assert.equal(await resultsPanel.locator('.grid-cell.head').first().evaluate((element) => element.offsetWidth), beforeWidth + 70, 'column widths survive result switching')
+  // Load all drains every remaining page into the grid.
+  await resultsPanel.getByTitle('Run (F5 or Ctrl+Enter)', { exact: true }).click()
+  await resultsPanel.getByRole('button', { name: 'Result 2', exact: true }).click()
+  await resultsPanel.getByRole('button', { name: 'Load all', exact: true }).click()
+  await resultsPanel.locator('.grid-foot').filter({ hasText: '3 row(s)' }).waitFor()
+  assert.equal(await resultsPanel.getByRole('button', { name: 'Load all', exact: true }).count(), 0, 'Load all disappears once every row is loaded')
+  await resultsPanel.getByRole('button', { name: 'Result 1', exact: true }).click()
   await resultsPanel.getByTitle('Run (F5 or Ctrl+Enter)', { exact: true }).click()
   await resultsPanel.getByRole('button', { name: 'Result 2', exact: true }).click()
   const csvPath = join(directory, 'results.csv')

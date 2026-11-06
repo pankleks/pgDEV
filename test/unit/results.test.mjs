@@ -5,7 +5,7 @@ import { sourceLoader } from '../lib/load.mjs'
 // Execute the real store with Svelte reactivity and a controllable API
 // injected through the createResults factory — no source rewriting.
 const load = sourceLoader()
-const { createResults, describeQueryError } = await load('web/composables/results.ts')
+const { createResults, describeQueryError, LOAD_ALL_PAGE, LOAD_ALL_ROWS } = await load('web/composables/results.ts')
 
 function setup() {
   const api = {}
@@ -432,4 +432,57 @@ test('query errors: user cancel, timeouts in any language, and other errors', ()
   // A cancel from another session is not mistaken for the user's own.
   assert.equal(describeQueryError('canceling statement due to user request', '57014', false).level, 'error')
   assert.deepEqual(describeQueryError('syntax error', '42601', false, '5'), { text: 'syntax error', level: 'error', position: '5' })
+})
+
+test('Load all fetches large pages until the result ends', async () => {
+  const { api, results } = setup()
+  api.query = async () => ({ durationMs: 1, results: [data('a', [[1]], { truncated: true })] })
+  await results.run('tab', 'db', 'q')
+  const r = results.state.byTab.tab
+  const sizes = []
+  api.fetchMore = async (_connection, _tab, maxRows) => {
+    sizes.push(maxRows)
+    return sizes.length < 3 ? { rows: [[2], [3]], truncated: true } : { rows: [[4]], truncated: false }
+  }
+  assert.equal(await results.loadAll('tab', 'db', r.grid), true)
+  assert.deepEqual(sizes, [LOAD_ALL_PAGE, LOAD_ALL_PAGE, LOAD_ALL_PAGE], 'each page asks for the large page size')
+  assert.equal(r.grid.rows.length, 6)
+  assert.equal(r.grid.truncated, false)
+  assert.match(r.messages.at(-1).text, /all rows loaded \(6 total\)/)
+  assert.equal(r.loadingMore, false)
+})
+
+test('Load all stops exactly at the row limit and points to Export CSV', async () => {
+  const { api, results } = setup()
+  api.query = async () => ({ durationMs: 1, results: [data('a', [[0]], { truncated: true })] })
+  await results.run('tab', 'db', 'q')
+  const r = results.state.byTab.tab
+  const sizes = []
+  // An endless result: every page is full and more remain.
+  api.fetchMore = async (_connection, _tab, maxRows) => {
+    sizes.push(maxRows)
+    return { rows: Array.from({ length: maxRows }, (_, i) => [i]), truncated: true }
+  }
+  assert.equal(await results.loadAll('tab', 'db', r.grid), false)
+  assert.equal(r.grid.rows.length, LOAD_ALL_ROWS)
+  assert.equal(r.grid.truncated, true, 'Load more stays available for the rest')
+  assert.equal(sizes.at(-1), LOAD_ALL_PAGE - 1, 'the last page stops exactly at the limit')
+  assert.match(r.messages.at(-1).text, /stopped at the 100,000-row limit .* Export CSV/)
+  assert.equal(r.messages.at(-1).level, 'info')
+})
+
+test('Load all stops when the load is canceled', async () => {
+  const { api, results } = setup()
+  api.query = async () => ({ durationMs: 1, results: [data('a', [[1]], { truncated: true })] })
+  await results.run('tab', 'db', 'q')
+  const r = results.state.byTab.tab
+  let calls = 0
+  api.fetchMore = async () => {
+    calls++
+    if (calls === 2) r.cancelling = true
+    return { rows: [[2]], truncated: true }
+  }
+  assert.equal(await results.loadAll('tab', 'db', r.grid), false)
+  assert.equal(calls, 2, 'no page is fetched after the cancel')
+  assert.equal(r.loadingMore, false)
 })

@@ -2,7 +2,7 @@
   import { onDestroy, untrack } from 'svelte'
   import { SvelteMap } from 'svelte/reactivity'
   import { ChevronDown, Copy, Download, Pencil, Play, Square } from '@lucide/svelte'
-  import { useResults, multiResults, confirmResultRelease, type GridResult } from '../composables/results'
+  import { useResults, multiResults, confirmResultRelease, LOAD_ALL_ROWS, type GridResult } from '../composables/results'
   import { useConnection } from '../composables/connection'
   import { useTabs } from '../composables/tabs'
   import { useToast } from '../composables/toast'
@@ -205,6 +205,13 @@
     const ctx = context()
     if (ctx.connectionId && result?.grid?.truncated) void results.loadMore(ctx.key, ctx.connectionId)
   }
+  function loadAllRows() {
+    const ctx = context()
+    // The store's own grid: `result` is a display snapshot, and the drain
+    // only proceeds for the grid object the store holds.
+    const grid = results.state.byTab[ctx.key]?.grid
+    if (ctx.connectionId && grid?.truncated) void results.loadAll(ctx.key, ctx.connectionId, grid)
+  }
   function runControl(sql: 'COMMIT' | 'ROLLBACK') {
     const ctx = context()
     if (!ctx.connectionId || result?.running || result?.loadingMore) return
@@ -344,7 +351,7 @@
         {:else if grid.g.limited}<span>· first {grid.g.rows.length}{#if grid.g.totalRowCount} of {grid.g.totalRowCount}{/if} · row limit reached; remaining rows were not retained</span>
         {:else if grid.g.exported?.incomplete}<span>· export interrupted — re-run the query</span>
         {:else if grid.g.exported}<span>· first {grid.g.rows.length} shown · {grid.g.exported.rows} row(s) exported to CSV</span>{/if}
-        {#if grid.g.truncated}<button class="btn-sm" disabled={result.loadingMore} title="Rerun the query for the next page. Data may change between pages; use a stable ORDER BY." onclick={loadMoreRows}>{result.loadingMore ? 'Loading…' : 'Load more'}</button>{/if}
+        {#if grid.g.truncated}<button class="btn-sm" disabled={result.loadingMore} title="Rerun the query for the next page. Data may change between pages; use a stable ORDER BY." onclick={loadMoreRows}>{result.loadingMore ? 'Loading…' : 'Load more'}</button><button class="btn-sm" disabled={result.loadingMore} title={`Load every remaining row, up to ${LOAD_ALL_ROWS.toLocaleString('en-US')} (Cancel load stops it). Each page reruns the query; use Export CSV for larger results.`} onclick={loadAllRows}>Load all</button>{/if}
       </div>
     </div>
   {/if}

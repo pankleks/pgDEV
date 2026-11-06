@@ -87,8 +87,9 @@ export const api = {
     return send('POST', `/api/connections/${id}/cancel`, { tabKey })
   },
 
-  fetchMore(id: string, tabKey: string): Promise<FetchMoreResponse> {
-    return send('POST', `/api/connections/${id}/query/more`, { tabKey, maxRows: 500 })
+  /** One more page; the server accepts 1–10000 rows per page. */
+  fetchMore(id: string, tabKey: string, maxRows = 500): Promise<FetchMoreResponse> {
+    return send('POST', `/api/connections/${id}/query/more`, { tabKey, maxRows })
   },
 
   closeSession(id: string, tabKey: string): Promise<{ ok: boolean }> {

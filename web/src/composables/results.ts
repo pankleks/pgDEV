@@ -7,9 +7,14 @@ import { createMultiResults } from './multirun'
 import { useToast } from './toast'
 
 /** The slice of the API the results state machine drives; tests inject a fake. */
+/** "Load all": rows per page (the server allows up to 10000) and the most
+ * rows the grid will hold. */
+export const LOAD_ALL_PAGE = 5000
+export const LOAD_ALL_ROWS = 100_000
+
 export interface ResultsApi {
   query(connectionId: string, sql: string, tabKey: string, transactionId: string | null, explain?: 'explain' | 'analyze'): Promise<QueryResponse>
-  fetchMore(connectionId: string, tabKey: string): Promise<FetchMoreResponse>
+  fetchMore(connectionId: string, tabKey: string, maxRows?: number): Promise<FetchMoreResponse>
   cancel(connectionId: string, tabKey: string): Promise<{ ok: boolean }>
 }
 
@@ -299,6 +304,9 @@ export function createResults(api: ResultsApi) {
     grid: GridResult,
     sink: (rows: unknown[][]) => void | Promise<void>,
     retain: boolean,
+    /** Rows per page (default: the server's normal page), and for retained
+     * loads the most rows the grid may end up holding. */
+    options: { pageSize?: number; rowLimit?: number } = {},
   ): Promise<boolean> {
     const r = state.byTab[tabKey]
     if (!r || r.running || r.loadingMore) return false
@@ -329,11 +337,16 @@ export function createResults(api: ResultsApi) {
     try {
       await sink([...g.rows])
       exported += g.rows.length
-      while (isCurrent(tabKey, r, operation) && r.grids.includes(g) && g.truncated && !r.running && !r.cancelling) {
+      const limit = retain ? options.rowLimit : undefined
+      const atLimit = () => limit !== undefined && g.rows.length >= limit
+      while (isCurrent(tabKey, r, operation) && r.grids.includes(g) && g.truncated && !r.running && !r.cancelling && !atLimit()) {
         let res: FetchMoreResponse
         dispatched++
+        // Each page re-runs the query, so fewer, larger pages are cheaper;
+        // the last one stops exactly at the limit.
+        const size = limit === undefined ? options.pageSize : Math.min(options.pageSize ?? limit, limit - g.rows.length)
         try {
-          res = await api.fetchMore(connectionId, tabKey)
+          res = await api.fetchMore(connectionId, tabKey, size)
         } catch (e) {
           // The page may or may not have been consumed; the outcome is
           // uncertain, so the cursor cannot be trusted either way.
@@ -372,6 +385,13 @@ export function createResults(api: ResultsApi) {
         return false
       }
       const complete = !g.truncated
+      if (!complete && atLimit()) {
+        r.messages.push({
+          text: `Statement ${g.statementNumber}: loaded ${g.rows.length} rows and stopped at the ${limit!.toLocaleString('en-US')}-row limit — more rows remain. Use Export CSV to save the full result.`,
+          level: 'info',
+        })
+        return false
+      }
       r.messages.push({
         text: complete
           ? retain
@@ -392,9 +412,11 @@ export function createResults(api: ResultsApi) {
     }
   }
 
-  /** Drain all remaining pages into the grid (in-place export helper). */
+  /** Drain the remaining pages into the grid ("Load all"), in large pages and
+   * up to LOAD_ALL_ROWS rows so a huge result cannot exhaust the window's
+   * memory; Export CSV streams results of any size to a file instead. */
   async function loadAll(tabKey: string, connectionId: string, grid: GridResult): Promise<boolean> {
-    return exportAll(tabKey, connectionId, grid, () => undefined, true)
+    return exportAll(tabKey, connectionId, grid, () => undefined, true, { pageSize: LOAD_ALL_PAGE, rowLimit: LOAD_ALL_ROWS })
   }
 
   /**
