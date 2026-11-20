@@ -51,7 +51,9 @@ export function createMultiResults(results: Results, api: MultiApi, warn: (messa
     group.selected = group.entries[0].key
     await Promise.all(group.entries.map(async (entry, index) => {
       try {
-        const { id } = await api.connect({ ...configOf(profiles[index]), statementTimeout })
+        // A multi-run pool is the user's own; the agent never writes through it
+        // (and no badge would show it), whatever the profile allows.
+        const { id } = await api.connect({ ...configOf(profiles[index]), agentWrite: false, statementTimeout })
         if (state.byTab[tabKey] !== group || entry.cancelled) {
           await disconnect(id, entry.name)
           if (state.byTab[tabKey] === group) results.fail(entry.key, 'Query canceled.')

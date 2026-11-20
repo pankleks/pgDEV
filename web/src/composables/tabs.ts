@@ -44,6 +44,9 @@ const state = createState({
   pinnedFiles: [] as PinnedFile[],
 })
 const fileHandles = new Map<string, FileHandle>()
+/** The AI log keeps roughly the newest 500,000 characters of agent SQL. */
+export const AI_LOG_MAX = 500_000
+export const AI_LOG_TRIMMED = '-- (older AI log entries were trimmed)'
 const pinnedHandles = new Map<string, FileHandle>()
 let pinWrite = Promise.resolve()
 
@@ -303,6 +306,18 @@ export function useTabs() {
   }
 
   /**
+   * Keep the AI log bounded: past AI_LOG_MAX characters the oldest text is
+   * dropped at an entry boundary (a blank line) and a marker line says so.
+   */
+  function capAiLog(content: string): string {
+    if (content.length <= AI_LOG_MAX) return content
+    const from = content.length - AI_LOG_MAX
+    const boundary = content.indexOf('\n\n', from)
+    const kept = boundary === -1 ? content.slice(from) : content.slice(boundary + 2)
+    return `${AI_LOG_TRIMMED}\n\n${kept}`
+  }
+
+  /**
    * The single AI log tab: a read-only, append-only record of every agent
    * query's SQL, reused (never duplicated) and deliberately not bound to a
    * connection. Created on first use; the user may close it and the next
@@ -312,9 +327,9 @@ export function useTabs() {
   function showAiLog(entry: string): string {
     const existing = state.tabs.find((t) => t.aiMirror === true)
     if (existing) {
-      existing.content = existing.content.trim()
+      existing.content = capAiLog(existing.content.trim()
         ? `${existing.content.replace(/\s+$/, '')}\n\n${entry}`
-        : entry
+        : entry)
       state.activeKey = existing.key
       return existing.key
     }

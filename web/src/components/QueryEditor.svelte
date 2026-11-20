@@ -197,11 +197,32 @@
     // coming back is not an external change (and comparing the reference is
     // O(1), unlike rebuilding the document with getValue()).
     if (!model || fromModel.get(tab.key) === tab.content || model.getValue() === tab.content) return
+    if (tab.aiMirror) {
+      syncAiLog(model, tab.content)
+      return
+    }
     replaceContent(model, tab.content)
     if (editor?.getModel() === model) {
       const saved = viewStates.get(tab.key)
       if (saved) editor.restoreViewState(saved)
     }
+  }
+  /**
+   * The AI log is read-only and only grows (or is trimmed at its cap), so it
+   * needs no undo history: an undoable full replace per agent result would
+   * keep every past copy of the log alive. A pure append edits the end in
+   * place; anything else (a trim) replaces the text and clears the history.
+   * Either way the newest entry is shown.
+   */
+  function syncAiLog(model: monaco.editor.ITextModel, content: string) {
+    const current = model.getValue()
+    if (content.startsWith(current)) {
+      const end = model.getFullModelRange().getEndPosition()
+      model.applyEdits([{ range: new monaco.Range(end.lineNumber, end.column, end.lineNumber, end.column), text: content.slice(current.length) }])
+    } else {
+      model.setValue(content)
+    }
+    if (editor?.getModel() === model) editor.revealLine(model.getLineCount())
   }
   function syncErrorMarker(tabKey: string, reveal: boolean) {
     const model = models.get(tabKey)

@@ -507,6 +507,7 @@ function writeOutcome() {
     ],
     durationMs: 1,
     transactionOpen: false,
+    changed: true,
   }
 }
 
@@ -553,12 +554,20 @@ test('write mode refuses transaction control and reports a rolled-back failure',
   assert.match(failed.error, /duplicate key.*rolled back/)
 })
 
-test('the AI log mirror is flagged committed only for write batches', async () => {
+test('the AI log mirror is flagged committed only for write batches that changed something', async () => {
   const write = setup({ agentWrite: () => true, runWrite: async () => writeOutcome() })
   assert.equal((await write.tools.query({ sql: 'INSERT INTO items VALUES (1)' })).ok, true)
   assert.equal(write.events[0].action, 'show-result')
   assert.equal(write.events[0].args.committed, true)
   write.unsubscribe()
+
+  // A read on a write-enabled connection is committed but changes nothing.
+  const select = setup({ agentWrite: () => true, runWrite: async () => ({ ...dataResult([[1]]), changed: false }) })
+  const selected = await select.tools.query({ sql: 'SELECT id FROM items' })
+  assert.equal(selected.ok, true)
+  assert.equal(selected.result.committed, true)
+  assert.equal(select.events[0].args.committed, false)
+  select.unsubscribe()
 
   const read = setup({ agentWrite: () => false, runWrite: async () => writeOutcome() })
   assert.equal((await read.tools.query({ sql: 'SELECT id FROM items' })).ok, true)

@@ -299,7 +299,8 @@ console.log('\n== row editor ==')
       { schema: 'public', table: 'rowedit_probe', key: 'x', set: {} }, 400)
 
     // SAVE inside the tab's open transaction: invisible outside, ended by
-    // COMMIT/ROLLBACK, and a failed statement aborts it like psql.
+    // COMMIT/ROLLBACK. A failed save runs under a savepoint, so it is undone
+    // alone and the user's other uncommitted work survives.
     eq('begin a transaction for the tab', (await q('BEGIN', 'retx')).body.transactionOpen, true)
     const inside = await rowUpdate({
       tabKey: 'retx', schema: 'public', table: 'rowedit_probe', key: { id: 2 }, set: { label: 'INSIDE' },
@@ -315,14 +316,22 @@ console.log('\n== row editor ==')
       (await watcher.query('SELECT label FROM rowedit_probe WHERE id = 2')).rows[0].label, 'INSIDE')
 
     eq('begin again', (await q('BEGIN', 'retx')).body.transactionOpen, true)
+    eq('earlier uncommitted work in the transaction',
+      (await q("UPDATE rowedit_probe SET label = 'EARLIER' WHERE id = 2", 'retx')).status, 200)
     const bad = await rowUpdate({
       tabKey: 'retx', schema: 'public', table: 'rowedit_probe', key: { id: 2 }, set: { label: null },
     })
     eq('a constraint violation is reported', bad.status, 400)
-    eq('the aborted transaction stays open for ROLLBACK',
-      (await q('SELECT 1', 'retx')).body.code, '25P02')
+    eq('the failed save reports the transaction still open', bad.body.transactionOpen, true)
+    eq('the transaction is not aborted by the failed save',
+      (await q('SELECT 1', 'retx')).status, 200)
+    eq('earlier uncommitted work survives the failed save',
+      (await q('SELECT label FROM rowedit_probe WHERE id = 2', 'retx')).body.results[0].rows[0][0], 'EARLIER')
+    eq('a later save in the same transaction works', (await rowUpdate({
+      tabKey: 'retx', schema: 'public', table: 'rowedit_probe', key: { id: 2 }, set: { label: 'LATER' },
+    })).status, 200)
     eq('rollback closes it', (await q('ROLLBACK', 'retx')).body.transactionOpen, false)
-    eq('the rolled-back edit is gone',
+    eq('the rolled-back edits are gone',
       (await watcher.query('SELECT label FROM rowedit_probe WHERE id = 2')).rows[0].label, 'INSIDE')
 
     // A rejected plan never reaches the client, so the transaction survives.

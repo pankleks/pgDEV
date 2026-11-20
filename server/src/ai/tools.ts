@@ -202,8 +202,9 @@ export function createAiTools(deps: AiDeps): Record<string, AiTool> {
         .request('show-result', {
           connectionId: connection.id,
           sql,
-          // Marks the AI log entry: this batch changed the database.
-          committed: write,
+          // Marks the AI log entry: a committed batch that changed the
+          // database. Reads on a write-enabled connection stay unmarked.
+          committed: write && outcome.kind === 'ok' && outcome.changed === true,
           columns: first?.columns ?? [],
           columnTypes: first?.columnTypes ?? [],
           rows: first?.rows ?? [],

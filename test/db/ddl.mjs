@@ -154,6 +154,20 @@ await pool.query(`CREATE TABLE fk_child (id integer PRIMARY KEY, p integer, CONS
   const def = (await pool.query(`SELECT pg_get_constraintdef(oid) AS d FROM pg_constraint WHERE conname='fk_c'`)).rows[0].d
   ok('FK matches pg_get_constraintdef', text.includes(def), def)
 }
+// A foreign key may reference a standalone UNIQUE index (no constraint). The
+// FK also sets pg_constraint.conindid to that index, which must not hide it
+// from the parent table's DDL: replaying the child's FK needs it.
+await pool.query(`CREATE TABLE fk_idx_parent (id integer NOT NULL, self integer)`)
+await pool.query(`CREATE UNIQUE INDEX fk_idx_parent_id ON fk_idx_parent (id)`)
+await pool.query(`CREATE TABLE fk_idx_child (pid integer REFERENCES fk_idx_parent (id))`)
+await pool.query(`ALTER TABLE fk_idx_parent ADD CONSTRAINT fk_idx_self FOREIGN KEY (self) REFERENCES fk_idx_parent (id)`)
+{
+  const text = await ddl.tableDdl(pool, await oidOfRel('fk_idx_parent'), 'public', 'fk_idx_parent')
+  ok('a standalone unique index referenced by foreign keys stays in the table DDL',
+    text.includes('CREATE UNIQUE INDEX fk_idx_parent_id'), text)
+  ok('the self-referencing FK is still emitted', text.includes('fk_idx_self'), text)
+  await pool.query('DROP TABLE fk_idx_child, fk_idx_parent')
+}
 await pool.query(`ALTER TABLE cons ADD CONSTRAINT cons_notvalid CHECK (b < 1000) NOT VALID`)
 {
   const text = await ddl.constraintDdl(pool, 'public', 'cons', 'cons_notvalid')

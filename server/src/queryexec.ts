@@ -98,7 +98,12 @@ export type BatchError =
   | { kind: 'sql'; message: string; position: string | null; code: string | null }
 
 export type BatchOutcome =
-  | { kind: 'ok'; results: MappedResult[]; durationMs: number; transactionOpen: boolean }
+  | {
+      kind: 'ok'; results: MappedResult[]; durationMs: number; transactionOpen: boolean
+      /** Agent write batches: a statement other than a plain read ran (DML,
+       * DDL, …). A SELECT calling a writing function does not count. */
+      changed?: boolean
+    }
   | { kind: 'error'; error: BatchError }
 
 export type MoreOutcome =
@@ -803,6 +808,7 @@ async function runAgentBatch(
     await client.query(write ? 'BEGIN' : 'BEGIN READ ONLY')
     // Statement order is kept: a data page or a command tag per statement.
     const items: (DataPage | MappedCommand)[] = []
+    let changed = false
     let offset = 0
     while (true) {
       const part = nextStatement(sql, offset, standardConformingStrings(client))
@@ -821,6 +827,7 @@ async function runAgentBatch(
         if (client.getTransactionStatus() !== 'T') {
           throw new Error(`"${command || '?'}" ended the agent's transaction; the batch was stopped and rolled back.`)
         }
+        if (!READ_TAGS.has(command)) changed = true
       } else if (client.getTransactionStatus() !== 'T' || !READ_TAGS.has(command)) {
         throw new Error(`"${command || '?'}" is not a read; the agent's batch was stopped and rolled back.`)
       }
@@ -857,7 +864,10 @@ async function runAgentBatch(
     // Commit last, after everything that can still fail; a deferred
     // constraint failing here rolls the whole batch back and is reported.
     if (write) await client.query('COMMIT')
-    return { kind: 'ok', results, durationMs: Math.round(performance.now() - start), transactionOpen: false }
+    return {
+      kind: 'ok', results, durationMs: Math.round(performance.now() - start), transactionOpen: false,
+      ...(write ? { changed } : {}),
+    }
   } catch (err) {
     return { kind: 'error', error: sqlError(err) }
   } finally {

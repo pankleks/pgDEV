@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply } from 'fastify'
 import type { PoolClient } from 'pg'
-import { getPool } from '../pools.js'
+import { getPool, releaseClean } from '../pools.js'
 import { fetchRowEditInfo } from '../catalog/rowedit.js'
 import { planRowDelete, planRowInsert, planRowUpdate, type RowInsertError, type RowUpdateError } from '../rowupdate.js'
 import { rawTextTypes } from '../pgtypes.js'
@@ -122,16 +122,38 @@ async function onTabClient<T>(
   }
   const client = sess?.client ?? await pool.connect()
   if (!sess) guardCheckedOutClient(client)
+  // Inside the user's transaction a rejected value (bad type, constraint)
+  // must not abort it and lose their uncommitted work: the operation runs
+  // under a savepoint and only it is rolled back on failure. No savepoint
+  // when the transaction is already aborted; the statement then fails as
+  // before and the user's ROLLBACK decides.
+  let savepoint = false
   try {
     // Recheck after a potentially queued checkout, before anything runs.
     if (!sess) assertTransaction(runKey, transactionId)
-    return await work(client, !!sess)
+    if (sess && client.getTransactionStatus() === 'T') {
+      await client.query('SAVEPOINT pgdev_row_edit')
+      savepoint = true
+    }
+    const result = await work(client, !!sess)
+    if (savepoint) await client.query('RELEASE SAVEPOINT pgdev_row_edit')
+    return result
   } catch (err) {
+    if (savepoint) {
+      try {
+        await client.query('ROLLBACK TO SAVEPOINT pgdev_row_edit')
+        await client.query('RELEASE SAVEPOINT pgdev_row_edit')
+      } catch {
+        // Connection gone or transaction unusable: the error below reports it.
+      }
+    }
     throw Object.assign(err instanceof Error ? err : new Error(String(err)), transactionState(runKey))
   } finally {
     // Keep an open (possibly aborted) user transaction for COMMIT/ROLLBACK.
     if (sess) await finishSession(runKey, sess, 'keep')
-    else client.release()
+    // A trigger can leave session state (settings, temp tables, advisory
+    // locks) behind; reset it before the client returns to the pool.
+    else await releaseClean(client)
   }
 }
 

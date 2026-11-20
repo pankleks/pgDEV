@@ -125,15 +125,17 @@ const { isAgentWriteSql } = await load('server/ai/readonly.ts')
 // Write mode ("Allow AI writes"): DML/DDL pass, but nothing may end or split
 // the per-call transaction or change session settings.
 
-test('write mode allows DML, DDL, locking reads and anonymous blocks', () => {
+test('write mode allows DML, DDL, locking reads and plain EXPLAIN', () => {
   for (const sql of [
     "INSERT INTO t (a) VALUES ('x')",
     'UPDATE t SET a = 1 WHERE id = 2; DELETE FROM t WHERE id = 3',
     'CREATE TABLE t2 (id int); ALTER TABLE t2 ADD COLUMN b text; DROP TABLE t2',
     'SELECT * FROM t FOR UPDATE',
-    'DO $$ BEGIN RAISE NOTICE \'x\'; END $$',
     'PREPARE p AS SELECT 1',
     'SELECT 1',
+    'EXPLAIN UPDATE t SET a = 1',
+    'EXPLAIN (VERBOSE, COSTS) SELECT 1',
+    "SELECT 'explain analyze' AS note",
   ]) {
     assert.deepEqual(isAgentWriteSql(sql), { ok: true }, sql)
   }
@@ -157,6 +159,8 @@ test('write mode refuses transaction control, session settings and COPY', () => 
     'DISCARD ALL',
     'COPY t FROM STDIN',
     "COPY t TO '/tmp/x'",
+    'DO $$ BEGIN RAISE NOTICE \'x\'; END $$',
+    "DO $$BEGIN EXECUTE 'SET statement_timeout = 0'; END$$",
   ]) {
     const result = isAgentWriteSql(sql)
     assert.equal(result.ok, false, sql)
@@ -175,4 +179,65 @@ test('write mode still refuses direct calls with effects outside the transaction
     assert.match(result.reason, /outside the agent's transaction/, sql)
   }
   assert.equal(isAgentWriteSql('  ').ok, false)
+})
+
+// Review fixes (0.7.1): disguised and string-wrapped calls, EXPLAIN ANALYZE.
+
+test('Unicode-escaped identifiers are refused in both modes; U& strings are not', () => {
+  for (const sql of [
+    'SELECT U&"pg\\005fterminate\\005fbackend"(pid) FROM pg_stat_activity',
+    "SELECT u&\"pg\\005fread\\005ffile\"('/etc/passwd')",
+    "SELECT U&\"d!0061ta\" UESCAPE '!' FROM t",
+    'SELECT * FROM U&"t"',
+  ]) {
+    for (const check of [isReadOnlySql, isAgentWriteSql]) {
+      const result = check(sql)
+      assert.equal(result.ok, false, sql)
+      assert.match(result.reason, /Unicode-escaped identifiers/, sql)
+    }
+  }
+  for (const sql of [
+    "SELECT U&'d\\0061t\\+000061'",
+    "SELECT 'U&\"x\"' AS note",
+    'SELECT 1 -- U&"pg_read_file"(1)',
+    'SELECT a FROM "U&x"',
+  ]) {
+    assert.deepEqual(isReadOnlySql(sql), { ok: true }, sql)
+  }
+})
+
+test('functions that run SQL from a string are refused in both modes', () => {
+  for (const sql of [
+    "SELECT query_to_xml('select dblink_exec(''x'', ''DROP TABLE t'')', true, false, '')",
+    "SELECT pg_catalog.query_to_xmlschema('select 1', true, false, '')",
+    "SELECT query_to_xml_and_xmlschema('select 1', true, false, '')",
+    "SELECT cursor_to_xml('c', 1, true, false, '')",
+    "SELECT \"cursor_to_xmlschema\"('c', true, false, '')",
+  ]) {
+    for (const check of [isReadOnlySql, isAgentWriteSql]) {
+      const result = check(sql)
+      assert.equal(result.ok, false, sql)
+      assert.match(result.reason, /_xml/, sql)
+    }
+  }
+  // Other XML functions stay available.
+  assert.deepEqual(isReadOnlySql("SELECT table_to_xml('t', true, false, '')"), { ok: true })
+})
+
+test('EXPLAIN ANALYZE is refused in write mode only', () => {
+  for (const sql of [
+    'EXPLAIN ANALYZE UPDATE t SET a = 1',
+    'explain analyse delete from t',
+    'EXPLAIN (ANALYZE) INSERT INTO t VALUES (1)',
+    'EXPLAIN (FORMAT JSON, ANALYZE true, BUFFERS) UPDATE t SET a = 1',
+    '/* c */ EXPLAIN ANALYZE VERBOSE SELECT 1',
+  ]) {
+    const result = isAgentWriteSql(sql)
+    assert.equal(result.ok, false, sql)
+    assert.match(result.reason, /EXPLAIN ANALYZE executes the statement/, sql)
+    // In read mode it runs in a rolled-back read-only transaction.
+    if (/^\s*(\/\*.*\*\/\s*)?explain/i.test(sql) && !/UPDATE|DELETE|INSERT/i.test(sql)) {
+      assert.deepEqual(isReadOnlySql(sql), { ok: true }, sql)
+    }
+  }
 })

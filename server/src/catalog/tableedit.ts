@@ -393,7 +393,10 @@ SELECT idx.relname AS name, pg_get_indexdef(idx.oid) AS definition,
 FROM pg_index i
 JOIN pg_class idx ON idx.oid = i.indexrelid
 WHERE i.indrelid = $1::oid AND i.indisunique AND NOT i.indisprimary
-  AND NOT EXISTS (SELECT 1 FROM pg_constraint con WHERE con.conindid = idx.oid)
+  -- Only the table's own key constraints own an index; a foreign key in any
+  -- table (this one included) that references the index also sets conindid.
+  AND NOT EXISTS (SELECT 1 FROM pg_constraint con WHERE con.conindid = idx.oid
+    AND con.conrelid = i.indrelid AND con.contype IN ('p', 'u', 'x'))
 ORDER BY ord`
 
 // Outgoing foreign keys only — the display asks "does this column reference

@@ -169,9 +169,12 @@ export async function tableDdl(pool: Pool, oid: string, schema: string, name: st
       `SELECT idx.relname AS indexname, pg_get_indexdef(idx.oid) AS indexdef
        FROM pg_index i
        JOIN pg_class idx ON idx.oid = i.indexrelid
-       LEFT JOIN pg_constraint con ON con.conindid = idx.oid
        WHERE i.indrelid = $1
-         AND con.oid IS NULL
+         -- Only the table's own key constraints own the index: a foreign key
+         -- (here or in another table) referencing it also sets conindid, and
+         -- must not hide a standalone UNIQUE index it depends on.
+         AND NOT EXISTS (SELECT 1 FROM pg_constraint con WHERE con.conindid = idx.oid
+           AND con.conrelid = i.indrelid AND con.contype IN ('p', 'u', 'x'))
          AND NOT EXISTS (SELECT 1 FROM pg_inherits x WHERE x.inhrelid = idx.oid)
        ORDER BY idx.relname`,
       [relOid],

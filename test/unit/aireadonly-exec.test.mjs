@@ -141,3 +141,15 @@ test('a statement the server reports as ending the transaction stops a write bat
   assert.match(outcome.error.message, /ended the agent's transaction/)
   assert.ok(!executed.some((e) => e.text === 'UPDATE t SET a = 1'))
 })
+
+test('a write batch reports changed only when a statement other than a read ran', async () => {
+  const wrote = await run('rw-changed', 'SELECT 1; INSERT INTO t VALUES (1)', WRITE_TAGS, runAgentWriteBatch)
+  assert.equal(wrote.outcome.kind, 'ok')
+  assert.equal(wrote.outcome.changed, true)
+  const read = await run('rw-unchanged', 'SELECT 1; SELECT 2', {}, runAgentWriteBatch)
+  assert.equal(read.outcome.kind, 'ok')
+  assert.equal(read.outcome.changed, false)
+  assert.ok(read.executed.some((e) => e.text === 'COMMIT'), 'a write-mode batch still commits')
+  const ro = await run('ro-nochanged', 'SELECT 1', {}, runReadOnlyBatch)
+  assert.equal('changed' in ro.outcome, false)
+})

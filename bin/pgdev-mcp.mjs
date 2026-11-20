@@ -148,7 +148,8 @@ const server = new McpServer(
       'connected). `query` runs read-only statements (SELECT, WITH, VALUES, TABLE, SHOW and EXPLAIN) ' +
       'unless the user enabled "Allow AI writes" on the open connection: then `query` also runs DML and ' +
       'DDL, each call in one transaction that is committed when every statement succeeds and rolled ' +
-      'back entirely on any error (transaction control, SET/RESET, DISCARD and COPY are refused). ' +
+      'back entirely on any error (transaction control, SET/RESET, DISCARD, COPY, DO and EXPLAIN ' +
+      'ANALYZE are refused; use plain EXPLAIN). ' +
       'Writes are committed immediately, so only write when the user asked for it. Otherwise, to ' +
       'create, alter or drop anything, or to change data, author the SQL yourself — start ' +
       'from `get_ddl` when the object already exists — and stage it with `set_active_query` (into the ' +

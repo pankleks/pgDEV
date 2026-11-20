@@ -103,6 +103,20 @@ test('showAiLog is a single read-only tab that accumulates entries', () => {
   assert.equal(tab.content, 'SELECT 1\n\nSELECT 2')
 })
 
+test('the AI log is capped, dropping the oldest entries at an entry boundary', async () => {
+  const { AI_LOG_MAX, AI_LOG_TRIMMED } = await load('web/composables/tabs.ts')
+  const entry = (i) => `SELECT ${i} -- ${'x'.repeat(1000)}`
+  for (let i = 0; i < Math.ceil(AI_LOG_MAX / 1000) + 50; i++) tabs.showAiLog(entry(i))
+  const tab = tabs.state.tabs.find((t) => t.aiMirror === true)
+  assert.ok(tab.content.length <= AI_LOG_MAX + AI_LOG_TRIMMED.length + 2, `${tab.content.length}`)
+  assert.ok(tab.content.startsWith(`${AI_LOG_TRIMMED}\n\nSELECT `), 'trimmed at an entry boundary, with a marker')
+  assert.ok(tab.content.endsWith(entry(Math.ceil(AI_LOG_MAX / 1000) + 49)), 'the newest entry is kept')
+  assert.ok(!tab.content.includes('SELECT 1\n\nSELECT 2'), 'the oldest entries are gone')
+  // Exactly one marker, even after many more trims.
+  tabs.showAiLog(entry('again'))
+  assert.equal(tab.content.split(AI_LOG_TRIMMED).length - 1, 1)
+})
+
 test('opening a pinned file focuses its existing clean tab', async () => {
   tabs.openFile('clean-pin.sql', 'SELECT 1')
   const original = tabs.state.tabs[tabs.state.tabs.length - 1]
