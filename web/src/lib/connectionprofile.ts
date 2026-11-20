@@ -12,11 +12,13 @@ export interface SavedConnection extends ProfileConfig {
 }
 
 export function configOf(connection: ConnectionConfig): ConnectionConfig {
-  // The per-connection agent role travels with the profile in both forms.
-  const agentRole = connection.agentRole ? { agentRole: connection.agentRole } : {}
-  if (connection.connectionString) return { connectionString: connection.connectionString, ...agentRole }
+  // The per-connection AI write opt-in travels with the profile in both forms
+  // and is only ever sent when explicitly true. Fields not listed here (such
+  // as the removed agentRole) are dropped from saved profiles.
+  const agent = connection.agentWrite === true ? { agentWrite: true } : {}
+  if (connection.connectionString) return { connectionString: connection.connectionString, ...agent }
   const { host, port, database, user, password, ssl } = connection
-  return { host, port, database, user, password, ssl, ...agentRole }
+  return { host, port, database, user, password, ssl, ...agent }
 }
 
 export function profileName(name: string | undefined, fallback: string): string {

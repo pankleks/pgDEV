@@ -3,11 +3,13 @@
 // tool layer is pure enough to unit-test with fakes: no Fastify, no pool, no
 // SSE in here.
 //
-// Mutations are never executed, and the agent never runs the editor: `query`
-// refuses anything that is not a plain read before it reaches the database (and
-// the database itself refuses writes in the read-only transaction it runs in),
-// while `set_active_query` / `open_query_tab` put generated SQL in front of the
-// user, who runs it.
+// The agent never runs the editor. By default `query` refuses anything that is
+// not a plain read before it reaches the database (and the database itself
+// refuses writes in the read-only transaction it runs in), while
+// `set_active_query` / `open_query_tab` put generated SQL in front of the
+// user, who runs it. Only when the active connection's profile has "Allow AI
+// writes" does `query` also write: one transaction per call, committed when
+// every statement succeeds (runAgentWriteBatch).
 
 import type { MappedData, BatchOutcome } from '../queryexec.js'
 import type { AiActiveResult, AiLimits, AiResultGrid, AiTabList, SchemaData } from '../schema-types.js'
@@ -15,7 +17,7 @@ import { DEFAULT_AI_LIMITS } from '../schema-types.js'
 import type { DdlTarget } from '../catalog/ddl.js'
 import { DDL_TYPES } from '../catalog/ddl.js'
 import { BridgeError, windowProblem, type Bridge } from './bridge.js'
-import { isReadOnlySql } from './readonly.js'
+import { isReadOnlySql, isAgentWriteSql } from './readonly.js'
 
 export type { AiLimits } from '../schema-types.js'
 export { DEFAULT_AI_LIMITS } from '../schema-types.js'
@@ -30,6 +32,10 @@ export interface AiDeps {
   getDdl(connectionId: string, target: DdlTarget): Promise<string>
   /** Execute a read-only batch; the implementation wraps it in a read-only transaction. */
   runReadOnly(connectionId: string, sql: string, maxRows: number): Promise<BatchOutcome>
+  /** Whether the connection's profile lets the agent write. Absent: never. */
+  agentWrite?(connectionId: string): boolean
+  /** Execute a batch in one transaction committed when every statement succeeds. */
+  runWrite?(connectionId: string, sql: string, maxRows: number): Promise<BatchOutcome>
   bridge: Bridge
   limits?: AiLimits
 }
@@ -140,30 +146,36 @@ export function createAiTools(deps: AiDeps): Record<string, AiTool> {
   async function query(args: Record<string, unknown>): Promise<AiToolResult> {
     const sql = asString(args.sql)
     if (!sql || !sql.trim()) return fail('"sql" is required.')
-    const readOnly = isReadOnlySql(sql)
-    if (!readOnly.ok) return fail(readOnly.reason)
-
+    // The active connection's profile decides the mode, so it is resolved
+    // before the statement is classified.
     const connection = await activeConnection()
     if (!connection.ok) return fail(connection.error)
+    const write = !!deps.runWrite && deps.agentWrite?.(connection.id) === true
+    const check = write ? isAgentWriteSql(sql) : isReadOnlySql(sql)
+    if (!check.ok) return fail(check.reason)
 
     let outcome: BatchOutcome
     try {
-      outcome = await deps.runReadOnly(connection.id, sql, limits().maxRows)
+      outcome = write
+        ? await deps.runWrite!(connection.id, sql, limits().maxRows)
+        : await deps.runReadOnly(connection.id, sql, limits().maxRows)
     } catch (err) {
       return fail(messageOf(err))
     }
     if (outcome.kind === 'error') {
       const detail = outcome.error.kind === 'sql' ? outcome.error.message : outcome.error.kind
-      return fail(detail)
+      return fail(write ? `${detail} (the whole batch was rolled back; nothing was committed)` : detail)
     }
 
     const data = dataResults(outcome)
-    if (!data.length) return fail('The statement returned no rows (only commands ran).')
+    if (!data.length && !write) return fail('The statement returned no rows (only commands ran).')
 
-    const results = data.map((item, index) => {
+    // Read mode lists data results only (unchanged contract). Write mode lists
+    // every statement in order, commands as their tag and affected row count.
+    const capData = (item: MappedData, statement: number) => {
       const capped = capRows(item.rows, limits().maxRows, limits().maxBytes)
       return {
-        statement: index + 1,
+        statement,
         columns: item.columns,
         columnTypes: item.columnTypes,
         rows: capped.rows,
@@ -171,7 +183,12 @@ export function createAiTools(deps: AiDeps): Record<string, AiTool> {
         truncated: capped.truncated || item.truncated || item.limited,
         totalRowCount: item.totalRowCount,
       }
-    })
+    }
+    const results = data.map((item, index) => capData(item, index + 1))
+    const statements = write && outcome.kind === 'ok'
+      ? outcome.results.map((item, index) =>
+          item.kind === 'data' ? capData(item, index + 1) : { statement: index + 1, command: item.command, rowCount: item.rowCount })
+      : null
 
     // Mirror the first result in the UI: the agent's SQL in a tab plus the
     // rows. Best effort and not awaited — a slow or busy window must not stall
@@ -185,6 +202,8 @@ export function createAiTools(deps: AiDeps): Record<string, AiTool> {
         .request('show-result', {
           connectionId: connection.id,
           sql,
+          // Marks the AI log entry: this batch changed the database.
+          committed: write,
           columns: first?.columns ?? [],
           columnTypes: first?.columnTypes ?? [],
           rows: first?.rows ?? [],
@@ -199,6 +218,7 @@ export function createAiTools(deps: AiDeps): Record<string, AiTool> {
         .catch(() => undefined)
     }
 
+    if (statements) return { ok: true, result: { committed: true, results: statements, shown: listening } }
     return { ok: true, result: { results, shown: listening } }
   }
 

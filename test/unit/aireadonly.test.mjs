@@ -119,3 +119,60 @@ test('the same names as data, columns or other functions are fine', () => {
     assert.deepEqual(isReadOnlySql(sql), { ok: true }, sql)
   }
 })
+
+const { isAgentWriteSql } = await load('server/ai/readonly.ts')
+
+// Write mode ("Allow AI writes"): DML/DDL pass, but nothing may end or split
+// the per-call transaction or change session settings.
+
+test('write mode allows DML, DDL, locking reads and anonymous blocks', () => {
+  for (const sql of [
+    "INSERT INTO t (a) VALUES ('x')",
+    'UPDATE t SET a = 1 WHERE id = 2; DELETE FROM t WHERE id = 3',
+    'CREATE TABLE t2 (id int); ALTER TABLE t2 ADD COLUMN b text; DROP TABLE t2',
+    'SELECT * FROM t FOR UPDATE',
+    'DO $$ BEGIN RAISE NOTICE \'x\'; END $$',
+    'PREPARE p AS SELECT 1',
+    'SELECT 1',
+  ]) {
+    assert.deepEqual(isAgentWriteSql(sql), { ok: true }, sql)
+  }
+})
+
+test('write mode refuses transaction control, session settings and COPY', () => {
+  for (const sql of [
+    'INSERT INTO t VALUES (1); COMMIT',
+    'BEGIN; UPDATE t SET a = 1',
+    'START TRANSACTION',
+    'ROLLBACK',
+    'END',
+    'ABORT',
+    'SAVEPOINT s',
+    'RELEASE SAVEPOINT s',
+    "PREPARE TRANSACTION 'x'",
+    "COMMIT PREPARED 'x'",
+    'SET ROLE postgres',
+    'SET LOCAL statement_timeout = 0',
+    'RESET ROLE',
+    'DISCARD ALL',
+    'COPY t FROM STDIN',
+    "COPY t TO '/tmp/x'",
+  ]) {
+    const result = isAgentWriteSql(sql)
+    assert.equal(result.ok, false, sql)
+    assert.match(result.reason, /not allowed for the agent/, sql)
+  }
+})
+
+test('write mode still refuses direct calls with effects outside the transaction', () => {
+  for (const sql of [
+    "UPDATE t SET a = set_config('role', 'postgres', true)",
+    'SELECT pg_terminate_backend(1)',
+    "SELECT dblink_exec('x', 'y')",
+  ]) {
+    const result = isAgentWriteSql(sql)
+    assert.equal(result.ok, false, sql)
+    assert.match(result.reason, /outside the agent's transaction/, sql)
+  }
+  assert.equal(isAgentWriteSql('  ').ok, false)
+})

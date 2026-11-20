@@ -126,11 +126,19 @@ The AI dialog provides a copyable configuration pointing at the bundled **pgdev-
 
 What the agent's `query` can do:
 
-* It runs one statement at a time in a read-only transaction that is always rolled back, so it cannot change data or schema.
+* By default it runs one statement at a time in a read-only transaction that is always rolled back, so it cannot change data or schema (see [Allowing AI writes](#allowing-ai-writes) for the per-connection opt-in).
 * Calls with effects outside that transaction are refused: signalling or terminating sessions, reading or writing server files, `dblink`, resetting statistics, replication management and `set_config`.
-* This refusal only catches direct calls. An existing function can still reach them, so the reliable limit is the role's privileges.
-* Set **Agent role** in the connect dialog to make agent queries run as a lower-privilege role (`SET LOCAL ROLE`; the login must be a member). Alternatively, connect with a low-privilege login.
-* `get_schema` and `get_ddl` read the catalog with the connection's own login.
+* This refusal only catches direct calls. An existing function can still reach them, so the reliable limit is the privileges of the connection's login. To restrict the agent, connect with a low-privilege login.
+* `get_schema` and `get_ddl` read the catalog with the same login.
+
+### Allowing AI writes
+
+**Allow AI writes** in the connect dialog is a per-connection setting, saved with the profile and off by default. When it is on, the agent's `query` on that connection can also run DML and DDL:
+
+* Each call runs in one transaction. pgDEV commits it only when every statement succeeds; any error rolls back the whole call. The result says `committed: true` and lists each statement, with command tags and affected row counts.
+* Writes are committed **without your review**. While such a connection is open, a red **AI writes** badge sits next to the connection name. In the AI log tab, each committed batch starts with `-- AI WRITE: committed to the database`. The badge reflects the setting the open connection actually uses: changing the profile takes effect on the next connect.
+* Refused statements: transaction control (`BEGIN`, `COMMIT`, `ROLLBACK`, `SAVEPOINT`, `PREPARE TRANSACTION`, …), `SET`/`RESET` (for example `SET ROLE`), `DISCARD`, `COPY`, and the same direct function calls as in read-only mode. PostgreSQL itself refuses statements that cannot run inside a transaction (`VACUUM`, `CREATE DATABASE`, `… CONCURRENTLY`, `ALTER SYSTEM`).
+* The agent reads table data and comments, and stored text can try to steer it (prompt injection). Use this only on development databases. The agent writes with the full privileges of the connection's login, so to limit what it can change, connect with a dedicated low-privilege login. Code the agent creates itself (`DO` blocks, new functions) is not checked by the refusal list.
 
 Closing pgDEV also stops its MCP helpers so they do not block Windows updates. After reopening pgDEV, reconnect MCP in your client; the saved configuration remains valid.
 

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy, tick, untrack } from 'svelte'
-  import { Activity, FileOutput, FilePlus2, FolderOpen, PanelLeftClose, PanelLeftOpen, Save, Settings, SlidersHorizontal, Wand2, X } from '@lucide/svelte'
+  import { Activity, Bot, FileOutput, FilePlus2, FolderOpen, PanelLeftClose, PanelLeftOpen, Save, Settings, SlidersHorizontal, Wand2, X } from '@lucide/svelte'
   import appIcon from '../../desktop/icons/32.png'
   import ConnectDialog from './components/ConnectDialog.svelte'
   import SettingsDialog from './components/SettingsDialog.svelte'
@@ -152,6 +152,7 @@
     }))
     desktopSubscriptions.push(desktop().onBackendFailure(() => {
       conn.state.id = null
+      conn.state.agentWrite = false
       // IntelliSense must not keep serving the dead connection's catalog.
       useSchema().reset()
       for (const key of Object.keys(multiResults.state.byTab)) multiResults.release(key)
@@ -233,6 +234,7 @@
       {#if sideCollapsed}<PanelLeftOpen size={15} />{:else}<PanelLeftClose size={15} />{/if}
     </button>
     {#if conn.state.id}<button class="conn-badge" title="Connection details, disconnect, or switch" onclick={() => { conn.state.dialog = true }}>{conn.state.name}</button>
+      {#if conn.state.agentWrite}<button class="ai-write-badge" title="Allow AI writes is on: the AI agent can commit data and schema changes on this connection without your review. Edit the profile and reconnect to turn it off." onclick={() => { conn.state.dialog = true }}><Bot size={13} /> AI writes</button>{/if}
     {:else}<button class="conn-badge off" title="Open the connection dialog" onclick={() => { conn.state.dialog = true }}>Not connected</button>{/if}
     <span class="spacer"></span>
     <button class="icon" title="Processes" aria-label="Processes" disabled={!conn.state.id} onclick={() => { if (conn.state.id) tabs.openProcesses(conn.state.id) }}><Activity size={15} /></button>

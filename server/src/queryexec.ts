@@ -1,5 +1,5 @@
 import type { PoolClient } from 'pg'
-import { getPool, getAgentRole, setRunning, getRunning, deleteRunning, runningKeysForConnection, releaseClean } from './pools.js'
+import { getPool, setRunning, getRunning, deleteRunning, runningKeysForConnection, releaseClean } from './pools.js'
 import { rawTextTypes } from './pgtypes.js'
 import { cancelClientQuery } from './pgcancel.js'
 import { guardCheckedOutClient } from './checkout.js'
@@ -11,7 +11,7 @@ import { plainSelectTable } from './selectshape.js'
 import { fetchRowEditInfo, editableGrid } from './catalog/rowedit.js'
 import { typeLength } from './typelength.js'
 import { explainSql } from './explain.js'
-import { isReadOnlySql } from './ai/readonly.js'
+import { isReadOnlySql, isAgentWriteSql } from './ai/readonly.js'
 import type { EditableGrid } from './schema-types.js'
 import {
   transactionControl,
@@ -750,11 +750,37 @@ const READ_TAGS = new Set(['SELECT', 'SHOW', 'EXPLAIN'])
  * stops the batch before anything else runs. The transaction is always
  * rolled back, which also reverts session settings changed by set_config.
  */
-export async function runReadOnlyBatch(
+export function runReadOnlyBatch(
   connId: string,
   tabKey: string,
   sql: string,
   cap: number,
+): Promise<BatchOutcome> {
+  return runAgentBatch(connId, tabKey, sql, cap, false)
+}
+
+/**
+ * Run an agent batch on a connection whose profile allows agent writes. Same
+ * mechanics as runReadOnlyBatch, but in a read-write transaction that is
+ * committed only when every statement succeeded; any error rolls the whole
+ * batch back. The transaction must stay open after each statement (no
+ * statement may end it), so the batch commits or rolls back as one unit.
+ */
+export function runAgentWriteBatch(
+  connId: string,
+  tabKey: string,
+  sql: string,
+  cap: number,
+): Promise<BatchOutcome> {
+  return runAgentBatch(connId, tabKey, sql, cap, true)
+}
+
+async function runAgentBatch(
+  connId: string,
+  tabKey: string,
+  sql: string,
+  cap: number,
+  write: boolean,
 ): Promise<BatchOutcome> {
   if (!sql.trim()) return { kind: 'error', error: { kind: 'empty' } }
   const runKey = sessionKey(connId, tabKey)
@@ -774,19 +800,15 @@ export async function runReadOnlyBatch(
   const start = performance.now()
   try {
     await observeSqlState(client)
-    await client.query('BEGIN READ ONLY')
-    // A configured agent role limits the batch to that role's privileges for
-    // this transaction only; the agent cannot call set_config to leave it
-    // (readonly.ts blocks it), and ROLLBACK + DISCARD ALL undo it afterwards.
-    const role = getAgentRole(connId)
-    if (role) await client.query("SELECT set_config('role', $1, true)", [role])
-    const pages: DataPage[] = []
+    await client.query(write ? 'BEGIN' : 'BEGIN READ ONLY')
+    // Statement order is kept: a data page or a command tag per statement.
+    const items: (DataPage | MappedCommand)[] = []
     let offset = 0
     while (true) {
       const part = nextStatement(sql, offset, standardConformingStrings(client))
       if (!part) break
       offset = part.end
-      const check = isReadOnlySql(part.text)
+      const check = write ? isAgentWriteSql(part.text) : isReadOnlySql(part.text)
       if (!check.ok) throw new Error(check.reason)
       let bounded
       try {
@@ -795,11 +817,18 @@ export async function runReadOnlyBatch(
         return { kind: 'error', error: sqlError(err, part.start) }
       }
       const command = bounded.result.command ?? ''
-      if (client.getTransactionStatus() !== 'T' || !READ_TAGS.has(command)) {
+      if (write) {
+        if (client.getTransactionStatus() !== 'T') {
+          throw new Error(`"${command || '?'}" ended the agent's transaction; the batch was stopped and rolled back.`)
+        }
+      } else if (client.getTransactionStatus() !== 'T' || !READ_TAGS.has(command)) {
         throw new Error(`"${command || '?'}" is not a read; the agent's batch was stopped and rolled back.`)
       }
-      if (!bounded.result.fields?.length) continue
-      pages.push({
+      if (!bounded.result.fields?.length) {
+        if (write) items.push({ kind: 'command', command, rowCount: bounded.result.rowCount ?? 0 })
+        continue
+      }
+      items.push({
         fields: bounded.result.fields as FieldInfo[],
         rows: bounded.rows.map((row) => row.map((cell) => normalizeCell(cell))),
         hasMore: false,
@@ -807,9 +836,11 @@ export async function runReadOnlyBatch(
         totalRowCount: bounded.totalRowCount,
       })
     }
-    if (!pages.length && offset === 0) return { kind: 'error', error: { kind: 'empty' } }
+    if (!items.length && offset === 0) return { kind: 'error', error: { kind: 'empty' } }
+    const pages = items.filter((item): item is DataPage => !('kind' in item))
     const typeNames = await typeNamesFor(client, pages)
-    const results: MappedResult[] = pages.map((page) => {
+    const results: MappedResult[] = items.map((page) => {
+      if ('kind' in page) return page
       const types = page.fields.map((f) => typeNames.get(String(f.dataTypeID)) ?? '')
       return {
         kind: 'data' as const,
@@ -823,12 +854,16 @@ export async function runReadOnlyBatch(
         totalRowCount: page.totalRowCount,
       }
     })
+    // Commit last, after everything that can still fail; a deferred
+    // constraint failing here rolls the whole batch back and is reported.
+    if (write) await client.query('COMMIT')
     return { kind: 'ok', results, durationMs: Math.round(performance.now() - start), transactionOpen: false }
   } catch (err) {
     return { kind: 'error', error: sqlError(err) }
   } finally {
     deleteRunning(runKey, client)
-    // Never commit agent work. If the ROLLBACK fails, DISCARD ALL fails too
+    // Reads are never committed, and a write batch commits only above. After
+    // a COMMIT this ROLLBACK is a no-op. If it fails, DISCARD ALL fails too
     // and the connection is destroyed rather than returned to the pool.
     try {
       await client.query('ROLLBACK')

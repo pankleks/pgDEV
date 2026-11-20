@@ -49,7 +49,7 @@ function hasLockingClause(stmt: string): boolean {
 // SELECT calling them still has effects. Matched as calls, by name, whatever
 // the schema qualification. This is a guard against direct calls only: an
 // existing wrapper function can still reach them, so the real limit is the
-// privileges of the role the agent's queries run as.
+// privileges of the connection's login.
 const BLOCKED_FUNCTIONS = new Set([
   'pg_terminate_backend', 'pg_cancel_backend', 'pg_reload_conf', 'pg_rotate_logfile',
   'pg_promote', 'pg_log_backend_memory_contexts', 'pg_switch_wal',
@@ -101,7 +101,8 @@ export function isReadOnlySql(sql: string): ReadOnlyCheck {
         reason:
           `"${keyword || '?'}" is not a read-only statement. The agent may run SELECT, WITH, ` +
           'VALUES, TABLE, SHOW or EXPLAIN; stage writes and DDL with set_active_query or ' +
-          'open_query_tab and run them in pgDEV yourself.',
+          'open_query_tab and run them in pgDEV yourself (or enable "Allow AI writes" on this ' +
+          'connection in pgDEV).',
       }
     }
     const blocked = blockedCall(stmt)
@@ -117,6 +118,46 @@ export function isReadOnlySql(sql: string): ReadOnlyCheck {
       return {
         ok: false,
         reason: 'Row-locking clauses (FOR UPDATE/SHARE) cannot run in the agent\'s read-only session.',
+      }
+    }
+  }
+  return { ok: true }
+}
+
+// Write mode: the batch is one transaction pgDEV commits only when every
+// statement succeeded (runAgentWriteBatch). The agent may not end or split it,
+// change session settings (SET ROLE, SET statement_timeout, RESET ALL), or
+// start COPY, which needs a client stream.
+// Statements PostgreSQL refuses inside a transaction block (VACUUM, CREATE
+// DATABASE, ... CONCURRENTLY, ALTER SYSTEM) fail on their own.
+const WRITE_REFUSED = new Set([
+  'BEGIN', 'START', 'COMMIT', 'END', 'ROLLBACK', 'ABORT', 'SAVEPOINT', 'RELEASE',
+  'SET', 'RESET', 'DISCARD', 'COPY',
+])
+
+/** Check a batch the agent runs with write access on this connection. */
+export function isAgentWriteSql(sql: string): ReadOnlyCheck {
+  const statements = splitStatements(sql)
+  if (!statements.length) return { ok: false, reason: 'The query is empty.' }
+  for (const stmt of statements) {
+    const keyword = firstKeyword(stmt)
+    if (!keyword) return { ok: false, reason: 'Each statement must start with a SQL command.' }
+    if (WRITE_REFUSED.has(keyword) || /^\s*PREPARE\s+TRANSACTION\b/i.test(maskLiterals(stmt))) {
+      return {
+        ok: false,
+        reason:
+          `"${keyword}" is not allowed for the agent. pgDEV runs each query call in one transaction ` +
+          'and commits it when every statement succeeds; transaction control, SET/RESET, DISCARD and ' +
+          'COPY are refused. Stage such scripts with set_active_query or open_query_tab.',
+      }
+    }
+    const blocked = blockedCall(stmt)
+    if (blocked) {
+      return {
+        ok: false,
+        reason:
+          `${blocked}() acts outside the agent's transaction, so the agent may not call it. ` +
+          'Stage the statement with set_active_query or open_query_tab and let the user run it.',
       }
     }
   }

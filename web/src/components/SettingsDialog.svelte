@@ -98,7 +98,7 @@
       <div class="setting-row">
         <div class="setting-text">
           <strong>MCP config</strong>
-          <small>Copy the JSON config for an MCP client (opencode, Claude Desktop, …). The agent can read the schema, run read-only queries, and stage writes in a tab for you to run. Rotate the token if it may have leaked; every client then needs the new config.</small>
+          <small>Copy the JSON config for an MCP client (opencode, Claude Desktop, …). The agent can read the schema, run read-only queries, and stage writes in a tab for you to run. On connections with “Allow AI writes” it can also commit writes itself. Rotate the token if it may have leaked; every client then needs the new config.</small>
         </div>
         <div class="setting-actions">
           <button class="btn-sm" disabled={copyingConfig} title="Replace the MCP token; existing client configs stop working" onclick={rotateToken}><KeyRound size={13} /> Rotate</button>

@@ -473,3 +473,15 @@ test('show-result refuses when the AI log grid cannot be shown', async () => {
     /AI log tab is busy/,
   )
 })
+
+test('a committed agent write is marked in the AI log; reads are not', async () => {
+  const { AI_WRITE_MARKER } = await load('web/lib/aibridge.ts')
+  const { deps, tabs } = setup()
+  const base = { connectionId: 'conn-1', columns: [], columnTypes: [], rows: [], rowCount: 0, truncated: false }
+  await applyBridgeAction(deps, { id: '1', action: 'show-result', args: { ...base, sql: 'SELECT 1' } })
+  await applyBridgeAction(deps, { id: '2', action: 'show-result', args: { ...base, sql: 'DELETE FROM items', committed: true } })
+  await applyBridgeAction(deps, { id: '3', action: 'show-result', args: { ...base, sql: 'SELECT 2', committed: false } })
+  const log = tabs.find((t) => t.aiMirror === true)
+  assert.equal(log.content, `SELECT 1\n\n${AI_WRITE_MARKER}\nDELETE FROM items\n\nSELECT 2`)
+  assert.match(AI_WRITE_MARKER, /^-- /, 'the marker stays a SQL comment')
+})

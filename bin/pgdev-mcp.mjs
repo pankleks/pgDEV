@@ -145,8 +145,12 @@ const server = new McpServer(
     instructions:
       'pgDEV is a PostgreSQL desktop IDE; work on the connection it has ' +
       'open (there is no way to list or choose connections, and database tools fail while nothing is ' +
-      'connected). `query` only runs read-only statements: SELECT, WITH, VALUES, TABLE, SHOW and ' +
-      'EXPLAIN. To create, alter or drop anything, or to change data, author the SQL yourself — start ' +
+      'connected). `query` runs read-only statements (SELECT, WITH, VALUES, TABLE, SHOW and EXPLAIN) ' +
+      'unless the user enabled "Allow AI writes" on the open connection: then `query` also runs DML and ' +
+      'DDL, each call in one transaction that is committed when every statement succeeds and rolled ' +
+      'back entirely on any error (transaction control, SET/RESET, DISCARD and COPY are refused). ' +
+      'Writes are committed immediately, so only write when the user asked for it. Otherwise, to ' +
+      'create, alter or drop anything, or to change data, author the SQL yourself — start ' +
       'from `get_ddl` when the object already exists — and stage it with `set_active_query` (into the ' +
       'tab the user is looking at) or `open_query_tab` (a new tab). pgDEV never executes staged SQL: ' +
       'the user reviews it and runs it. `get_active_result` shows what the active tab last produced ' +
@@ -194,13 +198,16 @@ server.registerTool(
 server.registerTool(
   'query',
   {
-    title: 'Run a read-only query',
+    title: 'Run a query',
     description:
-      'Read-only database access: run a single SELECT, WITH, VALUES, TABLE, SHOW or EXPLAIN against the ' +
-      'connection open in pgDEV and return the rows. It cannot write or run DDL — author those and stage ' +
-      'them with set_active_query or open_query_tab so the user can run them.',
+      'Run SQL against the connection open in pgDEV and return the rows. By default read-only: SELECT, ' +
+      'WITH, VALUES, TABLE, SHOW or EXPLAIN; author writes and DDL and stage them with set_active_query ' +
+      'or open_query_tab so the user can run them. When the user enabled "Allow AI writes" on that ' +
+      'connection, it also runs DML/DDL in one transaction per call, committed only when every ' +
+      'statement succeeds (the result then says committed: true and lists each statement); a refusal ' +
+      'naming read-only means writes are not enabled there.',
     inputSchema: {
-      sql: z.string().describe('The read-only statement to execute'),
+      sql: z.string().describe('The statement(s) to execute'),
     },
   },
   handler('query'),

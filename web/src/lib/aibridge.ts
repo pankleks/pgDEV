@@ -20,10 +20,15 @@ export interface BridgeAction {
   args?: Record<string, unknown>
 }
 
+/** First line of an AI log entry whose batch the agent committed. */
+export const AI_WRITE_MARKER = '-- AI WRITE: committed to the database'
+
 export interface AgentGrid {
   /** Server connection that produced these rows. */
   connectionId: string
   sql: string
+  /** The agent's batch was a committed write ("Allow AI writes"). */
+  committed?: boolean
   columns: string[]
   columnTypes: string[]
   rows: unknown[][]
@@ -271,7 +276,8 @@ export async function applyBridgeAction(deps: AiBridgeDeps, action: BridgeAction
       // One AI log tab holds every agent result: the SQL is appended to its
       // read-only log and the latest rows mirror into the results panel. Not
       // bound to a connection, so reconnects never strand or duplicate it.
-      const key = deps.showAiLog(grid.sql)
+      // Committed writes get a header line so they stand out from reads.
+      const key = deps.showAiLog(grid.committed === true ? `${AI_WRITE_MARKER}\n${grid.sql}` : grid.sql)
       if (!deps.showGrid(key, grid)) throw new Error('The AI log tab is busy.')
       return { key }
     }

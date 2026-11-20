@@ -32,11 +32,15 @@ test('legacy profiles gain stable IDs and unique fallback names without losing c
   assert.deepEqual(migrateProfiles(profiles), profiles)
 })
 
-test('the per-connection agent role survives profile handling in both forms', () => {
+test('the AI write opt-in survives profile handling in both forms; the removed agent role is dropped', () => {
+  // Profiles saved by older versions may still carry agentRole: never sent, never kept.
   assert.deepEqual(configOf({ connectionString: 'postgres://x@h/db', agentRole: 'agent_reader', name: 'n' }),
-    { connectionString: 'postgres://x@h/db', agentRole: 'agent_reader' })
-  assert.equal(configOf({ host: 'h', port: 5432, database: 'd', user: 'u', password: '', ssl: false, agentRole: 'r' }).agentRole, 'r')
-  assert.equal('agentRole' in configOf({ host: 'h' }), false, 'no role means none is sent')
-  const [migrated] = migrateProfiles([{ label: 'l', host: 'h', agentRole: 'r' }])
-  assert.equal(migrated.agentRole, 'r')
+    { connectionString: 'postgres://x@h/db' })
+  assert.equal('agentRole' in configOf({ host: 'h', agentRole: 'r' }), false)
+  assert.equal('agentRole' in migrateProfiles([{ label: 'l', host: 'h', agentRole: 'r' }])[0], false)
+  // The write opt-in travels with the profile and is only sent when true.
+  assert.equal(configOf({ connectionString: 'postgres://x@h/db', agentWrite: true }).agentWrite, true)
+  assert.equal(configOf({ host: 'h', agentWrite: true }).agentWrite, true)
+  assert.equal('agentWrite' in configOf({ host: 'h', agentWrite: false }), false)
+  assert.equal(migrateProfiles([{ label: 'l', host: 'h', agentWrite: true }])[0].agentWrite, true)
 })

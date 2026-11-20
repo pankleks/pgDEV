@@ -15,6 +15,8 @@ const state = createState({
   profileId: null as string | null,
   selectedIds: [] as string[],
   pgVersion: '',
+  /** The open pool lets the AI agent commit writes (server-confirmed). */
+  agentWrite: false,
   dialog: false,
   connecting: false,
   saving: false,
@@ -54,7 +56,7 @@ function isConnectionConfig(value: unknown): value is ConnectionConfig {
     (cfg.user === undefined || typeof cfg.user === 'string') &&
     (cfg.password === undefined || typeof cfg.password === 'string') &&
     (cfg.ssl === undefined || typeof cfg.ssl === 'boolean') &&
-    (cfg.agentRole === undefined || typeof cfg.agentRole === 'string')
+    (cfg.agentWrite === undefined || typeof cfg.agentWrite === 'boolean')
   )
 }
 
@@ -171,7 +173,7 @@ export function useConnection() {
       // remembered config) applied when the pool opens: changing it in
       // Settings takes effect on the next connect.
       const body: ConnectionConfig = { ...configOf(cfg), statementTimeout: useSettings().state.statementTimeout }
-      const { id, pgVersion } = await api.connect(body)
+      const { id, pgVersion, agentWrite } = await api.connect(body)
       if (attempt !== connectionAttempt) {
         await api.disconnect(id).catch(() => {})
         return
@@ -215,6 +217,7 @@ export function useConnection() {
       state.name = name
       state.profileId = cfg.id ?? null
       state.pgVersion = pgVersion ?? ''
+      state.agentWrite = agentWrite === true
       state.dialog = false
       if (save) {
         locallyChanged = true
@@ -339,6 +342,7 @@ export function useConnection() {
     state.name = ''
     state.profileId = null
     state.pgVersion = ''
+    state.agentWrite = false
     useSchema().reset()
   }
 

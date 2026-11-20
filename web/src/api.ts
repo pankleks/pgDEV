@@ -58,7 +58,7 @@ export const api = {
     return send<{ version: string }>('GET', '/api/version').then((b) => b.version)
   },
 
-  connect(config: ConnectionConfig): Promise<{ id: string; pgVersion?: string }> {
+  connect(config: ConnectionConfig): Promise<{ id: string; pgVersion?: string; agentWrite?: boolean }> {
     return send('POST', '/api/connections', config)
   },
 

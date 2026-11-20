@@ -1,8 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import { runReadOnlyBatch } from '../../server/dist/queryexec.js'
-import { setPool, removePool, setAgentRole } from '../../server/dist/pools.js'
+import { runReadOnlyBatch, runAgentWriteBatch } from '../../server/dist/queryexec.js'
+import { setPool, removePool } from '../../server/dist/pools.js'
 
 // The agent's executor must not depend on the classifier's split: a statement
 // the server treats as COMMIT ends the batch, every statement goes over the
@@ -24,17 +24,22 @@ function fakePool(tags = {}) {
       if (text === 'SHOW standard_conforming_strings') {
         return { fields: [], rows: [{ standard_conforming_strings: 'on' }], command: 'SHOW' }
       }
-      if (text === 'BEGIN READ ONLY') state.status = 'T'
-      if (text === 'ROLLBACK') state.status = 'I'
+      if (text === 'BEGIN READ ONLY' || text === 'BEGIN') state.status = 'T'
+      if (text === 'ROLLBACK' || text === 'COMMIT') state.status = 'I'
       if (text === 'DISCARD ALL' && state.status !== 'I') throw new Error('DISCARD ALL cannot run inside a transaction block')
       if (text.startsWith('SELECT oid::text')) return { rows: [{ oid: '23', name: 'integer' }] }
       if (typeof query.emit === 'function') {
         const command = tags[text] ?? 'SELECT'
+        if (command === 'ERROR') {
+          state.status = 'E'
+          queueMicrotask(() => query.emit('error', new Error('boom')))
+          return { fields: [], rows: [], command: 'OK' }
+        }
         if (command === 'COMMIT') state.status = 'I'
         const fields = command === 'SELECT' ? [{ name: 'n', tableID: 0, dataTypeID: 23, dataTypeModifier: -1 }] : []
         queueMicrotask(() => {
           if (fields.length) query.emit('row', [1])
-          query.emit('end', { fields, rows: [], command })
+          query.emit('end', { fields, rows: [], command, rowCount: fields.length ? 1 : 2 })
         })
       }
       return { fields: [], rows: [], command: 'OK' }
@@ -46,11 +51,11 @@ function fakePool(tags = {}) {
   return { executed, state, pool: { async connect() { return client }, async end() {} } }
 }
 
-async function run(id, sql, tags) {
+async function run(id, sql, tags, runner = runReadOnlyBatch) {
   const fake = fakePool(tags)
   setPool(id, fake.pool)
   try {
-    return { outcome: await runReadOnlyBatch(id, 'ai', sql, 10), ...fake }
+    return { outcome: await runner(id, 'ai', sql, 10), ...fake }
   } finally {
     removePool(id)
   }
@@ -93,29 +98,46 @@ test('statements are re-classified as executed, not only by the up-front gate', 
   assert.ok(!executed.some((e) => e.text.startsWith('DELETE')))
 })
 
-test('a configured agent role is taken inside the read-only transaction, before any agent SQL', async () => {
-  const fake = fakePool()
-  setPool('ro-role', fake.pool)
-  setAgentRole('ro-role', 'agent_reader')
-  try {
-    const outcome = await runReadOnlyBatch('ro-role', 'ai', 'SELECT 1', 10)
-    assert.equal(outcome.kind, 'ok')
-    const texts = fake.executed.map((e) => e.text)
-    const begin = texts.indexOf('BEGIN READ ONLY')
-    const role = fake.executed.findIndex((e) => e.text === "SELECT set_config('role', $1, true)")
-    assert.ok(begin >= 0 && role === begin + 1, JSON.stringify(texts))
-    assert.deepEqual(fake.executed[role].values, ['agent_reader'])
-    assert.ok(role < texts.indexOf('SELECT 1'))
-  } finally {
-    removePool('ro-role')
-  }
-  // Removing the connection forgets its role.
-  const again = fakePool()
-  setPool('ro-role', again.pool)
-  try {
-    await runReadOnlyBatch('ro-role', 'ai', 'SELECT 1', 10)
-    assert.ok(!again.executed.some((e) => e.text.includes("set_config('role'")))
-  } finally {
-    removePool('ro-role')
-  }
+// Write mode ("Allow AI writes"): one read-write transaction per call,
+// committed only after every statement succeeded.
+
+const WRITE_TAGS = { 'INSERT INTO t VALUES (1)': 'INSERT', 'UPDATE t SET a = 1': 'UPDATE' }
+
+test('a write batch runs in one transaction and commits after the last statement', async () => {
+  const { outcome, executed, state } = await run('rw-ok', 'INSERT INTO t VALUES (1); SELECT 1; UPDATE t SET a = 1', WRITE_TAGS, runAgentWriteBatch)
+  assert.equal(outcome.kind, 'ok', JSON.stringify(outcome))
+  assert.deepEqual(outcome.results.map((r) => r.kind === 'data' ? 'data' : `${r.command} ${r.rowCount}`),
+    ['INSERT 2', 'data', 'UPDATE 2'])
+  const texts = executed.map((e) => e.text)
+  assert.equal(texts.indexOf('BEGIN READ ONLY'), -1)
+  assert.ok(texts.indexOf('BEGIN') < texts.indexOf('INSERT INTO t VALUES (1)'))
+  assert.ok(texts.indexOf('COMMIT') > texts.indexOf('UPDATE t SET a = 1'))
+  assert.deepEqual(state.releases, [false])
+})
+
+test('a failing statement rolls the whole write batch back and nothing commits', async () => {
+  const { outcome, executed } = await run('rw-fail', 'INSERT INTO t VALUES (1); UPDATE t SET a = 1; SELECT 3',
+    { ...WRITE_TAGS, 'UPDATE t SET a = 1': 'ERROR' }, runAgentWriteBatch)
+  assert.equal(outcome.kind, 'error')
+  const texts = executed.map((e) => e.text)
+  assert.ok(!texts.includes('COMMIT'))
+  assert.ok(!texts.includes('SELECT 3'))
+  assert.deepEqual(texts.slice(-2), ['ROLLBACK', 'DISCARD ALL'])
+})
+
+test('a write batch refuses transaction control before anything after it runs', async () => {
+  const { outcome, executed } = await run('rw-commit', 'INSERT INTO t VALUES (1); COMMIT; UPDATE t SET a = 1', WRITE_TAGS, runAgentWriteBatch)
+  assert.equal(outcome.kind, 'error')
+  assert.match(outcome.error.message, /not allowed for the agent/)
+  const texts = executed.map((e) => e.text)
+  assert.ok(!texts.includes('COMMIT'))
+  assert.ok(!texts.includes('UPDATE t SET a = 1'))
+})
+
+test('a statement the server reports as ending the transaction stops a write batch uncommitted', async () => {
+  const { outcome, executed } = await run('rw-disguised', 'INSERT INTO t VALUES (1); SELECT disguised; UPDATE t SET a = 1',
+    { ...WRITE_TAGS, 'SELECT disguised': 'COMMIT' }, runAgentWriteBatch)
+  assert.equal(outcome.kind, 'error')
+  assert.match(outcome.error.message, /ended the agent's transaction/)
+  assert.ok(!executed.some((e) => e.text === 'UPDATE t SET a = 1'))
 })

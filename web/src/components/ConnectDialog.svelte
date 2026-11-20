@@ -1,7 +1,7 @@
 <script lang="ts">
   import { dialogFocus } from '../lib/dialogfocus'
   import { onDestroy } from 'svelte'
-  import { Bot, Check, CodeXml, Copy, Database, Eye, EyeOff, Lock, Plug, Plus, Power, Save, Search, Server, SlidersHorizontal, User, X } from '@lucide/svelte'
+  import { Check, CodeXml, Copy, Database, Eye, EyeOff, Lock, Plug, Plus, Power, Save, Search, Server, SlidersHorizontal, User, X } from '@lucide/svelte'
   import { api } from '../api'
   import { useConnection, type SavedConnection } from '../composables/connection'
   import { confirmAction } from '../lib/desktop'
@@ -20,7 +20,7 @@
   let name = $state('')
   let url = $state('')
   /** Applies in both modes, so it lives outside the parameter form. */
-  let agentRole = $state('')
+  let agentWrite = $state(false)
   const defaults: ConnectionConfig = {
     host: 'localhost', port: 5432, database: '', user: 'postgres', password: '', ssl: false,
   }
@@ -89,7 +89,7 @@
     selectedLabel = entry.id
     name = entry.name
     conn.state.error = ''
-    agentRole = entry.agentRole ?? ''
+    agentWrite = entry.agentWrite === true
     if (entry.connectionString) {
       mode = 'url'
       url = entry.connectionString
@@ -108,7 +108,7 @@
     selectedLabel = null
     name = ''
     url = ''
-    agentRole = ''
+    agentWrite = false
     mode = 'params'
     remember = true
     showPassword = false
@@ -137,10 +137,10 @@
   }
 
   function currentConfig(): ProfileConfig {
-    const role = agentRole.trim() ? { agentRole: agentRole.trim() } : {}
+    const agent = agentWrite ? { agentWrite: true } : {}
     const config: ConnectionConfig = mode === 'url'
-      ? { connectionString: url.trim(), ...role }
-      : { ...form, port: Number(form.port), ...role }
+      ? { connectionString: url.trim(), ...agent }
+      : { ...form, port: Number(form.port), ...agent }
     return { ...config, name, id: selectedLabel ?? undefined }
   }
 
@@ -159,6 +159,13 @@
 
   function close() { if (!snapshot.current.saving) conn.state.dialog = false }
 </script>
+
+{#snippet agentWriteCheck()}
+  <label class="check-item" title="The AI agent's query tool may change data and schema on this connection. Each call runs in one transaction that is committed when every statement succeeds — without your review. Use only for development databases; the login's privileges are the real limit.">
+    <input bind:checked={agentWrite} type="checkbox" />
+    <span><strong>Allow AI writes</strong><small class:agent-write-warning={agentWrite}>{agentWrite ? 'The agent commits changes without your review. Development databases only.' : 'AI agent queries stay read-only'}</small></span>
+  </label>
+{/snippet}
 
 {#snippet connectionActions()}
   <div class="connection-save-actions">
@@ -261,11 +268,8 @@
                 </button>
               </span>
             </label>
-            <label class="field-label" title="Optional. The AI agent's read-only queries run as this role (SET LOCAL ROLE), so its privileges limit what the agent can read or call. The login must be a member of it.">
-              <span>Agent role</span>
-              <span class="field"><Bot class="field-icon" size={14} /><input bind:value={agentRole} autocomplete="off" placeholder="Optional: run AI agent queries as this role" /></span>
-            </label>
             <div class="checks">
+              {@render agentWriteCheck()}
               <label class="check-item"><input bind:checked={form.ssl} type="checkbox" /><span><strong>SSL</strong><small>Use SSL to connect to the database</small></span></label>
               <label class="check-item"><input bind:checked={remember} type="checkbox" /><span><strong>Remember on this device</strong><small>Credentials use secure OS storage when available</small></span></label>
             </div>
@@ -275,11 +279,8 @@
           <form class="fields" inert={snapshot.current.saving} onsubmit={submit}>
             <label class="field-label"><span>Connection name</span><span class="field"><input bind:value={name} placeholder="Optional unique name" /></span></label>
             <label class="field-label"><span>URL</span><span class="field"><input bind:value={url} placeholder="postgres://user:pass@host:5432/db" /></span></label>
-            <label class="field-label" title="Optional. The AI agent's read-only queries run as this role (SET LOCAL ROLE), so its privileges limit what the agent can read or call. The login must be a member of it.">
-              <span>Agent role</span>
-              <span class="field"><Bot class="field-icon" size={14} /><input bind:value={agentRole} autocomplete="off" placeholder="Optional: run AI agent queries as this role" /></span>
-            </label>
             <div class="checks">
+              {@render agentWriteCheck()}
               <label class="check-item"><input bind:checked={remember} type="checkbox" /><span><strong>Remember on this device</strong><small>Credentials use secure OS storage when available</small></span></label>
             </div>
             {@render connectionActions()}
@@ -295,6 +296,7 @@
   .connection-save-actions { display: flex; gap: 8px; margin-top: 6px; }
   .connection-save-actions button { flex: 1; }
   .save-hint { color: var(--text-dim); font-size: 11px; }
+  .agent-write-warning { color: var(--error); }
   .database-picker { margin-top: 3px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); overflow: hidden; }
   .discovery-head { display: flex; justify-content: space-between; gap: 12px; padding: 8px 10px; background: var(--panel); border-bottom: 1px solid var(--border); font-size: 11px; color: var(--text-dim); }
   .database-options { max-height: 168px; overflow-y: auto; padding: 4px; }

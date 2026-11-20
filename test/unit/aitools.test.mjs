@@ -494,3 +494,74 @@ test('the connection open in the window wins over ambiguous pools', async () => 
   assert.deepEqual(calls.run[0], ['conn-2', 'SELECT 1', 100])
   unsubscribe()
 })
+
+// "Allow AI writes": the active connection's profile switches `query` to the
+// committed write runner; without it the read-only contract is unchanged.
+
+function writeOutcome() {
+  return {
+    kind: 'ok',
+    results: [
+      { kind: 'command', command: 'INSERT', rowCount: 2 },
+      { kind: 'data', columns: ['id'], columnTypes: ['integer'], rows: [[7]], rowCount: 1, truncated: false, limited: false },
+    ],
+    durationMs: 1,
+    transactionOpen: false,
+  }
+}
+
+test('a connection that allows writes runs DML through the write runner and reports every statement', async () => {
+  const writes = []
+  const { tools, calls, unsubscribe } = setup({
+    agentWrite: (id) => id === 'conn-1',
+    runWrite: async (id, sql, maxRows) => { writes.push([id, sql, maxRows]); return writeOutcome() },
+  })
+  const result = await tools.query({ sql: "INSERT INTO items (label) VALUES ('x'), ('y'); SELECT 7 AS id" })
+  assert.equal(result.ok, true, JSON.stringify(result))
+  assert.equal(calls.run.length, 0, 'the read-only runner is not used')
+  assert.equal(writes.length, 1)
+  assert.equal(writes[0][0], 'conn-1')
+  assert.equal(result.result.committed, true)
+  assert.deepEqual(result.result.results[0], { statement: 1, command: 'INSERT', rowCount: 2 })
+  assert.deepEqual(result.result.results[1].rows, [[7]])
+  unsubscribe()
+})
+
+test('a connection without the opt-in keeps refusing writes even when a write runner exists', async () => {
+  const writes = []
+  const { tools, calls } = setup({
+    agentWrite: () => false,
+    runWrite: async () => { writes.push(1); return writeOutcome() },
+  })
+  const result = await tools.query({ sql: 'DELETE FROM items' })
+  assert.equal(result.ok, false)
+  assert.match(result.error, /read-only/)
+  assert.match(result.error, /Allow AI writes/)
+  assert.equal(writes.length + calls.run.length, 0)
+})
+
+test('write mode refuses transaction control and reports a rolled-back failure', async () => {
+  const { tools } = setup({
+    agentWrite: () => true,
+    runWrite: async () => ({ kind: 'error', error: { kind: 'sql', message: 'duplicate key', position: null, code: '23505' } }),
+  })
+  const refused = await tools.query({ sql: 'UPDATE items SET label = 1; COMMIT' })
+  assert.equal(refused.ok, false)
+  assert.match(refused.error, /not allowed for the agent/)
+  const failed = await tools.query({ sql: 'INSERT INTO items VALUES (1)' })
+  assert.equal(failed.ok, false)
+  assert.match(failed.error, /duplicate key.*rolled back/)
+})
+
+test('the AI log mirror is flagged committed only for write batches', async () => {
+  const write = setup({ agentWrite: () => true, runWrite: async () => writeOutcome() })
+  assert.equal((await write.tools.query({ sql: 'INSERT INTO items VALUES (1)' })).ok, true)
+  assert.equal(write.events[0].action, 'show-result')
+  assert.equal(write.events[0].args.committed, true)
+  write.unsubscribe()
+
+  const read = setup({ agentWrite: () => false, runWrite: async () => writeOutcome() })
+  assert.equal((await read.tools.query({ sql: 'SELECT id FROM items' })).ok, true)
+  assert.equal(read.events[0].args.committed, false)
+  read.unsubscribe()
+})

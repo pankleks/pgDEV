@@ -1,10 +1,10 @@
 import type { FastifyInstance, FastifyReply } from 'fastify'
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
-import { connectionIds, getCatalogPool } from '../pools.js'
+import { connectionIds, getCatalogPool, getAgentWrite } from '../pools.js'
 import { fetchSchemaData } from '../catalog/metadata.js'
 import { objectDdl, type DdlTarget } from '../catalog/ddl.js'
-import { runReadOnlyBatch } from '../queryexec.js'
+import { runReadOnlyBatch, runAgentWriteBatch } from '../queryexec.js'
 import { createBridge } from '../ai/bridge.js'
 import { createAiTools } from '../ai/tools.js'
 import { rotateToken } from '../ai/token.js'
@@ -58,6 +58,11 @@ export async function aiRoutes(app: FastifyInstance, options: AiRouteOptions) {
     // One-shot and always rolled back: bounded rows, no cursor, no session.
     runReadOnly: (id: string, sql: string, maxRows: number) =>
       runReadOnlyBatch(id, AI_TAB_KEY, sql, maxRows),
+    // Per-connection opt-in ("Allow AI writes" in the profile): one
+    // transaction per call, committed only when every statement succeeded.
+    agentWrite: getAgentWrite,
+    runWrite: (id: string, sql: string, maxRows: number) =>
+      runAgentWriteBatch(id, AI_TAB_KEY, sql, maxRows),
     bridge,
     limits,
   })
