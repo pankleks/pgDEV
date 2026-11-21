@@ -8,6 +8,9 @@
   import { useResults } from '../composables/results'
   import { useSettings } from '../composables/settings'
   import { useToast } from '../composables/toast'
+  import { useSchema } from '../composables/schema'
+  import { openObjectDdl } from '../composables/ddl'
+  import { resolveDefinition, type DefinitionTarget } from '../lib/definition'
   import { formatSql } from '../lib/sqlformat'
   import { modelUri } from '../lib/modeluri'
   import { mapParams, parseParamValues } from '../lib/preparemap'
@@ -20,6 +23,8 @@
   const tabs = useTabs()
   const results = useResults()
   const settings = useSettings()
+  const schema = useSchema()
+  const schemaData = stateView(() => schema.state.data)
   const toast = useToast()
   const snapshot = stateView(() => ({
     fontSize: settings.state.editorFontSize,
@@ -67,6 +72,22 @@
       return model && selection && !selection.isEmpty() ? model.getValueInRange(selection) : undefined
     })
     editor.onDidChangeCursorSelection(() => { editorSelection.text = getActiveSelection() ?? '' })
+    // Open Definition: in the context menu (and on F12) only while the
+    // selection is exactly the name of a known object. Monaco hides an action's
+    // menu item while its precondition is false, so the key is kept current.
+    const definitionKey = editor.createContextKey<boolean>('pgdevSelectionIsObject', false)
+    refreshDefinitionKey = () => definitionKey.set(selectedDefinitions().length > 0)
+    editor.onDidChangeCursorSelection(() => refreshDefinitionKey())
+    editor.onDidChangeModel(() => refreshDefinitionKey())
+    editor.addAction({
+      id: 'pgdev.openDefinition',
+      label: 'Open Definition',
+      precondition: 'pgdevSelectionIsObject',
+      keybindings: [monaco.KeyCode.F12],
+      contextMenuGroupId: 'navigation',
+      contextMenuOrder: 1,
+      run: openSelectedDefinition,
+    })
     mounted = true
     // Existing development-only automation surface; never expose in production.
     if (import.meta.env.DEV) {
@@ -113,6 +134,22 @@
     }
   })
 
+  /** Recomputes whether Open Definition applies; set once the editor exists. */
+  let refreshDefinitionKey = () => {}
+  /** The object(s) the selected text names: one line, exactly one name. */
+  function selectedDefinitions(): DefinitionTarget[] {
+    const model = editor?.getModel()
+    const selection = editor?.getSelection()
+    if (!model || !selection || selection.isEmpty() || selection.startLineNumber !== selection.endLineNumber) return []
+    return resolveDefinition(schema.state.data, model.getValueInRange(selection))
+  }
+  function openSelectedDefinition() {
+    const targets = selectedDefinitions()
+    for (const target of targets) {
+      void openObjectDdl(target.type, target.schema, target.name, target.oid, '', target.parent)
+    }
+    if (targets.length > 1) toast.show(`Opened ${targets.length} overloads of ${targets[0]!.name}`)
+  }
   function formatActive() {
     if (!editor || tab.readOnly) return
     const model = editor.getModel()
@@ -260,6 +297,8 @@
     untrack(() => { void content; syncExternalContent(tab) })
   })
   $effect(() => { const readOnly = tab.readOnly; if (mounted) editor?.updateOptions({ readOnly }) })
+  // A schema (re)load or a new connection changes which names are known.
+  $effect(() => { void schemaData.current; if (mounted) untrack(() => refreshDefinitionKey()) })
   $effect(() => { const fontSize = snapshot.current.fontSize; if (mounted) editor?.updateOptions({ fontSize }) })
   let markerKey = ''
   $effect(() => {

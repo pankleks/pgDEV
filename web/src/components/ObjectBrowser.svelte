@@ -13,7 +13,7 @@
   import { useSettings } from '../composables/settings'
   import { useTabs } from '../composables/tabs'
   import { useToast } from '../composables/toast'
-  import { api } from '../api'
+  import { openObjectDdl, type DdlObjectType } from '../composables/ddl'
   import type { TableInfo } from '../types'
   import { groupTables, type TableEntry } from '../lib/tablegroups'
   import { entriesWithin, groupNamedObjects } from '../lib/objectgroups'
@@ -282,7 +282,6 @@
     return cat === 'cols' ? t.columns.length : cat === 'idx' ? t.indexes.length : cat === 'con' ? t.constraints.length : t.triggers.length
   }
 
-  const ddlRequests = new Map<string, number>()
   let previousId: string | null = null
   let appliedLabel = ''
   // Do not track tree state here: only connection/schema changes may reset or
@@ -293,7 +292,6 @@
       if (id !== previousId) {
         expanded.clear()
         for (const groups of [expandedTableGroups, expandedViewGroups, expandedFunctionGroups, expandedTypeGroups, expandedSequenceGroups]) groups.clear()
-        ddlRequests.clear()
         window.clearTimeout(clickTimer)
         pendingToggle = null
         appliedLabel = ''
@@ -335,22 +333,9 @@
     })
   })
   onDestroy(() => { window.clearTimeout(uiSaveTimer); window.clearTimeout(clickTimer) })
-  async function openObject(type: 'table' | 'view' | 'function' | 'index' | 'constraint' | 'trigger' | 'type' | 'sequence',
-    schemaName: string, name: string, oid?: string, identitySuffix = '', parent?: string) {
+  function openObject(type: DdlObjectType, schemaName: string, name: string, oid?: string, identitySuffix = '', parent?: string) {
     cancelPendingToggle()
-    const connectionId = conn.state.id
-    if (!connectionId) return
-    const key = `${type}\u0000${schemaName}\u0000${name}\u0000${oid ?? ''}\u0000${parent ?? ''}`
-    const version = (ddlRequests.get(key) ?? 0) + 1
-    ddlRequests.set(key, version)
-    try {
-      const { ddl } = await api.ddl(connectionId, type, schemaName, name, oid, parent)
-      if (conn.state.id !== connectionId || ddlRequests.get(key) !== version) return
-      const materialized = type === 'view' && !!schema.state.data?.views.find((v) => v.schema === schemaName && v.name === name)?.materialized
-      tabs.openDdl(type, schemaName, name, ddl, oid ? `--${oid}` : identitySuffix, !materialized, parent ?? '', connectionId)
-    } catch (cause) {
-      if (conn.state.id === connectionId) toast.show((cause as Error).message)
-    }
+    void openObjectDdl(type, schemaName, name, oid, identitySuffix, parent)
   }
   async function refresh() { if (conn.state.id) await schema.load(conn.state.id) }
 </script>

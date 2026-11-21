@@ -64,6 +64,8 @@ Tables, plain views, sequences and functions open **editable**; materialized vie
 
 `F5` / `Ctrl+Enter` runs the selection if there is one, else the tab. Completions are schema-driven (user objects plus built-ins once typed, never `pg_`-internals), with hover docs and signature help.
 
+**Open Definition:** select an object's name in the editor (`orders`, `sales.orders`, `"Order Lines"`), then right-click → **Open Definition** or press `F12` to open its DDL tab, as a double-click in the object browser does. It works for tables, views, sequences, types, functions (every overload in the matched schema opens) and, by name, constraints, indexes and triggers. The item only appears when the selection is exactly one known name. An unqualified name prefers `public`, otherwise it must be unique; when it is ambiguous, select the schema-qualified name.
+
 ![Results](docs/images/manual/04-query-results.png)
 
 * Multi-statement batches run with per-statement result sets; typed column headers, `COPY`/`CSV` export, `N row(s)` footer. Failures land in **Messages**, never as a grid.
