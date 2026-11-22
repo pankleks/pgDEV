@@ -1,9 +1,10 @@
 <script lang="ts">
   import { dialogFocus } from '../lib/dialogfocus'
-  import { Copy, KeyRound, RotateCcw, X } from '@lucide/svelte'
+  import { Copy, KeyRound, RefreshCw, RotateCcw, X } from '@lucide/svelte'
   import { api } from '../api'
   import { useAi } from '../composables/ai'
   import { useSettings } from '../composables/settings'
+  import { useUpdates } from '../composables/updates'
   import { useToast } from '../composables/toast'
   import { confirmAction } from '../lib/desktop'
   import { copyText } from '../lib/gridio'
@@ -11,7 +12,8 @@
   import Stepper from './Stepper.svelte'
   import Toggle from './Toggle.svelte'
 
-  let { onclose }: { onclose: () => void } = $props()
+  let { onclose, onshowupdate }: { onclose: () => void; onshowupdate: () => void } = $props()
+  const updates = useUpdates()
   const settings = useSettings()
   const ai = useAi()
   const toast = useToast()
@@ -22,7 +24,23 @@
     aiLimitRows: settings.state.aiLimitRows,
     aiLimitKb: settings.state.aiLimitKb,
     groupObjects: settings.state.groupObjects,
+    checkUpdates: settings.state.checkUpdates,
+    skippedUpdate: settings.state.skippedUpdate,
+    current: updates.state.current,
+    enabled: updates.state.enabled,
+    update: updates.state.update,
+    checking: updates.state.checking,
+    error: updates.state.error,
+    manual: updates.state.manual,
   }))
+  const updateStatus = $derived.by(() => {
+    const s = snapshot.current
+    if (s.checking) return 'Checking…'
+    if (s.error) return `The check failed: ${s.error}`
+    if (!s.enabled) return 'Update checks are off in development builds.'
+    if (s.update) return `pgDEV ${s.update.version} is available${s.update.version === s.skippedUpdate ? ' (skipped)' : ''}.`
+    return s.manual ? 'You have the newest version.' : ''
+  })
 
   function reset() {
     settings.resetToDefaults()
@@ -103,6 +121,23 @@
         <div class="setting-actions">
           <button class="btn-sm" disabled={copyingConfig} title="Replace the MCP token; existing client configs stop working" onclick={rotateToken}><KeyRound size={13} /> Rotate</button>
           <button class="btn-sm primary" disabled={copyingConfig} onclick={copyMcpConfig}><Copy size={13} /> COPY</button>
+        </div>
+      </div>
+    </section>
+    <section class="settings-section">
+      <h3>Updates</h3>
+      <div class="setting-row">
+        <div class="setting-text"><strong>Check for updates</strong><small>Ask GitHub for a newer pgDEV release at startup and once a day. A newer version glows next to the version number at the top right; nothing is downloaded or installed automatically.</small></div>
+        <Toggle modelValue={snapshot.current.checkUpdates} label="Check for updates" onchange={(value) => settings.setCheckUpdates(value)} />
+      </div>
+      <div class="setting-row">
+        <div class="setting-text">
+          <strong>Version {snapshot.current.current || '…'}</strong>
+          {#if updateStatus}<small>{updateStatus}</small>{/if}
+        </div>
+        <div class="setting-actions">
+          {#if snapshot.current.update}<button class="btn-sm primary" onclick={onshowupdate}>View</button>{/if}
+          <button class="btn-sm" disabled={snapshot.current.checking} onclick={() => updates.checkNow()}><RefreshCw size={13} /> Check now</button>
         </div>
       </div>
     </section>

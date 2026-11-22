@@ -16,6 +16,8 @@
   import { useSchema } from './composables/schema'
   import { useToast } from './composables/toast'
   import { useAi } from './composables/ai'
+  import { useUpdates } from './composables/updates'
+  import UpdateDialog from './components/UpdateDialog.svelte'
   import { api } from './api'
   import { getActiveSelection, triggerFormat, triggerParamMap } from './lib/formatbridge'
   import { isPickerCancelled, openTextFiles, saveTextFile } from './lib/files'
@@ -28,6 +30,8 @@
   const settings = useSettings()
   const toast = useToast()
   const ai = useAi()
+  const updates = useUpdates()
+  const announcedUpdate = $derived(updates.announced())
   let settingsOpen = $state(false)
   let multiRun = $state<{ tabKey: string; sql: string } | null>(null)
   async function openMultiRun() {
@@ -135,7 +139,7 @@
   }
   const desktopSubscriptions: (() => void)[] = []
   onMount(() => {
-    void api.version().then((value) => { version = value }).catch(() => undefined)
+    void api.version().then((value) => { version = value; updates.state.current ||= value }).catch(() => undefined)
     void settings.ready.then(() => {
       sideW = settings.state.panelSizes.sideW
       resultsH = settings.state.panelSizes.resultsH
@@ -169,6 +173,7 @@
     window.addEventListener('pagehide', flushSizes)
     window.addEventListener('keydown', onKeyDown, true)
     void ai.start()
+    void settings.ready.then(() => updates.start())
     void tabs.sessionsReady.then(() => {
       if (!tabs.state.tabs.length) tabs.newQuery()
       return Promise.all([conn.ready, settings.ready, tabs.pinsReady])
@@ -177,6 +182,7 @@
   onDestroy(() => {
     desktopSubscriptions.forEach((unsubscribe) => unsubscribe())
     ai.stop()
+    updates.stop()
     window.clearTimeout(sizesTimer)
     onMouseUp()
     window.removeEventListener('pointermove', onMouseMove)
@@ -246,6 +252,7 @@
     <button class="icon" disabled={!activeTab || processesActive || saving} title="Save active tab as a new SQL file" aria-label="Save active tab as a new SQL file" onclick={() => saveActive(true)}><FileOutput size={15} /></button>
     <button class="icon" title="Settings" onclick={() => { settingsOpen = true }}><Settings size={15} /></button>
     {#if version}<a class="app-version" href="https://github.com/pankleks/pgdev" target="_blank" rel="noopener noreferrer" title="Open the pgDEV project page on GitHub">{version}</a>{/if}
+    {#if announcedUpdate}<button class="update-badge" title={`pgDEV ${announcedUpdate.version} is available (you have ${updates.state.current}). Click for release notes and how to update.`} onclick={() => { updates.state.dialog = true }}>v{announcedUpdate.version}</button>{/if}
   </header>
   {#if paramBar && !processesActive}
     <div class="param-bar">
@@ -267,7 +274,8 @@
   </div>
   {#if conn.state.dialog}<ConnectDialog />{/if}
   {#if multiRun}<MultiRunDialog sql={multiRun.sql} onrun={runMultiple} onclose={() => { multiRun = null }} />{/if}
-  {#if settingsOpen}<SettingsDialog onclose={() => { settingsOpen = false }} />{/if}
+  {#if settingsOpen}<SettingsDialog onclose={() => { settingsOpen = false }} onshowupdate={() => { settingsOpen = false; updates.state.dialog = true }} />{/if}
+  {#if updates.state.dialog && updates.state.update}<UpdateDialog update={updates.state.update} current={updates.state.current} onclose={() => { updates.state.dialog = false }} />{/if}
   <!-- Always present so screen readers announce each new message. -->
   <div class="toast-region" role="status" aria-live="polite">{#if toast.state.visible}<div class="toast">{toast.state.text}</div>{/if}</div>
 </div>

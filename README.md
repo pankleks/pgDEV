@@ -116,7 +116,21 @@ Rename, retype (length/precision/scale), nullability, defaults, add/drop columns
 
 ![Settings](docs/images/manual/05-settings.png)
 
-Settings are per-device: editor font size, statement timeout for new connections, object grouping by name prefix, and the AI row/size caps. **Reset to defaults** restores everything.
+Settings are per-device: editor font size, statement timeout for new connections, object grouping by name prefix, the AI row/size caps, and update checks. **Reset to defaults** restores everything.
+
+## Update notifications
+
+pgDEV checks GitHub for a newer published release (never drafts or prereleases) about 10 seconds after startup and once a day. When one exists, its version number glows at the top right, next to your version. Click it to see the release notes and the update command for your installation, with a **Copy** button:
+
+* **Debian/Ubuntu (.deb):** downloads the package with `curl` and installs it with `apt`.
+* **Fedora/RHEL (.rpm):** installs it with `dnf` (`zypper` on openSUSE).
+* **macOS:** quit pgDEV, then the command downloads the app with `curl` and replaces it in its Applications folder. Downloading with `curl` avoids the "app is damaged" warning for unsigned builds.
+* **Windows installer:** a PowerShell command downloads the new installer and starts it.
+* **Windows portable:** a **Download** button for the new portable app.
+
+The Linux package format is detected from the package manager that owns the running app; if that is unclear, both commands are shown. **Skip this version** hides the notice until a newer release appears.
+
+Nothing is downloaded or installed automatically. To turn the daily check off, use **Settings → Updates**, which also has **Check now**. Release information comes from GitHub's API, and the update commands only use download links that exactly match pgDEV's own release files.
 
 Settings, pinned file references and tab sessions use versioned JSON snapshots in Electron's application-data directory, with atomic replacement and backups. Database credentials use OS-backed encryption; on Linux without a secure keyring, passwords are not persisted. IndexedDB and browser-data migration are not used.
 

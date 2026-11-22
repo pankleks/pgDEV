@@ -9,6 +9,8 @@ import { createFiles } from './files.mjs'
 import { isAppUrl, validateRequest } from './security.mjs'
 import { stopBackend } from './shutdown.mjs'
 import { createAiSubscription } from './aisubscription.mjs'
+import { createUpdates } from './updates.mjs'
+import { spawnSync } from 'node:child_process'
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const DEV = !app.isPackaged && process.env.PGDEV_DESKTOP_DEV === '1'
@@ -19,6 +21,28 @@ if (process.env.PGDEV_DESKTOP_TEST_DATA) app.setPath('userData', resolve(process
 // ponytail: portable keeps state next to the exe; same-machine DPAPI still applies
 else if (app.isPackaged && process.env.PORTABLE_EXECUTABLE_DIR) app.setPath('userData', join(process.env.PORTABLE_EXECUTABLE_DIR, 'pgDEV-data'))
 protocol.registerSchemesAsPrivileged([{ scheme: 'pgdev', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }])
+
+/** How this installation is updated, for the update notice's command. */
+function updateEnvironment() {
+  const exe = app.getPath('exe')
+  if (process.platform === 'linux') {
+    // The package manager that owns the running executable decides; a
+    // portable/unpackaged run falls back to the distribution family.
+    const owns = (command, args) => {
+      try { return spawnSync(command, args, { timeout: 3000, stdio: 'ignore' }).status === 0 } catch { return false }
+    }
+    let release = ''
+    try { release = (readFileSync('/etc/os-release', 'utf8').match(/^ID(?:_LIKE)?=.*$/gm) ?? []).join(' ').toLowerCase() } catch { /* unknown distribution */ }
+    const guess = /debian|ubuntu/.test(release) ? 'deb' : /fedora|rhel|centos|suse/.test(release) ? 'rpm' : null
+    const format = owns('dpkg', ['-S', exe]) ? 'deb' : owns('rpm', ['-qf', exe]) ? 'rpm' : guess
+    return { platform: 'linux', linux: { format, suse: /suse/.test(release) } }
+  }
+  if (process.platform === 'darwin') {
+    const end = exe.indexOf('.app/')
+    return { platform: 'darwin', macBundle: end === -1 ? '' : exe.slice(0, end + 4) }
+  }
+  return { platform: process.platform, portable: !!process.env.PORTABLE_EXECUTABLE_DIR }
+}
 
 function utilityEnvironment(extra = {}) {
   const env = { ...process.env, PGDEV_APP_VERSION: version, ...extra }
@@ -204,6 +228,21 @@ async function runDesktop() {
     const result = await dialog.showMessageBox(window, { type: 'question', title: 'pgDEV', message, buttons: ['Cancel', 'Continue'], defaultId: 0, cancelId: 0, noLink: true })
     return result.response === 1
   })
+
+  // New-release notice. Off in development and tests (no network there);
+  // PGDEV_DESKTOP_UPDATES=1 turns it on in a dev build and
+  // PGDEV_DESKTOP_UPDATE_AS=x.y.z pretends to be an older version, so the
+  // notice can be tried against the real latest release.
+  let environment
+  const updates = createUpdates({
+    fetch: (url, init) => net.fetch(url, init),
+    currentVersion: (!app.isPackaged && process.env.PGDEV_DESKTOP_UPDATE_AS) || version,
+    environment: () => (environment ??= updateEnvironment()),
+    openExternal: (url) => shell.openExternal(url),
+    enabled: app.isPackaged ? !process.env.PGDEV_DESKTOP_TEST_DATA : process.env.PGDEV_DESKTOP_UPDATES === '1',
+  })
+  handle('updates-check', (force) => updates.check(force === true))
+  handle('updates-open', (kind) => updates.open(kind))
 
   const ai = createAiSubscription({
     fetchBridge: (signal) => backendFetch('/api/ai/bridge', { signal }),

@@ -26,6 +26,10 @@ interface SettingsState {
   aiLimitRows: number
   /** The same limit as a JSON byte budget, in KB. */
   aiLimitKb: number
+  /** Ask GitHub for a newer release at startup and once a day. */
+  checkUpdates: boolean
+  /** A release the user chose to skip: its notice stays hidden. */
+  skippedUpdate: string
 }
 
 const STATEMENT_TIMEOUT = { min: 1, max: 600, fallback: 30 } as const
@@ -108,6 +112,8 @@ const state = createState<SettingsState>({
   sideCollapsed: false,
   aiLimitRows: AI_LIMIT_ROWS.fallback,
   aiLimitKb: AI_LIMIT_KB.fallback,
+  checkUpdates: true,
+  skippedUpdate: '',
 })
 
 let readyPromise: Promise<void> | null = null
@@ -141,6 +147,8 @@ function ensureReady(): Promise<void> {
         if (keep('aiLimitKb') && typeof saved.aiLimitKb !== 'undefined') {
           state.aiLimitKb = clampAiLimit(saved.aiLimitKb, AI_LIMIT_KB)
         }
+        if (keep('checkUpdates') && typeof saved.checkUpdates === 'boolean') state.checkUpdates = saved.checkUpdates
+        if (keep('skippedUpdate') && typeof saved.skippedUpdate === 'string') state.skippedUpdate = saved.skippedUpdate.slice(0, 32)
         if (keep('panelSizes') && saved.panelSizes && typeof saved.panelSizes === 'object') {
           state.panelSizes.sideW = clampSize(saved.panelSizes.sideW, SIZE_LIMITS.sideW)
           state.panelSizes.resultsH = clampSize(saved.panelSizes.resultsH, SIZE_LIMITS.resultsH)
@@ -169,6 +177,8 @@ function persist() {
     sideCollapsed: state.sideCollapsed,
     aiLimitRows: state.aiLimitRows,
     aiLimitKb: state.aiLimitKb,
+    checkUpdates: state.checkUpdates,
+    skippedUpdate: state.skippedUpdate,
   })) as SettingsState
   void ensureReady().then(() => saveSettings(value)).catch(() => useToast().show('Settings could not be saved. Check the application data directory.'))
 }
@@ -212,16 +222,29 @@ export function useSettings() {
     persist()
   }
 
+  function setCheckUpdates(enabled: boolean) {
+    mark('checkUpdates')
+    state.checkUpdates = enabled
+    persist()
+  }
+
+  function setSkippedUpdate(version: string) {
+    mark('skippedUpdate')
+    state.skippedUpdate = version.slice(0, 32)
+    persist()
+  }
+
   /** Restore every preference to its default (per-connection expansion is
    * recorded state, not a preference, so it is left alone). */
   function resetToDefaults() {
-    mark('groupObjects', 'statementTimeout', 'editorFontSize', 'sideCollapsed', 'aiLimitRows', 'aiLimitKb', 'panelSizes')
+    mark('groupObjects', 'statementTimeout', 'editorFontSize', 'sideCollapsed', 'aiLimitRows', 'aiLimitKb', 'panelSizes', 'checkUpdates')
     state.groupObjects = true
     state.statementTimeout = STATEMENT_TIMEOUT.fallback
     state.editorFontSize = EDITOR_FONT.fallback
     state.sideCollapsed = false
     state.aiLimitRows = AI_LIMIT_ROWS.fallback
     state.aiLimitKb = AI_LIMIT_KB.fallback
+    state.checkUpdates = true
     state.panelSizes.sideW = SIZE_LIMITS.sideW.fallback
     state.panelSizes.resultsH = SIZE_LIMITS.resultsH.fallback
     persist()
@@ -251,5 +274,5 @@ export function useSettings() {
     return (label && state.browserExpanded[label]) || null
   }
 
-  return { state, setGroupObjects, setStatementTimeout, setEditorFontSize, setSideCollapsed, setAiLimitRows, setAiLimitKb, setPanelSizes, setBrowserState, browserStateFor, resetToDefaults, ready }
+  return { state, setGroupObjects, setStatementTimeout, setEditorFontSize, setSideCollapsed, setAiLimitRows, setAiLimitKb, setCheckUpdates, setSkippedUpdate, setPanelSizes, setBrowserState, browserStateFor, resetToDefaults, ready }
 }

@@ -876,6 +876,135 @@ body.dragging-results {
   }
 }
 
+/* A newer release: its version glows next to the current one until the user
+ * updates or skips it. */
+.update-badge {
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 4px 8px;
+  border: 1px solid var(--accent);
+  border-radius: 9px;
+  color: var(--accent);
+  background: rgba(79, 156, 249, 0.12);
+  white-space: nowrap;
+  animation: update-glow 2.4s ease-in-out infinite;
+
+  &:hover {
+    color: #fff;
+    background: rgba(79, 156, 249, 0.3);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+    box-shadow: 0 0 6px rgba(79, 156, 249, 0.6);
+  }
+}
+
+@keyframes update-glow {
+  0%, 100% {
+    box-shadow: 0 0 2px rgba(79, 156, 249, 0.35);
+    text-shadow: none;
+  }
+  50% {
+    box-shadow: 0 0 10px 2px rgba(79, 156, 249, 0.75);
+    text-shadow: 0 0 6px rgba(79, 156, 249, 0.9);
+  }
+}
+
+.modal-backdrop .modal.update-modal {
+  width: min(760px, calc(100vw - 48px));
+
+  .update-step {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 0;
+
+    small {
+      color: var(--text-dim);
+      line-height: 1.45;
+    }
+  }
+
+  .update-command {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+
+    code {
+      flex: 1;
+      min-width: 0;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg);
+      font-family: Consolas, 'Courier New', monospace;
+      font-size: 12px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      user-select: all;
+    }
+  }
+
+  .release-notes {
+    max-height: 320px;
+    overflow-y: auto;
+    padding: 4px 2px;
+    font-size: 13px;
+    line-height: 1.5;
+
+    p {
+      margin: 0 0 6px;
+    }
+
+    code {
+      font-family: Consolas, 'Courier New', monospace;
+      font-size: 12px;
+      padding: 0 4px;
+      border-radius: 3px;
+      background: var(--panel-2);
+    }
+
+    .note-heading {
+      font-weight: 600;
+      margin-top: 10px;
+
+      &.level-1, &.level-2 {
+        font-size: 14px;
+      }
+    }
+
+    .note-item {
+      position: relative;
+
+      &::before {
+        content: '•';
+        position: absolute;
+        margin-left: -12px;
+        color: var(--text-dim);
+      }
+    }
+
+    .note-quote {
+      border-left: 3px solid var(--accent);
+      padding-left: 10px;
+      color: var(--text-dim);
+    }
+  }
+
+  .update-empty {
+    color: var(--text-dim);
+    font-size: 13px;
+  }
+
+  .update-foot {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+}
+
 .editor-tabs {
   display: flex;
   flex-direction: column;

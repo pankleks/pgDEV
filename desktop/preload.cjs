@@ -22,6 +22,10 @@ contextBridge.exposeInMainWorld('pgdevDesktop', {
   },
   copyText: (text) => invoke('clipboard', text),
   confirm: (message) => invoke('confirm', message),
+  updates: {
+    check: (force) => invoke('updates-check', force === true),
+    open: (kind) => invoke('updates-open', kind),
+  },
   subscribeAi: (callback, status) => {
     const offMessage = on('ai-message', callback)
     const offStatus = on('ai-status', status)
