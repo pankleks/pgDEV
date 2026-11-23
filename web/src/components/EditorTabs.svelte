@@ -144,7 +144,8 @@
         class:dragging={dragKey === tab.key} class:drop-before={dropIndex === index} class:drop-after={dropIndex === index + 1}
         role="tab" aria-selected={tab.key === snapshot.current.activeKey} tabindex={tab.key === snapshot.current.activeKey ? 0 : -1}
         data-tab-key={tab.key} onkeydown={(event) => onTabKeydown(event, index)}
-        draggable="true" onmousedown={() => { suppressClick = false }} onclick={() => onTabClick(tab.key)}
+        draggable="true" onmousedown={(event) => { if (event.button === 1) event.preventDefault(); else suppressClick = false }} onclick={() => onTabClick(tab.key)}
+        onauxclick={(event) => { if (event.button !== 1) return; event.preventDefault(); void closeTab(tab.key) }}
         oncontextmenu={(event) => openMenu(event, tab.key)} ondragstart={(event) => onDragStart(event, tab.key)}
         ondragover={(event) => onDragOverTab(event, index)} ondragend={onDragEnd}>
         <span class="tab-title" title={tab.displayTitle}>{tab.displayTitle}</span>
