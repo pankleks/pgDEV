@@ -100,7 +100,7 @@ button {
     border-color: #a1260d;
     color: #fff;
 
-    &:hover {
+    &:hover:not(:disabled) {
       background: #c53a1a;
       border-color: #c53a1a;
     }
@@ -112,7 +112,7 @@ button {
     border-color: #1e7a3c;
     color: #fff;
 
-    &:hover {
+    &:hover:not(:disabled) {
       background: #2b9a4e;
       border-color: #2b9a4e;
     }
@@ -127,7 +127,7 @@ button {
       display: block;
     }
 
-    &:hover {
+    &:hover:not(:disabled) {
       background: var(--panel-2);
     }
   }
@@ -838,6 +838,37 @@ body.dragging-results {
   }
 }
 
+/* A manual transaction left open by the user (BEGIN without COMMIT yet):
+ * results header and row editor title. */
+.txn-badge {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 12px;
+  color: #e5c07b;
+  background: rgba(229, 192, 123, 0.12);
+  border: 1px solid rgba(229, 192, 123, 0.5);
+  border-radius: 8px;
+  padding: 1px 6px;
+}
+
+/* null renders as a dark steel-blue badge (same family as the table editor's
+ * underscore-prefixed columns), so it cannot be mistaken for a stored string
+ * at a glance: results grid and row editor. */
+.null-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 600;
+  line-height: 12px;
+  color: #6d95b8;
+  background: #1e252e;
+  border: 1px solid #2e4256;
+  border-radius: 8px;
+  padding: 0 6px;
+  vertical-align: middle;
+}
+
 .empty {
   padding: 4px 10px 8px 24px;
   color: var(--text-dim);
@@ -1226,19 +1257,6 @@ body.dragging-results {
     .run-btn {
       flex-shrink: 0;
     }
-
-    /* A manual transaction left open by the user (BEGIN without COMMIT yet). */
-    .txn-badge {
-      flex-shrink: 0;
-      font-size: 10px;
-      font-weight: 600;
-      line-height: 12px;
-      color: #e5c07b;
-      background: rgba(229, 192, 123, 0.12);
-      border: 1px solid rgba(229, 192, 123, 0.5);
-      border-radius: 8px;
-      padding: 1px 6px;
-    }
   }
 
   .messages {
@@ -1306,23 +1324,6 @@ body.dragging-results {
 
     &.nul {
       color: var(--text-dim);
-
-      /* null renders as a dark steel-blue badge (same family as the table
-       * editor's underscore-prefixed columns), so it cannot be mistaken for a
-       * stored string at a glance. */
-      .null-badge {
-        display: inline-block;
-        font-size: 10px;
-        font-style: normal;
-        font-weight: 600;
-        line-height: 12px;
-        color: #6d95b8;
-        background: #1e252e;
-        border: 1px solid #2e4256;
-        border-radius: 8px;
-        padding: 0 6px;
-        vertical-align: middle;
-      }
     }
 
     /* Booleans get the same badge treatment: green for true, gray for false,
@@ -1899,7 +1900,7 @@ body.dragging-results {
             display: block;
           }
 
-          &:hover {
+          &:hover:not(:disabled) {
             color: var(--text);
             background: var(--panel);
           }
@@ -2048,11 +2049,6 @@ body.dragging-results {
           }
         }
       }
-
-      button[type='submit'] {
-        margin-top: 6px;
-        padding: 9px;
-      }
     }
 
     .connect-btn {
@@ -2061,6 +2057,7 @@ body.dragging-results {
       justify-content: center;
       gap: 8px;
       width: 100%;
+      margin-top: 6px;
       padding: 10px;
       font-size: 13px;
     }

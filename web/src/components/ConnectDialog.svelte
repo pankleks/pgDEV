@@ -180,8 +180,9 @@
   <button class="primary connect-btn" type="submit" disabled={snapshot.current.connecting || snapshot.current.saving || discovering}><Plug size={15} />{snapshot.current.connecting ? 'Connecting…' : 'Connect'}</button>
 {/snippet}
 
-<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-<div class="modal-backdrop" onclick={(event) => { if (event.target === event.currentTarget) close() }}>
+<!-- Pointer dismissal only (mousedown: a text selection dragged out of a field must not close it). -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="modal-backdrop" onmousedown={(event) => { if (event.target === event.currentTarget) close() }}>
   <div class="modal connect-modal" role="dialog" aria-modal="true" aria-label="Connect to PostgreSQL" tabindex="-1" use:dialogFocus={close}>
     <button class="icon connect-close" title="Close" disabled={snapshot.current.saving} onclick={close}><X size={16} /></button>
     <div class="connect-head">

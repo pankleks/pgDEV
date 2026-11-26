@@ -20,7 +20,7 @@
   }
 </script>
 
-<dialog bind:this={dialog} class="modal-backdrop" aria-labelledby="multi-title" oncancel={(event) => { event.preventDefault(); onclose() }} onclick={(event) => { if (event.target === event.currentTarget) onclose() }}>
+<dialog bind:this={dialog} class="modal-backdrop" aria-labelledby="multi-title" oncancel={(event) => { event.preventDefault(); onclose() }} onmousedown={(event) => { if (event.target === event.currentTarget) onclose() }}>
   <div class="modal multirun-modal">
   <form onsubmit={submit}>
     <div class="modal-title">
