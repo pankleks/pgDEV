@@ -37,17 +37,19 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="modal-backdrop" onmousedown={(event) => { if (event.target === event.currentTarget) onclose() }}>
   <div class="modal valuedialog-modal" role="dialog" aria-modal="true" aria-label={target.column} tabindex="-1" use:dialogFocus>
-    <button class="icon valuedialog-close" title="Close" onclick={onclose}><X size={16} /></button>
-    <h2>
-      <span class="valuedialog-column">{target.column}</span>
-      {#if target.type}<span class="valuedialog-type">({target.type})</span>{/if}
-    </h2>
-    <pre class="valuedialog-text">{text}</pre>
-    <div class="valuedialog-foot">
-      <span class="valuedialog-length">{text.length.toLocaleString()} character(s)</span>
-      <span class="valuedialog-actions">
-        <button class="primary" disabled={copying} onclick={copy}><Copy size={14} /> COPY</button>
-      </span>
+    <div class="modal-head">
+      <h2>
+        <span class="valuedialog-column">{target.column}</span>
+        {#if target.type}<span class="valuedialog-type">({target.type})</span>{/if}
+      </h2>
+      <button class="icon modal-close" title="Close" aria-label="Close" onclick={onclose}><X size={16} /></button>
+    </div>
+    <div class="modal-body valuedialog-body">
+      <pre class="valuedialog-text">{text}</pre>
+    </div>
+    <div class="modal-foot">
+      <span class="modal-foot-info">{text.length.toLocaleString()} character(s)</span>
+      <button class="primary" disabled={copying} onclick={copy}><Copy size={14} /> COPY</button>
     </div>
   </div>
 </div>

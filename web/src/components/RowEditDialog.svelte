@@ -100,6 +100,12 @@
   const fields = $state(orderFields(buildFields(target)))
   let saving = $state(false)
   let error = $state<string | null>(null)
+  /** Wide tables get a name filter; hidden fields keep their edits and still save. */
+  const FILTER_FROM = 12
+  let filter = $state('')
+  const shown = $derived(filter.trim()
+    ? fields.filter((field) => field.name.toLowerCase().includes(filter.trim().toLowerCase()))
+    : fields)
 
   function isDirty(field: Field): boolean {
     if (!field.editable) return false
@@ -188,17 +194,23 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="modal-backdrop" onmousedown={(event) => { if (event.target === event.currentTarget) void close() }}>
   <div class="modal rowedit-modal" role="dialog" aria-modal="true" aria-label={title} tabindex="-1" use:dialogFocus>
-    <button class="icon rowedit-close" title="Close" onclick={close}><X size={16} /></button>
-    <h2>
-      <span class="rowedit-title">{title}</span>
-      {#if tableLabel}<span class="rowedit-table">{tableLabel}</span>{/if}
-      {#if target.transactionId}<span class="txn-badge" title="SAVE joins the open transaction">TXN</span>{/if}
-    </h2>
-    <div class="rowedit-fields">
+    <div class="modal-head">
+      <h2>
+        <span class="rowedit-title">{title}</span>
+        {#if tableLabel}<span class="rowedit-table">{tableLabel}</span>{/if}
+        {#if target.transactionId}<span class="txn-badge" title="SAVE joins the open transaction">TXN</span>{/if}
+      </h2>
+      {#if fields.length > FILTER_FROM}
+        <input class="rowedit-filter no-autofocus" type="text" bind:value={filter} placeholder="Filter columns" aria-label="Filter columns" spellcheck="false" />
+      {/if}
+      <button class="icon modal-close" title="Close" aria-label="Close" onclick={close}><X size={16} /></button>
+    </div>
+    <div class="modal-body rowedit-fields">
       <table class="rowedit-grid">
         <thead><tr><th>Column</th><th>Value</th>{#if inserting}<th class="rowedit-col-null">DEFAULT</th>{/if}<th class="rowedit-col-null">NULL</th></tr></thead>
         <tbody>
-          {#each fields as field (field.index)}
+          {#if !shown.length}<tr><td class="rowedit-none" colspan={inserting ? 4 : 3}>No column matches “{filter}”</td></tr>{/if}
+          {#each shown as field (field.index)}
             <tr class="rowedit-field">
               <td class="rowedit-label">
                 <div class="rowedit-name">{field.name}</div>
@@ -243,12 +255,10 @@
       </table>
     </div>
     {#if error}<div class="rowedit-error">{error}</div>{/if}
-    <div class="rowedit-foot">
-      <span class="rowedit-count">{inserting ? `${changeCount} value(s) set, the rest default` : changeCount ? `${changeCount} change(s)` : 'No changes'}</span>
-      <span class="rowedit-actions">
-        <button disabled={saving} onclick={close}>CANCEL</button>
-        <button class="primary" disabled={saving || (!inserting && !changeCount)} onclick={save}><Save size={14} /> {saving ? 'SAVING…' : inserting ? 'INSERT' : 'SAVE'}</button>
-      </span>
+    <div class="modal-foot">
+      <span class="modal-foot-info">{inserting ? `${changeCount} value(s) set, the rest default` : changeCount ? `${changeCount} change(s)` : 'No changes'}</span>
+      <button disabled={saving} onclick={close}>CANCEL</button>
+      <button class="primary" disabled={saving || (!inserting && !changeCount)} onclick={save}><Save size={14} /> {saving ? 'SAVING…' : inserting ? 'INSERT' : 'SAVE'}</button>
     </div>
   </div>
 </div>

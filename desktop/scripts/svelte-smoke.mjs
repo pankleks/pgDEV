@@ -808,7 +808,7 @@ try {
     return { padding: style.padding, radius: style.borderRadius, titleSize: getComputedStyle(element.querySelector('h2')).fontSize,
       centered: Math.abs(bounds.x + bounds.width / 2 - innerWidth / 2) < 1 && Math.abs(bounds.y + bounds.height / 2 - innerHeight / 2) < 1 }
   })
-  assert.deepEqual(multiStyle, { padding: '20px', radius: '6px', titleSize: '16px', centered: true }, 'multi-run uses the shared modal styling and centering')
+  assert.deepEqual(multiStyle, { padding: '0px', radius: '8px', titleSize: '16px', centered: true }, 'multi-run uses the shared modal styling and centering')
   assert.equal(await multiDialog.getByRole('checkbox', { checked: true }).count(), 0)
   await multiDialog.getByRole('checkbox', { name: 'First target', exact: true }).check()
   await multiDialog.getByRole('checkbox', { name: 'Second target', exact: true }).check()

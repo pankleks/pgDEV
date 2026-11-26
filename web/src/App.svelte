@@ -12,7 +12,7 @@
   import { useTabs, type EditorTab } from './composables/tabs'
   import { useResults, multiResults, confirmResultRelease } from './composables/results'
   import type { SavedConnection } from './lib/connectionprofile'
-  import { useSettings } from './composables/settings'
+  import { DEFAULT_RESULTS_HEIGHT, useSettings } from './composables/settings'
   import { useSchema } from './composables/schema'
   import { useToast } from './composables/toast'
   import { useAi } from './composables/ai'
@@ -127,9 +127,19 @@
     document.body.classList.add(kind === 'side' ? 'dragging-side' : 'dragging-results')
   }
   function onMouseUp() { dragKind = null; document.body.classList.remove('dragging-side', 'dragging-results') }
+  const maxResultsH = () => window.innerHeight - 220
   function onMouseMove(event: PointerEvent) {
     if (dragKind === 'side') sideW = Math.min(640, Math.max(180, event.clientX))
-    else if (dragKind === 'results') resultsH = Math.min(window.innerHeight - 220, Math.max(80, window.innerHeight - event.clientY))
+    else if (dragKind === 'results') { resultsH = Math.min(maxResultsH(), Math.max(80, window.innerHeight - event.clientY)); restoreResultsH = null }
+  }
+  /** Until the user drags it, the results panel takes a share of the window
+   * instead of a fixed height, so a large screen shows more rows. */
+  function defaultResultsH() { return Math.max(160, Math.min(maxResultsH(), Math.round((window.innerHeight - 38) * 0.45))) }
+  // Double-clicking the splitter enlarges the results and restores them.
+  let restoreResultsH: number | null = null
+  function toggleResultsSize() {
+    if (restoreResultsH !== null) { resultsH = restoreResultsH; restoreResultsH = null }
+    else { restoreResultsH = resultsH; resultsH = Math.max(80, maxResultsH()) }
   }
   function onKeyDown(event: KeyboardEvent) {
     if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.altKey) return
@@ -142,7 +152,8 @@
     void api.version().then((value) => { version = value; updates.state.current ||= value }).catch(() => undefined)
     void settings.ready.then(() => {
       sideW = settings.state.panelSizes.sideW
-      resultsH = settings.state.panelSizes.resultsH
+      const storedResultsH = settings.state.panelSizes.resultsH
+      resultsH = storedResultsH === DEFAULT_RESULTS_HEIGHT ? defaultResultsH() : storedResultsH
       sideCollapsed = settings.state.sideCollapsed
       sizesReady = true
     })
@@ -268,7 +279,7 @@
     {#if !sideCollapsed}<div class="drag-v" onpointerdown={(event) => startDrag(event, 'side')}></div>{/if}
     <main class="pgdev-main">
       <section class="editor-area"><EditorTabs onrun={() => runActive()} /></section>
-      <div class="drag-h" style:display={processesActive ? 'none' : undefined} onpointerdown={(event) => startDrag(event, 'results')}></div>
+      <div class="drag-h" title="Drag to resize the results · double-click to enlarge or restore" style:display={processesActive ? 'none' : undefined} onpointerdown={(event) => startDrag(event, 'results')} ondblclick={toggleResultsSize}></div>
       <section class="results-area" style:display={processesActive ? 'none' : undefined} style:height={`${resultsH}px`}><ResultsPanel onrun={() => runActive()} onexplain={(mode) => runActive(mode)} onmulti={openMultiRun} /></section>
     </main>
   </div>

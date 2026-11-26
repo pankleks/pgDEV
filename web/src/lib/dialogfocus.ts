@@ -12,10 +12,11 @@ export function dialogFocus(node: HTMLElement, onEscape?: () => void) {
   const focusable = () => [...node.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => el.getClientRects().length > 0)
 
   // After the dialog's content has rendered: the first field, else the first
-  // control, else the dialog itself (which carries tabindex="-1").
+  // control, else the dialog itself (which carries tabindex="-1"). Helper
+  // inputs such as a list filter opt out with the no-autofocus class.
   queueMicrotask(() => {
     if (node.contains(document.activeElement)) return
-    const field = node.querySelector<HTMLElement>('input:not([disabled]):not([type="checkbox"]), textarea:not([disabled]), select:not([disabled])')
+    const field = node.querySelector<HTMLElement>(':is(input:not([type="checkbox"]), textarea, select):not([disabled]):not(.no-autofocus)')
     ;(field ?? focusable()[0] ?? node).focus()
   })
 

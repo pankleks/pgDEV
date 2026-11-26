@@ -51,6 +51,10 @@ const SIZE_LIMITS = {
   resultsH: { min: 80, max: 4000, fallback: 240 },
 } as const
 
+/** The results height before it followed the window; a stored value equal to
+ * it was never dragged (sizes are saved on first start), so it means "default". */
+export const DEFAULT_RESULTS_HEIGHT = SIZE_LIMITS.resultsH.fallback
+
 const MAX_TRACKED_CONNECTIONS = 24
 const MAX_KEYS_PER_LIST = 2000
 

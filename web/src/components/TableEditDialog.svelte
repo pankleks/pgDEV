@@ -177,12 +177,14 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="modal-backdrop" onmousedown={(event) => { if (event.target === event.currentTarget && !submitting) onclose() }}>
   <div class="modal tableedit-modal" role="dialog" aria-modal="true" aria-label="Edit table" tabindex="-1" use:dialogFocus>
-    <button class="icon tableedit-close" title="Close" onclick={onclose}><X size={16} /></button>
-    <h2><Table2 size={16} /> Edit table</h2>
-    {#if loading}<div class="tableedit-status">Loading…</div>
-    {:else if loadError}<div class="tableedit-status error-text">{loadError}</div>
+    <div class="modal-head">
+      <h2><Table2 size={16} /> Edit table</h2>
+      <button class="icon modal-close" title="Close" aria-label="Close" onclick={onclose}><X size={16} /></button>
+    </div>
+    {#if loading}<div class="modal-body tableedit-status">Loading…</div>
+    {:else if loadError}<div class="modal-body tableedit-status error-text">{loadError}</div>
     {:else if table}
-      <div class="tableedit-body">
+      <div class="modal-body tableedit-body">
         <div class="tableedit-name"><label class="tableedit-label" for="tableedit-name">Table</label><input id="tableedit-name" value={`${table.schema}.${table.name}`} readonly /></div>
         <label class="tableedit-label" for="tableedit-desc">Description</label>
         <input id="tableedit-desc" bind:value={tableDescription} class="tableedit-desc" placeholder="Table comment (empty removes it)" />
@@ -228,10 +230,10 @@
         </div>
         <button class="link tableedit-add" onclick={addRow}><Plus size={14} /> Add column</button>
         {#if submitError}<div class="error-text">{submitError}</div>{/if}
-        <div class="tableedit-foot">
-          <button class="primary" disabled={submitting} onclick={submit}>{submitting ? 'Generating…' : 'Generate DDL'}</button>
-          <button class="ghost" disabled={submitting} onclick={onclose}>Cancel</button>
-        </div>
+      </div>
+      <div class="modal-foot">
+        <button disabled={submitting} onclick={onclose}>Cancel</button>
+        <button class="primary" disabled={submitting} onclick={submit}>{submitting ? 'Generating…' : 'Generate DDL'}</button>
       </div>
     {/if}
   </div>

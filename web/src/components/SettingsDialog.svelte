@@ -84,72 +84,74 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="modal-backdrop" onmousedown={(event) => { if (event.target === event.currentTarget) onclose() }}>
   <div class="modal settings-modal" role="dialog" aria-modal="true" aria-label="Settings" tabindex="-1" use:dialogFocus={onclose}>
-    <div class="settings-head">
-      <div><h2>Settings</h2></div>
-      <button class="icon" title="Close" onclick={onclose}><X size={17} /></button>
+    <div class="modal-head">
+      <h2>Settings</h2>
+      <button class="icon modal-close" title="Close" aria-label="Close" onclick={onclose}><X size={16} /></button>
     </div>
-    <section class="settings-section">
-      <h3>Editor</h3>
-      <div class="setting-row">
-        <div class="setting-text"><strong>Font size</strong><small>Size of text in the query editor.</small></div>
-        <Stepper modelValue={snapshot.current.editorFontSize} min={8} max={32} unit="px" onchange={(value) => settings.setEditorFontSize(value)} />
-      </div>
-    </section>
-    <section class="settings-section">
-      <h3>Query execution</h3>
-      <div class="setting-row">
-        <div class="setting-text"><strong>Statement timeout</strong><small>Cancel queries exceeding this duration. Changes apply to new connections.</small></div>
-        <Stepper modelValue={snapshot.current.statementTimeout} min={1} max={600} unit="s" onchange={(value) => settings.setStatementTimeout(value)} />
-      </div>
-    </section>
-    <section class="settings-section">
-      <h3>AI agent</h3>
-      <div class="setting-row">
-        <div class="setting-text"><strong>Row limit</strong><small>How many rows of each result set an MCP agent may read.</small></div>
-        <Stepper modelValue={snapshot.current.aiLimitRows} min={1} max={10000} unit="rows"
-          onchange={(value) => { settings.setAiLimitRows(value); void ai.pushLimits() }} />
-      </div>
-      <div class="setting-row">
-        <div class="setting-text"><strong>Size limit</strong><small>Byte budget of the rows an MCP agent may read per result set.</small></div>
-        <Stepper modelValue={snapshot.current.aiLimitKb} min={1} max={4096} unit="KB"
-          onchange={(value) => { settings.setAiLimitKb(value); void ai.pushLimits() }} />
-      </div>
-      <div class="setting-row">
-        <div class="setting-text">
-          <strong>MCP config</strong>
-          <small>Copy the JSON config for an MCP client (opencode, Claude Desktop, …). The agent can read the schema, run read-only queries, and stage writes in a tab for you to run. On connections with “Allow AI writes” it can also commit writes itself. Rotate the token if it may have leaked; every client then needs the new config.</small>
+    <div class="modal-body">
+      <section class="settings-section">
+        <h3>Editor</h3>
+        <div class="setting-row">
+          <div class="setting-text"><strong>Font size</strong><small>Size of text in the query editor.</small></div>
+          <Stepper modelValue={snapshot.current.editorFontSize} min={8} max={32} unit="px" onchange={(value) => settings.setEditorFontSize(value)} />
         </div>
-        <div class="setting-actions">
-          <button class="btn-sm" disabled={copyingConfig} title="Replace the MCP token; existing client configs stop working" onclick={rotateToken}><KeyRound size={13} /> Rotate</button>
-          <button class="btn-sm primary" disabled={copyingConfig} onclick={copyMcpConfig}><Copy size={13} /> COPY</button>
+      </section>
+      <section class="settings-section">
+        <h3>Query execution</h3>
+        <div class="setting-row">
+          <div class="setting-text"><strong>Statement timeout</strong><small>Cancel queries exceeding this duration. Changes apply to new connections.</small></div>
+          <Stepper modelValue={snapshot.current.statementTimeout} min={1} max={600} unit="s" onchange={(value) => settings.setStatementTimeout(value)} />
         </div>
-      </div>
-    </section>
-    <section class="settings-section">
-      <h3>Updates</h3>
-      <div class="setting-row">
-        <div class="setting-text"><strong>Check for updates</strong><small>Ask GitHub for a newer pgDEV release at startup and once a day. A newer version glows next to the version number at the top right; nothing is downloaded or installed automatically.</small></div>
-        <Toggle modelValue={snapshot.current.checkUpdates} label="Check for updates" onchange={(value) => settings.setCheckUpdates(value)} />
-      </div>
-      <div class="setting-row">
-        <div class="setting-text">
-          <strong>Version {snapshot.current.current || '…'}</strong>
-          {#if updateStatus}<small>{updateStatus}</small>{/if}
+      </section>
+      <section class="settings-section">
+        <h3>AI agent</h3>
+        <div class="setting-row">
+          <div class="setting-text"><strong>Row limit</strong><small>How many rows of each result set an MCP agent may read.</small></div>
+          <Stepper modelValue={snapshot.current.aiLimitRows} min={1} max={10000} unit="rows"
+            onchange={(value) => { settings.setAiLimitRows(value); void ai.pushLimits() }} />
         </div>
-        <div class="setting-actions">
-          {#if snapshot.current.update}<button class="btn-sm primary" onclick={onshowupdate}>View</button>{/if}
-          <button class="btn-sm" disabled={snapshot.current.checking} onclick={() => updates.checkNow()}><RefreshCw size={13} /> Check now</button>
+        <div class="setting-row">
+          <div class="setting-text"><strong>Size limit</strong><small>Byte budget of the rows an MCP agent may read per result set.</small></div>
+          <Stepper modelValue={snapshot.current.aiLimitKb} min={1} max={4096} unit="KB"
+            onchange={(value) => { settings.setAiLimitKb(value); void ai.pushLimits() }} />
         </div>
-      </div>
-    </section>
-    <section class="settings-section">
-      <h3>Object browser</h3>
-      <div class="setting-row">
-        <div class="setting-text"><strong>Group objects</strong><small>Group related tables, views, functions, and types by common name prefixes.</small></div>
-        <Toggle modelValue={snapshot.current.groupObjects} label="Group objects" onchange={(value) => settings.setGroupObjects(value)} />
-      </div>
-    </section>
-    <div class="settings-foot">
+        <div class="setting-row">
+          <div class="setting-text">
+            <strong>MCP config</strong>
+            <small>Copy the JSON config for an MCP client (opencode, Claude Desktop, …). The agent can read the schema, run read-only queries, and stage writes in a tab for you to run. On connections with “Allow AI writes” it can also commit writes itself. Rotate the token if it may have leaked; every client then needs the new config.</small>
+          </div>
+          <div class="setting-actions">
+            <button class="btn-sm" disabled={copyingConfig} title="Replace the MCP token; existing client configs stop working" onclick={rotateToken}><KeyRound size={13} /> Rotate</button>
+            <button class="btn-sm primary" disabled={copyingConfig} onclick={copyMcpConfig}><Copy size={13} /> COPY</button>
+          </div>
+        </div>
+      </section>
+      <section class="settings-section">
+        <h3>Updates</h3>
+        <div class="setting-row">
+          <div class="setting-text"><strong>Check for updates</strong><small>Ask GitHub for a newer pgDEV release at startup and once a day. A newer version glows next to the version number at the top right; nothing is downloaded or installed automatically.</small></div>
+          <Toggle modelValue={snapshot.current.checkUpdates} label="Check for updates" onchange={(value) => settings.setCheckUpdates(value)} />
+        </div>
+        <div class="setting-row">
+          <div class="setting-text">
+            <strong>Version {snapshot.current.current || '…'}</strong>
+            {#if updateStatus}<small>{updateStatus}</small>{/if}
+          </div>
+          <div class="setting-actions">
+            {#if snapshot.current.update}<button class="btn-sm primary" onclick={onshowupdate}>View</button>{/if}
+            <button class="btn-sm" disabled={snapshot.current.checking} onclick={() => updates.checkNow()}><RefreshCw size={13} /> Check now</button>
+          </div>
+        </div>
+      </section>
+      <section class="settings-section">
+        <h3>Object browser</h3>
+        <div class="setting-row">
+          <div class="setting-text"><strong>Group objects</strong><small>Group related tables, views, functions, and types by common name prefixes.</small></div>
+          <Toggle modelValue={snapshot.current.groupObjects} label="Group objects" onchange={(value) => settings.setGroupObjects(value)} />
+        </div>
+      </section>
+    </div>
+    <div class="modal-foot settings-foot">
       <button class="reset-link" title="Restore every setting to its default" onclick={reset}><RotateCcw size={14} /> Reset to defaults</button>
     </div>
   </div>
