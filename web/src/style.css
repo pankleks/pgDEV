@@ -571,15 +571,19 @@ body.dragging-results {
   margin-bottom: 4px;
 
   h3 {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  /* The heading holds the section's tree row (keyboard focus lands here). */
+  .section-row {
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 12px;
-    font-weight: 600;
     padding: 5px 10px;
     cursor: pointer;
     user-select: none;
-    color: var(--text);
 
     &:hover {
       background: var(--panel-2);
@@ -704,6 +708,19 @@ body.dragging-results {
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+  }
+}
+
+/* Keyboard focus on object browser and pinned-file rows (lib/treenav.ts);
+ * drawn inside the row so the sidebar edge does not clip it. */
+.browser [data-nav] {
+  &:focus {
+    outline: none;
+  }
+
+  &:focus-visible {
+    outline: 1px solid var(--accent);
+    outline-offset: -1px;
   }
 }
 
