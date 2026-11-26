@@ -76,7 +76,7 @@
   <header>
     <div><h2 id="processes-title">Processes</h2><small>{label} · Current database</small></div>
     <span class="spacer"></span>
-    <button class="btn-sm" disabled={loading || acting} onclick={refresh}><RefreshCw size={14} /> {loading ? 'Loading…' : 'Refresh'}</button>
+    <button class="btn-sm" disabled={loading || acting} onclick={refresh}><RefreshCw size={13} /> {loading ? 'Loading…' : 'Refresh'}</button>
   </header>
   <div class="filters">
     <input aria-label="Filter processes" placeholder="Filter PID, user, application, or SQL…" bind:value={filter} />
@@ -135,16 +135,16 @@
   .process-grid { flex: 1 1 auto; min-height: 120px; overflow: auto; border: 1px solid var(--border); }
   table { width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; }
   th { position: sticky; top: 0; background: var(--panel); color: var(--text-dim); }
-  th, td { padding: 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th, td { padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
   td small { display: block; margin-top: 3px; }
-  tr.selected { background: var(--selection, #264f78); }
-  .pid { padding: 3px 6px; font: inherit; }
+  tr.selected { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
+  .pid { padding: 1px 6px; font: inherit; }
   .details { flex-shrink: 0; margin-top: 14px; }
   .details > small { display: block; margin-top: 10px; }
-  pre { max-height: 140px; min-height: 60px; overflow: auto; padding: 10px; background: var(--bg); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; user-select: text; }
+  pre { max-height: 140px; min-height: 60px; overflow: auto; padding: 10px; background: var(--bg); border-radius: var(--radius); white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 var(--font-mono); user-select: text; }
   p { margin: 8px 0; flex-shrink: 0; }
-  .error { color: var(--danger, #f48771); }
-  .warning { color: #dcca83; }
+  .error { color: var(--error); }
+  .warning { color: var(--warn); }
   footer { margin-top: 14px; flex-wrap: wrap; }
   footer small { flex: 1; min-width: 220px; }
 </style>

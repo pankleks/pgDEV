@@ -340,20 +340,20 @@
     <span class="spacer"></span>
     {#if result?.transactionOpen}
       <span class="txn-badge" title="A manual transaction is open for this tab">TXN</span>
-      <button class="btn-sm commit" disabled={result.running || result.loadingMore} title="Commit the open transaction" onclick={() => runControl('COMMIT')}>COMMIT</button>
-      <button class="btn-sm danger" disabled={result.running || result.loadingMore} title="Roll back the open transaction" onclick={() => runControl('ROLLBACK')}>ROLLBACK</button>
+      <button class="btn-sm commit" disabled={result.running || result.loadingMore} title="Commit the open transaction" onclick={() => runControl('COMMIT')}>Commit</button>
+      <button class="btn-sm danger" disabled={result.running || result.loadingMore} title="Roll back the open transaction" onclick={() => runControl('ROLLBACK')}>Rollback</button>
     {/if}
     {#if activeGrid && !activeGrid.plan}
-      <button class="btn-sm" title="Copy loaded rows to clipboard (TSV)" disabled={result?.loadingMore} onclick={copyResult}><Copy size={13} /> COPY</button>
+      <button class="btn-sm" title="Copy loaded rows to clipboard (TSV)" disabled={result?.loadingMore} onclick={copyResult}><Copy size={13} /> Copy</button>
       <button class="btn-sm" title={activeGrid.limited ? 'Export only the retained rows to CSV (partial result)' : 'Export all rows to CSV'} disabled={result?.loadingMore} onclick={exportCsv}><Download size={13} /> {activeGrid.limited ? 'CSV (partial)' : 'CSV'}</button>
     {/if}
     {#if snapshot.current.entries.find((entry) => entry.key === snapshot.current.activeKey)?.connecting}
-      <button class="danger" onclick={() => { const entry = context().entry; if (entry) void multiResults.cancel(entry) }}>Cancel connection</button>
+      <button class="danger" onclick={() => { const entry = context().entry; if (entry) void multiResults.cancel(entry) }}><Square size={12} /> Cancel connection</button>
     {:else if result?.running || result?.loadingMore}
-      <button class="danger" disabled={result.cancelling} title="Cancel running query or row load" onclick={cancelRun}><Square size={11} /> {result.cancelling ? 'Canceling…' : result.loadingMore ? 'Cancel load' : 'Cancel'}</button>
+      <button class="danger" disabled={result.cancelling} title="Cancel running query or row load" onclick={cancelRun}><Square size={12} /> {result.cancelling ? 'Canceling…' : result.loadingMore ? 'Cancel load' : 'Cancel'}</button>
     {:else}
       <div class="run-split">
-        <button class="primary run-btn" disabled={!snapshot.current.activeConnectionId || snapshot.current.readOnly} title={snapshot.current.entries.length ? 'Run on the active connection (F5 or Ctrl+Enter)' : 'Run (F5 or Ctrl+Enter)'} onclick={onrun}><Play size={13} /> RUN</button>
+        <button class="primary run-btn" disabled={!snapshot.current.activeConnectionId || snapshot.current.readOnly} title={snapshot.current.entries.length ? 'Run on the active connection (F5 or Ctrl+Enter)' : 'Run (F5 or Ctrl+Enter)'} onclick={onrun}><Play size={13} /> Run</button>
         <button class="primary run-toggle" disabled={snapshot.current.readOnly} popovertarget="run-options" aria-label="Run options" title="Other run types"><ChevronDown size={13} /></button>
       </div>
       <div bind:this={runOptions} id="run-options" class="run-options" popover="auto" role="group" aria-label="Run types">
@@ -388,9 +388,9 @@
             <div class="grid-row" style:top={`${HEADER_H + (grid.start + index) * ROW_H}px`}>
               {#if rowEditable}
                 <div class="grid-cell actions" style:width={`${ACTION_W}px`}>
-                  <button class="icon rowedit-open" title={rowKeyComplete(row) ? 'Edit row' : 'Row key is not available'} disabled={!rowKeyComplete(row)} onclick={() => { if (grid) openRowEdit(grid.start + index) }}><Pencil size={12} /></button>
-                  <button class="icon rowedit-duplicate" title="Duplicate row" onclick={() => { if (grid) openRowEdit(grid.start + index, 'insert') }}><CopyPlus size={12} /></button>
-                  <button class="icon rowedit-delete" title={rowKeyComplete(row) ? 'Delete row' : 'Row key is not available'} disabled={deleting || !rowKeyComplete(row)} onclick={() => { if (grid) void deleteRow(grid.start + index) }}><Trash2 size={12} /></button>
+                  <button class="icon rowedit-open" title={rowKeyComplete(row) ? 'Edit row' : 'Row key is not available'} aria-label="Edit row" disabled={!rowKeyComplete(row)} onclick={() => { if (grid) openRowEdit(grid.start + index) }}><Pencil size={12} /></button>
+                  <button class="icon rowedit-duplicate" title="Duplicate row" aria-label="Duplicate row" onclick={() => { if (grid) openRowEdit(grid.start + index, 'insert') }}><CopyPlus size={12} /></button>
+                  <button class="icon rowedit-delete" title={rowKeyComplete(row) ? 'Delete row' : 'Row key is not available'} aria-label="Delete row" disabled={deleting || !rowKeyComplete(row)} onclick={() => { if (grid) void deleteRow(grid.start + index) }}><Trash2 size={12} /></button>
                 </div>
               {/if}
               {#each row as cell, column (column)}
@@ -405,7 +405,7 @@
         </div>
       </div>
       <div class="grid-foot">
-        {#if rowEditable}<button class="btn-sm grid-add-row" title="Insert a new row into this table" onclick={() => openRowEdit(-1, 'insert')}><Plus size={12} /> Add row</button>{/if}
+        {#if rowEditable}<button class="btn-sm grid-add-row" title="Insert a new row into this table" onclick={() => openRowEdit(-1, 'insert')}><Plus size={13} /> Add row</button>{/if}
         {result.grid?.rowCount ?? 0} row(s)
         {#if grid.g.truncated}<span>· more available</span>{#if grid.g.unordered}<span class="grid-warn" title="Each page re-runs the query. Without ORDER BY, PostgreSQL may return rows in a different order each time.">· no ORDER BY: later pages may repeat or skip rows</span>{/if}
         {:else if grid.g.limited}<span>· first {grid.g.rows.length}{#if grid.g.totalRowCount} of {grid.g.totalRowCount}{/if} · row limit reached; remaining rows were not retained</span>
@@ -421,22 +421,9 @@
 
 <style>
   .run-split { display: flex; flex-shrink: 0; }
-  .run-split .run-btn { border-radius: 4px 0 0 4px; }
-  .run-split .run-toggle { anchor-name: --run-options; border-radius: 0 4px 4px 0; border-left: 1px solid #ffffff40; padding-inline: 5px; }
-  .run-options {
-    position-anchor: --run-options;
-    inset: auto;
-    top: anchor(bottom);
-    right: anchor(right);
-    margin: 4px 0 0;
-    padding: 4px;
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    background: var(--panel);
-    color: var(--text);
-    box-shadow: 0 4px 16px #0006;
-  }
-  .run-options:popover-open { display: grid; gap: 2px; }
-  .run-options button { justify-content: flex-start; border: none; background: transparent; white-space: nowrap; }
-  .run-options button:hover:not(:disabled) { background: var(--panel-2); }
+  .run-split .run-btn { border-radius: var(--radius) 0 0 var(--radius); }
+  .run-split .run-toggle { anchor-name: --run-options; border-radius: 0 var(--radius) var(--radius) 0; border-left: 1px solid rgba(255, 255, 255, 0.25); padding-inline: 5px; }
+  /* Look comes from the shared menu style; only placement lives here. */
+  .run-options { position-anchor: --run-options; inset: auto; top: anchor(bottom); right: anchor(right); margin: 4px 0 0; }
+  .run-options:popover-open { display: flex; flex-direction: column; }
 </style>

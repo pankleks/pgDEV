@@ -41,15 +41,15 @@
 <Handle type="source" position={Position.Right} />
 
 <style>
-  .plan-card { box-sizing: border-box; width: 230px; height: 148px; padding: 9px 12px; background: #20232b; border: 1px solid #626978; border-radius: 6px; color: #e0e3eb; font-size: 11px; line-height: 17px; }
+  .plan-card { box-sizing: border-box; width: 230px; height: 148px; padding: 9px 12px; background: var(--panel-2); border: 1px solid #555; border-radius: var(--radius-lg); color: var(--text); font-size: 11px; line-height: 17px; }
   .node-heading { display: flex; align-items: center; gap: 7px; }
-  .node-icon { display: flex; flex-shrink: 0; color: #a6c8ff; }
+  .node-icon { display: flex; flex-shrink: 0; color: var(--accent); }
   strong, .relation, .own { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   strong { font-size: 13px; }
-  .relation { color: #a6c8ff; }
-  .mismatch { border-color: #e3ad53; }
-  .cost { height: 10px; margin-top: 6px; background: #394151; border-radius: 4px; overflow: hidden; }
-  .cost span { display: block; height: 100%; background: #8aaefa; }
-  .cost span.warm { background: #e3ad53; }
-  .cost span.hot { background: #ef7777; }
+  .relation { color: var(--accent); }
+  .mismatch { border-color: var(--warn); }
+  .cost { height: 10px; margin-top: 6px; background: var(--border); border-radius: var(--radius); overflow: hidden; }
+  .cost span { display: block; height: 100%; background: var(--accent); }
+  .cost span.warm { background: var(--warn); }
+  .cost span.hot { background: var(--error); }
 </style>

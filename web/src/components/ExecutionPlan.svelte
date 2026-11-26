@@ -3,6 +3,7 @@
   import '@xyflow/svelte/dist/style.css'
   import { planGraph, type ExplainPlan, type PlanNode as PlanNodeData } from '../lib/explain'
   import PlanNode from './PlanNode.svelte'
+  import { X } from '@lucide/svelte'
   import { copyText } from '../lib/gridio'
   import { useToast } from '../composables/toast'
 
@@ -39,7 +40,7 @@
       </div>
       {#if selected}
         <aside class="plan-details" aria-label="Plan node details">
-          <div class="detail-head"><strong>{selected['Node Type']}</strong><button class="btn-sm" aria-label="Close node details" onclick={() => { selected = null }}>×</button></div>
+          <div class="detail-head"><strong>{selected['Node Type']}</strong><button class="icon" title="Close node details" aria-label="Close node details" onclick={() => { selected = null }}><X size={14} /></button></div>
           <dl>{#each Object.entries(selected).filter(([key]) => key !== 'Plans') as [key, value]}
             <dt>{key}</dt><dd>{typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value)}</dd>
           {/each}</dl>
@@ -54,15 +55,17 @@
 
 <style>
   .execution-plan { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
-  .plan-toolbar, .detail-head { display: flex; align-items: center; gap: 8px; padding: 5px 10px; }
-  .plan-toolbar, .plan-legend { font-size: 11px; color: #aeb5c5; }
+  /* Toolbar like the results header above it; legend as small print below. */
+  .plan-toolbar, .detail-head { display: flex; align-items: center; gap: 8px; padding: 4px 10px; }
+  .plan-toolbar { flex-shrink: 0; font-size: 12px; color: var(--text-dim); background: var(--panel); border-bottom: 1px solid var(--border); }
+  .plan-legend { flex-shrink: 0; font-size: 11px; color: var(--text-dim); border-top: 1px solid var(--border); }
   .plan-content { display: flex; flex: 1; min-height: 0; }
   .plan-canvas { flex: 1; min-width: 0; min-height: 0; }
-  .plan-details { width: 300px; max-width: 45%; overflow: auto; border-left: 1px solid #343947; font-size: 12px; }
+  .plan-details { width: 300px; max-width: 45%; overflow: auto; border-left: 1px solid var(--border); background: var(--panel); font-size: 12px; }
   .detail-head { justify-content: space-between; }
   dl { padding: 0 12px; }
-  dt { color: #aeb5c5; margin-top: 8px; }
+  dt { color: var(--text-dim); margin-top: 8px; }
   dd { margin: 2px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-  .raw-plan { margin: 0; padding: 12px; overflow: auto; flex: 1; font-size: 12px; }
+  .raw-plan { margin: 0; padding: 12px; overflow: auto; flex: 1; font: 12px/1.5 var(--font-mono); }
   .plan-legend { padding: 4px 10px; }
 </style>

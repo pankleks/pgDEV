@@ -198,7 +198,7 @@
       <h2>
         <span class="rowedit-title">{title}</span>
         {#if tableLabel}<span class="rowedit-table">{tableLabel}</span>{/if}
-        {#if target.transactionId}<span class="txn-badge" title="SAVE joins the open transaction">TXN</span>{/if}
+        {#if target.transactionId}<span class="txn-badge" title="Save joins the open transaction">TXN</span>{/if}
       </h2>
       {#if fields.length > FILTER_FROM}
         <input class="rowedit-filter no-autofocus" type="text" bind:value={filter} placeholder="Filter columns" aria-label="Filter columns" spellcheck="false" />
@@ -257,8 +257,8 @@
     {#if error}<div class="rowedit-error">{error}</div>{/if}
     <div class="modal-foot">
       <span class="modal-foot-info">{inserting ? `${changeCount} value(s) set, the rest default` : changeCount ? `${changeCount} change(s)` : 'No changes'}</span>
-      <button disabled={saving} onclick={close}>CANCEL</button>
-      <button class="primary" disabled={saving || (!inserting && !changeCount)} onclick={save}><Save size={14} /> {saving ? 'SAVING…' : inserting ? 'INSERT' : 'SAVE'}</button>
+      <button disabled={saving} onclick={close}>Cancel</button>
+      <button class="primary" disabled={saving || (!inserting && !changeCount)} onclick={save}><Save size={14} /> {saving ? 'Saving…' : inserting ? 'Insert' : 'Save'}</button>
     </div>
   </div>
 </div>

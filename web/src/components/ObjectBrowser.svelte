@@ -352,8 +352,8 @@
     {:else}
       <div class="browser-search">
         <input bind:value={filterInput} placeholder='Search… "employee labor" any, "employee+labor" all, "id col"' />
-        {#if filterInput}<button class="icon" title="Clear search" onclick={() => { filterInput = '' }}><X size={14} /></button>{/if}
-        <button class="icon" disabled={!snapshot.current.id || snapshot.current.loading} title="Refresh schema" onclick={refresh}>
+        {#if filterInput}<button class="icon" title="Clear search" aria-label="Clear search" onclick={() => { filterInput = '' }}><X size={14} /></button>{/if}
+        <button class="icon" disabled={!snapshot.current.id || snapshot.current.loading} title="Refresh schema" aria-label="Refresh schema" onclick={refresh}>
           {#if snapshot.current.loading}<LoaderCircle size={14} class="spin" />{:else}<RotateCw size={14} />{/if}
         </button>
       </div>

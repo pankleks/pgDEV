@@ -247,7 +247,7 @@
 <div class="app" data-renderer="svelte-5">
   <header class="topbar">
     <span class="logo"><img src={appIcon} width="20" height="20" alt="pgDEV" /></span>
-    <button class="icon" title={sideCollapsed ? 'Expand navigation panel' : 'Collapse navigation panel'} onclick={toggleSide}>
+    <button class="icon" title={sideCollapsed ? 'Expand navigation panel' : 'Collapse navigation panel'} aria-label={sideCollapsed ? 'Expand navigation panel' : 'Collapse navigation panel'} onclick={toggleSide}>
       {#if sideCollapsed}<PanelLeftOpen size={15} />{:else}<PanelLeftClose size={15} />{/if}
     </button>
     {#if conn.state.id}<button class="conn-badge" title="Connection details, disconnect, or switch" onclick={() => { conn.state.dialog = true }}>{conn.state.name}</button>
@@ -255,13 +255,13 @@
     {:else}<button class="conn-badge off" title="Open the connection dialog" onclick={() => { conn.state.dialog = true }}>Not connected</button>{/if}
     <span class="spacer"></span>
     <button class="icon" title="Processes" aria-label="Processes" disabled={!conn.state.id} onclick={() => { if (conn.state.id) tabs.openProcesses(conn.state.id) }}><Activity size={15} /></button>
-    <button class="icon" title="Format SQL or selection (Ctrl+Shift+F)" disabled={!activeTab || activeTab.readOnly} onclick={triggerFormat}><Wand2 size={15} /></button>
-    <button class="icon" title="Generate call of parameterized query." disabled={!activeTab || activeTab.readOnly} onclick={toggleParamBar}><SlidersHorizontal size={15} /></button>
-    <button class="icon" title="New query tab (Ctrl+N)" onclick={() => tabs.newQuery()}><FilePlus2 size={15} /></button>
-    <button class="icon" title="Open .sql file (Ctrl+O)" onclick={openFiles}><FolderOpen size={15} /></button>
+    <button class="icon" title="Format SQL or selection (Ctrl+Shift+F)" aria-label="Format SQL or selection" disabled={!activeTab || activeTab.readOnly} onclick={triggerFormat}><Wand2 size={15} /></button>
+    <button class="icon" title="Generate call of parameterized query." aria-label="Generate call of parameterized query" disabled={!activeTab || activeTab.readOnly} onclick={toggleParamBar}><SlidersHorizontal size={15} /></button>
+    <button class="icon" title="New query tab (Ctrl+N)" aria-label="New query tab" onclick={() => tabs.newQuery()}><FilePlus2 size={15} /></button>
+    <button class="icon" title="Open .sql file (Ctrl+O)" aria-label="Open .sql file" onclick={openFiles}><FolderOpen size={15} /></button>
     <button class="icon" disabled={!activeTab || processesActive || saving} title={saving ? 'Saving…' : 'Save active tab (Ctrl+S)'} aria-label={saving ? 'Saving' : 'Save active tab'} onclick={() => saveActive()}><Save size={15} /></button>
     <button class="icon" disabled={!activeTab || processesActive || saving} title="Save active tab as a new SQL file" aria-label="Save active tab as a new SQL file" onclick={() => saveActive(true)}><FileOutput size={15} /></button>
-    <button class="icon" title="Settings" onclick={() => { settingsOpen = true }}><Settings size={15} /></button>
+    <button class="icon" title="Settings" aria-label="Settings" onclick={() => { settingsOpen = true }}><Settings size={15} /></button>
     {#if version}<a class="app-version" href="https://github.com/pankleks/pgdev" target="_blank" rel="noopener noreferrer" title="Open the pgDEV project page on GitHub">{version}</a>{/if}
     {#if announcedUpdate}<button class="update-badge" title={`pgDEV ${announcedUpdate.version} is available (you have ${updates.state.current}). Click for release notes and how to update.`} onclick={() => { updates.state.dialog = true }}>v{announcedUpdate.version}</button>{/if}
   </header>
@@ -271,7 +271,7 @@
       <input bind:this={paramInput} bind:value={paramValuesText} type="text" spellcheck="false" placeholder='Optional values as a JSON array — e.g. [1, "text", [10, 12], false, null] · Enter to apply'
         onkeydown={(event) => { if (event.key === 'Enter') { event.preventDefault(); applyParamValues() } else if (event.key === 'Escape') { event.preventDefault(); paramBar = false } }} />
       <button class="btn-sm primary" title="Apply values to the generated script" onclick={applyParamValues}>Apply</button>
-      <button class="icon" title="Close" onclick={() => { paramBar = false }}><X size={14} /></button>
+      <button class="icon" title="Close" aria-label="Close parameter values" onclick={() => { paramBar = false }}><X size={14} /></button>
     </div>
   {/if}
   <div class="body">

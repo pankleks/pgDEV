@@ -218,11 +218,11 @@
               <span class="row-tools">
                 {#if row.locked}<span class="lock" title={`Read-only: ${lockLabel[row.lockKind ?? '']}`}><Lock size={12} /></span>{/if}
                 {#if !row.added}
-                  <button class="tool" disabled={row.pk} title={row.deleted ? 'Restore column' : row.pk ? 'Primary key columns cannot be dropped' : 'Delete column'} onclick={() => toggleDelete(row)}>
+                  <button class="tool" disabled={row.pk} title={row.deleted ? 'Restore column' : row.pk ? 'Primary key columns cannot be dropped' : 'Delete column'} aria-label={row.deleted ? 'Restore column' : 'Delete column'} onclick={() => toggleDelete(row)}>
                     {#if row.deleted}<RotateCcw size={13} />{:else}<Trash2 size={13} />{/if}
                   </button>
                 {:else}
-                  <span class="added-badge">new</span><button class="tool" title="Remove column" onclick={() => removeRow(row)}><Trash2 size={13} /></button>
+                  <span class="added-badge">new</span><button class="tool" title="Remove column" aria-label="Remove column" onclick={() => removeRow(row)}><Trash2 size={13} /></button>
                 {/if}
               </span>
             </div>

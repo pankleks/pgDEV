@@ -49,7 +49,7 @@
     </div>
     <div class="modal-foot">
       <span class="modal-foot-info">{text.length.toLocaleString()} character(s)</span>
-      <button class="primary" disabled={copying} onclick={copy}><Copy size={14} /> COPY</button>
+      <button class="primary" disabled={copying} onclick={copy}><Copy size={14} /> Copy</button>
     </div>
   </div>
 </div>

@@ -214,10 +214,10 @@
                     <span class="saved-text"><strong>{entry.label}</strong>{#if entry.sub}<small>{entry.sub}</small>{/if}</span>
                   </button>
                   {#if entry.active}
-                    <button class="row-action disconnect" title="Disconnect" disabled={snapshot.current.connecting || snapshot.current.saving}
+                    <button class="row-action disconnect" title="Disconnect" aria-label="Disconnect" disabled={snapshot.current.connecting || snapshot.current.saving}
                       onclick={(event) => { event.stopPropagation(); void conn.disconnect() }}><Power size={14} /></button>
                   {:else if entry.saved}
-                    <button class="row-action" title="Forget" disabled={snapshot.current.saving}
+                    <button class="row-action" title="Forget" aria-label={`Forget ${entry.label}`} disabled={snapshot.current.saving}
                       onclick={(event) => { event.stopPropagation(); conn.forget(entry.id); if (selectedLabel === entry.id) selectedLabel = null }}><X size={14} /></button>
                   {/if}
                 </div>
@@ -312,7 +312,7 @@
   .database-picker { margin-top: 2px; }
   .discovery-head { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 4px; font-size: 11px; color: var(--text-dim); }
   .database-options { display: flex; flex-wrap: wrap; gap: 4px; max-height: 88px; overflow-y: auto; }
-  .database-option { max-width: 100%; gap: 4px; padding: 2px 8px; border-radius: 4px; background: var(--bg); font-size: 12px; }
+  .database-option { max-width: 100%; gap: 4px; padding: 2px 8px; border-radius: var(--radius); background: var(--bg); font-size: 12px; }
   .database-option span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-  .database-option.selected { border-color: var(--accent); background: rgba(79, 156, 249, 0.12); color: var(--accent); }
+  .database-option.selected { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
 </style>

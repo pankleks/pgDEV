@@ -57,7 +57,7 @@
     try {
       const config = await api.rotateAiToken()
       const ok = await copyText(config.config)
-      toast.show(ok ? 'Token rotated. New MCP config copied.' : 'Token rotated. Copy the new MCP config with COPY.')
+      toast.show(ok ? 'Token rotated. New MCP config copied.' : 'Token rotated. Copy the new MCP config with Copy.')
     } catch (error) {
       toast.show((error as Error).message || 'Could not rotate the token')
     } finally {
@@ -122,7 +122,7 @@
           </div>
           <div class="setting-actions">
             <button class="btn-sm" disabled={copyingConfig} title="Replace the MCP token; existing client configs stop working" onclick={rotateToken}><KeyRound size={13} /> Rotate</button>
-            <button class="btn-sm primary" disabled={copyingConfig} onclick={copyMcpConfig}><Copy size={13} /> COPY</button>
+            <button class="btn-sm primary" disabled={copyingConfig} onclick={copyMcpConfig}><Copy size={13} /> Copy</button>
           </div>
         </div>
       </section>
@@ -152,7 +152,7 @@
       </section>
     </div>
     <div class="modal-foot settings-foot">
-      <button class="reset-link" title="Restore every setting to its default" onclick={reset}><RotateCcw size={14} /> Reset to defaults</button>
+      <button class="link" title="Restore every setting to its default" onclick={reset}><RotateCcw size={13} /> Reset to defaults</button>
     </div>
   </div>
 </div>

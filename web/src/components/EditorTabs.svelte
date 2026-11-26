@@ -149,7 +149,7 @@
         oncontextmenu={(event) => openMenu(event, tab.key)} ondragstart={(event) => onDragStart(event, tab.key)}
         ondragover={(event) => onDragOverTab(event, index)} ondragend={onDragEnd}>
         <span class="tab-title" title={tab.displayTitle}>{tab.displayTitle}</span>
-        <button class="tab-close" title="Close tab" draggable="false" onclick={(event) => { event.stopPropagation(); void closeTab(tab.key) }}><X size={14} /></button>
+        <button class="tab-close" title="Close tab" aria-label="Close tab" draggable="false" onclick={(event) => { event.stopPropagation(); void closeTab(tab.key) }}><X size={14} /></button>
       </div>
     {/each}
   </div>

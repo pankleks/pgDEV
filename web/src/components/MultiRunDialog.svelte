@@ -51,11 +51,11 @@
   form { display: contents; }
   .description, .warning { color: var(--text-dim); font-size: 12px; line-height: 1.5; }
   .profiles { display: grid; gap: 6px; margin: 12px 0; }
-  .profile-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-2); cursor: pointer; font-size: 12px; }
+  .profile-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--panel-2); cursor: pointer; font-size: 12px; }
   .profile-row:hover, .profile-row.selected { border-color: var(--accent); }
   .profile-row input { width: auto; margin: 0; accent-color: var(--accent); }
   .profile-row span { min-width: 0; overflow-wrap: anywhere; }
   details { margin-bottom: 12px; font-size: 12px; }
   summary { color: var(--text-dim); cursor: pointer; }
-  pre { max-height: 160px; overflow: auto; white-space: pre-wrap; margin-top: 8px; padding: 9px 11px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-2); font: 12px/1.5 ui-monospace, 'Cascadia Code', Consolas, Menlo, monospace; }
+  pre { max-height: 160px; overflow: auto; white-space: pre-wrap; margin-top: 8px; padding: 9px 11px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--panel-2); font: 12px/1.5 var(--font-mono); }
 </style>

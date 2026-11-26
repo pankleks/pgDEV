@@ -659,7 +659,7 @@ try {
       Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, ${JSON.stringify(value)})
       el.dispatchEvent(new Event('input', { bubbles: true }))
     `)
-    const saveButton = `[...document.querySelectorAll('.rowedit-modal .modal-foot button')].find((b) => /SAVE/.test(b.textContent))`
+    const saveButton = `[...document.querySelectorAll('.rowedit-modal .modal-foot button')].find((b) => /^Save$/.test(b.textContent.trim()))`
 
     // A result without the primary key cannot identify rows.
     await runQuery('SELECT label FROM items ORDER BY label')
@@ -720,9 +720,9 @@ try {
     ok('the dialog stays open after a rejection',
       await page.evaluate(`return !!document.querySelector('.rowedit-modal')`))
     await setField('qty', '1.50')
-    await page.evaluate(`[...document.querySelectorAll('.rowedit-modal .modal-foot button')].find((b) => b.textContent.trim() === 'CANCEL')?.click()`)
+    await page.evaluate(`[...document.querySelectorAll('.rowedit-modal .modal-foot button')].find((b) => b.textContent.trim() === 'Cancel')?.click()`)
     await page.waitFor(`!document.querySelector('.rowedit-modal')`, { timeout: 10000 })
-    ok('CANCEL closes the dialog', true)
+    ok('Cancel closes the dialog', true)
 
     // A successful save patches the grid from the RETURNING row.
     await page.evaluate(`document.querySelector('.rowedit-open')?.click()`)
