@@ -79,7 +79,7 @@
       active: entry.id === snapshot.current.profileId,
     }))
     if (snapshot.current.id && !items.some((item) => item.active)) {
-      items.unshift({ id: 'active', label: snapshot.current.name, sub: '', saved: null, active: true })
+      items.unshift({ id: 'active', label: snapshot.current.name, sub: 'Open session', saved: null, active: true })
     }
     return items
   })
@@ -149,12 +149,16 @@
     if (!(event.currentTarget as HTMLButtonElement).form?.reportValidity()) return
     const config = currentConfig()
     if (asNew) delete config.id
+    const wasOpen = config.id !== undefined && conn.state.profileId === config.id
     const profile = await conn.saveProfile(config)
     if (!profile) return
     selectedLabel = profile.id
     name = profile.name
     remember = true
-    useToast().show(`Connection "${profile.name}" saved.`)
+    // Changed settings detach the open session from the profile; it keeps the old ones until reconnect.
+    useToast().show(wasOpen && conn.state.profileId !== profile.id
+      ? `Connection "${profile.name}" saved. Click Connect to apply the changes to the open session.`
+      : `Connection "${profile.name}" saved.`)
   }
 
   function close() { if (!snapshot.current.saving) conn.state.dialog = false }
