@@ -56,7 +56,7 @@ Section headers carry object counts; expansion survives reload; the refresh butt
 
 * **Tables** — Columns (name, type, nullability), Indexes, Constraints (PK / FK / unique / check), Triggers.
 * **Views** — columns. **Functions** — parameters plus return type, overloads listed separately. **Sequences** — increment, start, type, ownership. **Types** — composite/enum detail rows.
-* Prefix grouping for related objects (Settings → *Group objects*).
+* Prefix grouping for related objects (Settings → *Group objects*): names that share an underscore prefix go into nested folders, for example `employee` → `employee_skill` → `employee_skill_get`. A folder needs at least two objects, and a folder that would hold only one subfolder is skipped.
 * Right-click: **Collapse** on parents, **Edit…** on editable tables (section 8). Double-click opens DDL (section 5); double-clicking the empty tab strip opens a fresh query tab.
 
 # 4. Search

@@ -633,6 +633,8 @@ body.dragging-results {
   padding-left: 8px;
   border-left: 1px solid var(--border);
 
+  /* A subfolder lines up with the objects beside it. */
+  > .object-group-node,
   > .tree > .node {
     padding-left: 16px;
   }

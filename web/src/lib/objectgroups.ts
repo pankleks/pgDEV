@@ -9,165 +9,118 @@ export interface NamedObjectEntry<T extends NamedObject> {
   key: string
   schema: string
   name: string
+  /** Every object under the entry: one for an item, all descendants for a group. */
   objects: T[]
+  /** A group's own entries (items and nested groups); empty for an item. */
+  children: NamedObjectEntry<T>[]
 }
 
-interface PrefixNode {
+interface PrefixNode<T> {
   count: number
   prefix: string
-  children: Map<string, PrefixNode>
+  children: Map<string, PrefixNode<T>>
+  /** Objects whose whole name is this prefix (several for overloads). */
+  ends: { object: T; index: number }[]
 }
 
-function prefixRoot(): PrefixNode {
-  return { count: 0, prefix: '', children: new Map() }
+function prefixNode<T>(prefix: string): PrefixNode<T> {
+  return { count: 0, prefix, children: new Map(), ends: [] }
 }
 
 function groupKey(namespace: string, schema: string, prefix: string): string {
-  return `${namespace}\u0000${schema}\u0000${prefix}`
+  return `group\u0000${namespace}\u0000${schema}\u0000${prefix}`
 }
 
 function itemKey<T extends NamedObject>(namespace: string, object: T, index: number): string {
   return `${namespace}\u0000item\u0000${object.oid ?? index}`
 }
 
-function tablePrefixes(name: string): string[] {
-  let prefix = ''
-  return name.split('_').map((part) => {
-    prefix = prefix ? `${prefix}_${part}` : part
-    return prefix
-  })
+function item<T extends NamedObject>(namespace: string, object: T, index: number): NamedObjectEntry<T> {
+  return { kind: 'item', key: itemKey(namespace, object, index), schema: object.schema, name: object.name, objects: [object], children: [] }
 }
 
-function prefixNode(root: PrefixNode | undefined, parts: string[], end: number): PrefixNode | undefined {
-  let node = root
-  for (let i = 0; i <= end && node; i++) node = node.children.get(parts[i])
-  return node
+/** `employee` < `employee_get` < `employee_skill` < `employees`: word by word, so a folder sorts before its own longer names. */
+function compareNames(a: string, b: string): number {
+  const left = a.split('_')
+  const right = b.split('_')
+  for (let i = 0; i < Math.min(left.length, right.length); i++) {
+    const order = left[i].localeCompare(right[i])
+    if (order) return order
+  }
+  return left.length - right.length
 }
 
+/**
+ * Groups objects into folders by their underscore-separated name prefix, as a
+ * tree: `employee_skill_get` sits in `employee` → `employee_skill` when other
+ * names share those prefixes. A prefix becomes a folder when at least two
+ * objects share it; a folder holding nothing but one subfolder is skipped in
+ * favour of that subfolder, so no level is a lone pass-through. Same-named
+ * overloads share a folder named after them.
+ */
 export function groupNamedObjects<T extends NamedObject>(
   objects: T[],
   enabled: boolean,
   namespace: string,
 ): NamedObjectEntry<T>[] {
-  if (!enabled) {
-    return objects.map((object, index) => ({
-      kind: 'item',
-      key: itemKey(namespace, object, index),
-      schema: object.schema,
-      name: object.name,
-      objects: [object],
-    }))
-  }
+  if (!enabled) return objects.map((object, index) => item(namespace, object, index))
 
-  const roots = new Map<string, PrefixNode>()
-  for (const object of objects) {
-    const existingRoot = roots.get(object.schema)
-    let node: PrefixNode
-    if (existingRoot) {
-      node = existingRoot
-    } else {
-      node = prefixRoot()
-      roots.set(object.schema, node)
-    }
-
+  const roots = new Map<string, PrefixNode<T>>()
+  for (const [index, object] of objects.entries()) {
+    let node = roots.get(object.schema)
+    if (!node) roots.set(object.schema, node = prefixNode(''))
     node.count++
-    let prefix = ''
-    for (const part of object.name.split('_')) {
-      prefix = prefix ? `${prefix}_${part}` : part
-      let child: PrefixNode | undefined = node.children.get(part)
-      if (!child) {
-        child = { count: 0, prefix, children: new Map() }
-        node.children.set(part, child)
-      }
+    for (const [depth, part] of object.name.split('_').entries()) {
+      const prefix: string = depth ? `${node.prefix}_${part}` : part
+      let child = node.children.get(part)
+      if (!child) node.children.set(part, child = prefixNode(prefix))
       child.count++
       node = child
     }
+    node.ends.push({ object, index })
   }
 
-  const candidates = new Map<string, string | null>()
-  const candidateMembers = new Map<string, T[]>()
-  for (const [index, object] of objects.entries()) {
-    let node = roots.get(object.schema)
-    let longest: string | null = null
-    for (const part of object.name.split('_')) {
-      node = node?.children.get(part)
-      if (!node) break
-      if (node.count > 1) longest = node.prefix
-    }
-
-    const objectKey = itemKey(namespace, object, index)
-    candidates.set(objectKey, longest)
-    if (longest) {
-      const key = groupKey(namespace, object.schema, longest)
-      const group = candidateMembers.get(key) ?? []
-      group.push(object)
-      candidateMembers.set(key, group)
-    }
+  function collect(node: PrefixNode<T>, into: T[] = []): T[] {
+    for (const end of node.ends) into.push(end.object)
+    for (const child of node.children.values()) collect(child, into)
+    return into
   }
-
-  const assignments = new Map<string, string | null>()
-  const members = new Map<string, T[]>()
-  for (const [index, object] of objects.entries()) {
-    const objectKey = itemKey(namespace, object, index)
-    let prefix = candidates.get(objectKey) ?? null
-    const candidateMembersForObject = prefix ? candidateMembers.get(groupKey(namespace, object.schema, prefix)) : undefined
-    if (prefix && candidateMembersForObject?.length === 1) {
-      const parts = object.name.split('_')
-      const prefixes = tablePrefixes(object.name)
-      const candidateIndex = prefixes.indexOf(prefix)
-      for (let i = candidateIndex - 1; i >= 0; i--) {
-        const ancestor = prefixNode(roots.get(object.schema), parts, i)
-        if (ancestor && ancestor.count > 1) {
-          prefix = prefixes[i]
-          break
-        }
+  function single(node: PrefixNode<T>): { object: T; index: number } {
+    while (!node.ends.length) node = node.children.values().next().value!
+    return node.ends[0]
+  }
+  function entriesUnder(node: PrefixNode<T>, schema: string): NamedObjectEntry<T>[] {
+    const entries = node.ends.map(({ object, index }) => item(namespace, object, index))
+    for (let child of node.children.values()) {
+      if (child.count === 1) {
+        const { object, index } = single(child)
+        entries.push(item(namespace, object, index))
+        continue
       }
+      while (!child.ends.length && child.children.size === 1) child = child.children.values().next().value!
+      // A leading underscore gives an empty prefix: no nameless folder.
+      if (!child.prefix) { entries.push(...entriesUnder(child, schema)); continue }
+      entries.push({
+        kind: 'group', key: groupKey(namespace, schema, child.prefix), schema, name: child.prefix,
+        objects: collect(child), children: entriesUnder(child, schema),
+      })
     }
-
-    assignments.set(objectKey, prefix)
-    if (prefix) {
-      const key = groupKey(namespace, object.schema, prefix)
-      const group = members.get(key) ?? []
-      group.push(object)
-      members.set(key, group)
-    }
+    // Stable: overloads keep their catalog order.
+    return entries.sort((a, b) => compareNames(a.name, b.name))
   }
 
-  const validGroups = new Set(
-    [...members.entries()]
-      .filter(([, group]) => group.length > 1)
-      .map(([key]) => key),
-  )
-  const entries: NamedObjectEntry<T>[] = []
-  const emittedGroups = new Set<string>()
+  return [...roots].flatMap(([schema, root]) => entriesUnder(root, schema))
+}
 
-  for (const [index, object] of objects.entries()) {
-    const prefix = assignments.get(itemKey(namespace, object, index))
-    const key = prefix ? groupKey(namespace, object.schema, prefix) : ''
-    if (prefix && validGroups.has(key)) {
-      if (!emittedGroups.has(key)) {
-        emittedGroups.add(key)
-        entries.push({
-          kind: 'group',
-          key: `group\u0000${key}`,
-          schema: object.schema,
-          name: prefix,
-          objects: members.get(key) ?? [],
-        })
-      }
-      continue
-    }
+/** Every group key at any depth, for collapsing a whole section. */
+export function groupKeysOf<T extends NamedObject>(entries: readonly NamedObjectEntry<T>[]): string[] {
+  return entries.flatMap((entry) => entry.kind === 'group' ? [entry.key, ...groupKeysOf(entry.children)] : [])
+}
 
-    entries.push({
-      kind: 'item',
-      key: itemKey(namespace, object, index),
-      schema: object.schema,
-      name: object.name,
-      objects: [object],
-    })
-  }
-
-  return entries
+/** Rows an entry renders: one per item, a group's header plus its open contents. */
+export function entryRows<T extends NamedObject>(entry: NamedObjectEntry<T>, isOpen: (group: NamedObjectEntry<T>) => boolean): number {
+  if (entry.kind === 'item') return 1
+  return 1 + (isOpen(entry) ? entry.children.reduce((sum, child) => sum + entryRows(child, isOpen), 0) : 0)
 }
 
 /**

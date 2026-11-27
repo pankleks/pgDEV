@@ -146,7 +146,7 @@
       <section class="settings-section">
         <h3>Object browser</h3>
         <div class="setting-row">
-          <div class="setting-text"><strong>Group objects</strong><small>Group related tables, views, functions, and types by common name prefixes.</small></div>
+          <div class="setting-text"><strong>Group objects</strong><small>Group related tables, views, functions, types, and sequences into nested folders by common name prefixes.</small></div>
           <Toggle modelValue={snapshot.current.groupObjects} label="Group objects" onchange={(value) => settings.setGroupObjects(value)} />
         </div>
       </section>
