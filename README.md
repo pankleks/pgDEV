@@ -1,8 +1,25 @@
 <img src="pgDEV.png" width="128" alt="pgDEV icon">
 
+# pgDEV — a fast, free desktop IDE for PostgreSQL, ready for AI agents
+
+[![Latest release](https://img.shields.io/github/v/release/pankleks/pgDEV)](https://github.com/pankleks/pgDEV/releases/latest)
+[![License: MIT](https://img.shields.io/github/license/pankleks/pgDEV)](LICENSE)
+[![Downloads](https://img.shields.io/github/downloads/pankleks/pgDEV/total)](https://github.com/pankleks/pgDEV/releases)
+
 **pgDEV** is an IDE for PostgreSQL, built around productivity, simplicity, and a smooth developer experience.
 
 It integrates with the AI coding harness of your choice, bringing AI-assisted development directly into your PostgreSQL workflow.
+
+![pgDEV demo](docs/images/demo.gif)
+
+<sub>Demo recorded against the public [Chinook](https://github.com/lerocha/chinook-database) sample database.</sub>
+
+**Why pgDEV**
+
+* **Small and focused**: a SQL editor with schema-aware completion, an object browser with search, DDL you can apply as-is, Explain Analyze plans drawn as a graph, a table schema editor that writes only the ALTERs you changed, and paged results with a row editor.
+* **Safe AI access over MCP**: Claude Code, Cursor, OpenCode and other MCP clients can read your schema and run read-only queries. SQL that changes anything is put in an editor tab for you to review and run yourself.
+* **One installer** for Windows, macOS and Linux. You don't need Node.js, a browser or a server.
+* **Free and open source** (MIT).
 
 
 # 1. Start
